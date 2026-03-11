@@ -19,5 +19,20 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
+fonts:
+  - family: TRTCENZODEMO
+    fonts:
+      - asset: assets/fonts/TRTCENZODEMO-SemiBold.ttf
+        weight: 600
+  - family: CEORUSE
+    fonts:
+      - asset: assets/fonts/ceoruse.otf
+        weight: 500
+
 flutter:
   uses-material-design: true
+
+assets:
+  - assets/images/
+  - assets/fonts/
+  - assets/logo/

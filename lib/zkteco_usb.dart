@@ -4,7 +4,7 @@ import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'zkfp_ffi.dart';
+import 'zkfp_ffi_export.dart';
 
 /// ZKTeco Live20R USB communication class
 /// Supports both Windows (FFI) and Android (Platform Channel)

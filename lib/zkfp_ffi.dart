@@ -2,9 +2,6 @@ import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
-/// ZKTeco Fingerprint SDK FFI bindings for libzkfp.dll
-/// Based on ZKFinger Standard SDK 5.3.0.33
-
 // Error codes
 class ZkfpErrors {
   static const int OK = 0;
