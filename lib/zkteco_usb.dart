@@ -1,8 +1,7 @@
 ﻿import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'zkfp_ffi.dart';
+import 'zkfp_ffi_export.dart';
 
 /// ZKTeco Live20R USB communication class using the official SDK
 /// API similar to the C# Demo for easier use
@@ -25,11 +24,8 @@ class ZKTecoUSB {
 
   // Platform check
   static bool get isWindowsPlatform {
-    try {
-      return Platform.isWindows;
-    } catch (e) {
-      return false;
-    }
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.windows;
   }
 
   // Getters
