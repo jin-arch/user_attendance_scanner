@@ -65,16 +65,55 @@ class _ZKFingerDemoState extends State<ZKFingerDemo> {
     setState(() => _isLoading = true);
     
     // Check platform first
-    if (!ZKTecoUSB.isWindowsPlatform) {
+    if (!ZKTecoUSB.isSupportedPlatform) {
       setState(() => _isLoading = false);
-      _setResult('ZKFinger SDK only works on Windows.\nThis device is not supported on Android/iOS.');
+      _setResult('ZKFinger SDK only works on Windows and Android.\nThis platform is not supported.');
       return;
+    }
+    
+    // Set up callbacks for Android
+    if (ZKTecoUSB.isAndroidPlatform) {
+      _device.onImageCaptured = (width, height, imageData) {
+        setState(() {
+          _fingerprintImage = imageData;
+        });
+      };
+      
+      _device.onTemplateExtracted = (template, size) {
+        _setResult('Fingerprint captured! Template: $size bytes');
+      };
+      
+      _device.onEnrollResult = (success, message, fid, template) {
+        setState(() {
+          _isEnrolling = false;
+          _enrollCount = 0;
+        });
+        _setResult(message);
+      };
+      
+      _device.onEnrollProgress = (current, total, message) {
+        setState(() {
+          _enrollCount = current;
+        });
+        _setResult(message);
+      };
+      
+      _device.onDeviceAttached = () {
+        _setResult('Device attached! Press Open to connect.');
+      };
+      
+      _device.onDeviceDetached = () {
+        setState(() {
+          _deviceOpened = false;
+        });
+        _setResult('Device detached!');
+      };
     }
     
     final success = await _device.initSdk();
     
     if (success) {
-      final count = _device.getDeviceCount();
+      final count = await _device.getDeviceCountAsync();
       setState(() {
         _sdkInitialized = true;
         _deviceCount = count;
@@ -240,13 +279,13 @@ class _ZKFingerDemoState extends State<ZKFingerDemo> {
     setState(() => _isLoading = true);
     _setResult('Place finger on scanner to identify...');
     
-    final userId = await _device.identifyFingerprint();
+    final result = await _device.identifyFingerprint();
     _updateFingerprintImage();
     
     setState(() => _isLoading = false);
     
-    if (userId != null) {
-      _setResult('Identified!\nFID: $userId\nAttendance logged.');
+    if (result.found && result.fid != null) {
+      _setResult('Identified!\nFID: ${result.fid}, Score: ${result.score}\nAttendance logged.');
     } else {
       _setResult('Identification failed.\nFingerprint not in database.');
     }
@@ -260,7 +299,8 @@ class _ZKFingerDemoState extends State<ZKFingerDemo> {
   }
 
   Future<void> _clearDb() async {
-    if (_device.clearDatabase()) {
+    final success = await _device.clearDatabase();
+    if (success) {
       _setResult('Database cleared');
       setState(() => _enrollFid = 1);
     } else {

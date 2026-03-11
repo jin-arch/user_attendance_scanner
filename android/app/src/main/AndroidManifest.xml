@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- USB Host feature for fingerprint scanner -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
+    
     <application
         android:label="user_attendance_scanner"
         android:name="${applicationName}"
