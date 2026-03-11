@@ -124,7 +124,11 @@ class _ZKFingerDemoState extends State<ZKFingerDemo> {
           ? 'SDK initialized. Found $count device(s).' 
           : 'SDK initialized. No device connected!');
     } else {
-      _setResult('Failed to initialize SDK');
+      if (ZKTecoUSB.isAndroidPlatform) {
+        _setResult('SDK initialization failed.\nNative libraries not available.\nPlease run on a real ARM device, not emulator.');
+      } else {
+        _setResult('Failed to initialize SDK');
+      }
     }
     
     setState(() => _isLoading = false);

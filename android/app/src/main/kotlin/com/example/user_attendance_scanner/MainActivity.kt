@@ -37,6 +37,9 @@ class MainActivity : FlutterActivity() {
     private val LIVE20R_PID = 0x0120
     private val LIVE10R_PID = 0x0124
     
+    // Native library availability flag
+    private var nativeLibsAvailable = false
+    
     // SDK state
     private var fingerprintSensor: FingerprintSensor? = null
     private var methodChannel: MethodChannel? = null
@@ -157,7 +160,8 @@ class MainActivity : FlutterActivity() {
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
+            // Use RECEIVER_EXPORTED for USB system broadcasts
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(usbReceiver, filter)
         }
@@ -207,8 +211,18 @@ class MainActivity : FlutterActivity() {
     
     private fun initSdk(result: MethodChannel.Result) {
         try {
-            LogHelper.setLevel(Log.VERBOSE)
-            result.success(true)
+            // Try to load native libraries
+            nativeLibsAvailable = try {
+                System.loadLibrary("zksensorcore")
+                System.loadLibrary("zkalg12")
+                System.loadLibrary("zkfinger10")
+                LogHelper.setLevel(Log.VERBOSE)
+                true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Native libraries not available: ${e.message}")
+                false
+            }
+            result.success(nativeLibsAvailable)
         } catch (e: Exception) {
             Log.e(TAG, "initSdk error: ${e.message}")
             result.success(false)
@@ -219,7 +233,13 @@ class MainActivity : FlutterActivity() {
         try {
             closeDeviceInternal()
             templateDb.clear()
-            ZKFingerService.clear()
+            if (nativeLibsAvailable) {
+                try {
+                    ZKFingerService.clear()
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.w(TAG, "Native library error in freeSdk: ${e.message}")
+                }
+            }
             result.success(true)
         } catch (e: Exception) {
             Log.e(TAG, "freeSdk error: ${e.message}")
@@ -246,6 +266,11 @@ class MainActivity : FlutterActivity() {
     }
     
     private fun openDevice(index: Int, result: MethodChannel.Result) {
+        if (!nativeLibsAvailable) {
+            result.error("LIBS_NOT_AVAILABLE", "Native libraries not available. Running on emulator or unsupported architecture.", null)
+            return
+        }
+        
         if (isDeviceOpen) {
             result.success(true)
             return
