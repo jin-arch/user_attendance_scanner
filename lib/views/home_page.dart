@@ -657,6 +657,11 @@ class _HomePageState extends State<HomePage> {
         });
       }
       await batch.commit(noResult: true);
+    } catch (e) {
+      debugPrint('_syncEmployeesPerSiteToLocalDb error: $e');
+      if (mounted) {
+        _controller.setStatus('Sync failed — check API connection.');
+      }
     } finally {
       client.close(force: true);
       await db?.close();

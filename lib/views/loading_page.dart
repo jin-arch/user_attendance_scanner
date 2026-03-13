@@ -45,7 +45,11 @@ class _LoadingPageState extends State<LoadingPage>
   }
 
   Future<void> _run() async {
-    await widget.loadFuture;
+    try {
+      await widget.loadFuture;
+    } catch (e) {
+      debugPrint('LoadingPage loadFuture error: $e');
+    }
     if (!mounted) return;
     setState(() => _loadComplete = true);
     if (_progressController.value < 1.0) {
