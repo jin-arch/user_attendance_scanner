@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
+import 'loading_page.dart';
 
 class _SiteOption {
   const _SiteOption({required this.id, required this.name});
@@ -232,6 +233,16 @@ class _HomePageState extends State<HomePage> {
 
     final selected = await _showSiteSelectionDialog(requiredSelection: true);
     if (!mounted || selected == null) return;
+
+    final loadFuture = _syncEmployeesPerSiteToLocalDb(selected);
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => LoadingPage(loadFuture: loadFuture),
+        fullscreenDialog: true,
+      ),
+    );
+    if (!mounted) return;
 
     setState(() {
       _selectedSiteId = selected;
