@@ -495,9 +495,15 @@ class ZkfpSdk {
     final cbRegTemp = calloc<Uint32>();
     cbRegTemp.value = MAX_TEMPLATE_SIZE;
     
-    for (int i = 0; i < template1.length; i++) t1[i] = template1[i];
-    for (int i = 0; i < template2.length; i++) t2[i] = template2[i];
-    for (int i = 0; i < template3.length; i++) t3[i] = template3[i];
+    for (int i = 0; i < template1.length; i++) {
+      t1[i] = template1[i];
+    }
+    for (int i = 0; i < template2.length; i++) {
+      t2[i] = template2[i];
+    }
+    for (int i = 0; i < template3.length; i++) {
+      t3[i] = template3[i];
+    }
     
     final result = _dbMerge(_dbHandle, t1, t2, t3, regTemp, cbRegTemp);
     

@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- USB Host feature for fingerprint scanner -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
     
