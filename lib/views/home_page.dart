@@ -6,10 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
-import 'loading_page.dart';
 
 class _SiteOption {
   const _SiteOption({required this.id, required this.name});
@@ -53,9 +51,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   static const String _siteApiUrl =
       'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/site/all';
-  static const String _employeesPerSiteApiUrl =
-      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/perSite';
-  static const String _scannerDbPath = r'C:\SQLiteDB\biometric_scanner.db';
+  static const String _employeesApiUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/all';
+  static const String _attendanceApiUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/post/attendance/add';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
@@ -64,7 +63,7 @@ class _HomePageState extends State<HomePage> {
   String? _selectedSiteId;
   List<_SiteOption> _sites = const [];
   final Map<String, String> _deviceSiteMap = {};
-
+  
   final ZKTecoUSB _device = ZKTecoUSB();
   late final HomePageController _controller;
 
@@ -80,7 +79,6 @@ class _HomePageState extends State<HomePage> {
     _controller = Get.isRegistered<HomePageController>()
         ? Get.find<HomePageController>()
         : Get.put(HomePageController());
-    unawaited(_ensureScannerDbReady());
     _loadDeviceSiteMap();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requireSiteSelectionOnStartup();
@@ -126,12 +124,11 @@ class _HomePageState extends State<HomePage> {
     client.connectionTimeout = const Duration(seconds: 20);
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
+        final basicToken =
+          base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -146,14 +143,13 @@ class _HomePageState extends State<HomePage> {
       return list
           .map((site) {
             final name =
-                site['site_name'] ??
-                site['SITENAME'] ??
-                site['name'] ??
-                site['site'] ??
-                site['title'];
-            final id =
-                site['site_id'] ??
-                site['SITEID'] ??
+            site['site_name'] ??
+            site['SITENAME'] ??
+            site['name'] ??
+            site['site'] ??
+            site['title'];
+            final id = site['site_id'] ??
+            site['SITEID'] ??
                 site['id'] ??
                 site['siteid'] ??
                 site['site_code'] ??
@@ -182,8 +178,7 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _extractSiteRows(dynamic decoded) {
     dynamic data = decoded;
     if (decoded is Map<String, dynamic>) {
-      data =
-          decoded['data'] ??
+      data = decoded['data'] ??
           decoded['sites'] ??
           decoded['result'] ??
           decoded['records'] ??
@@ -191,10 +186,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (data is List) {
-      return data
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
     }
 
     return const [];
@@ -225,31 +217,17 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     if (_sites.isEmpty) {
-      _controller.setStatus(
-        'Cannot load site list. Please check API connection.',
-      );
+      _controller.setStatus('Cannot load site list. Please check API connection.');
       return;
     }
 
     final selected = await _showSiteSelectionDialog(requiredSelection: true);
     if (!mounted || selected == null) return;
 
-    final loadFuture = _syncEmployeesPerSiteToLocalDb(selected);
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => LoadingPage(loadFuture: loadFuture),
-        fullscreenDialog: true,
-      ),
-    );
-    if (!mounted) return;
-
     setState(() {
       _selectedSiteId = selected;
     });
-    _controller.setStatus(
-      'Selected site: ${_siteNameById(selected) ?? selected}',
-    );
+    _controller.setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
   }
 
   Future<String?> _showSiteSelectionDialog({
@@ -272,10 +250,7 @@ class _HomePageState extends State<HomePage> {
                 backgroundColor: Colors.transparent,
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 560),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 28,
-                    vertical: 24,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
@@ -376,9 +351,7 @@ class _HomePageState extends State<HomePage> {
                                     ? null
                                     : () => Navigator.of(context).pop(),
                                 style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(
-                                    color: Color(0xFFD6DBE5),
-                                  ),
+                                  side: const BorderSide(color: Color(0xFFD6DBE5)),
                                   foregroundColor: const Color(0xFF9CA3AF),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -393,8 +366,7 @@ class _HomePageState extends State<HomePage> {
                             child: SizedBox(
                               height: 44,
                               child: ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(selectedId),
+                                onPressed: () => Navigator.of(context).pop(selectedId),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
@@ -438,29 +410,26 @@ class _HomePageState extends State<HomePage> {
     }
     super.dispose();
   }
-
+  
   Future<void> _searchAndConnect() async {
     if (_controller.isSearching.value) return;
 
     if (_selectedSiteId == null) {
       await _requireSiteSelectionOnStartup();
       if (_selectedSiteId == null) {
-        _controller.setStatus(
-          'Please select a site before searching for device.',
-        );
+        _controller.setStatus('Please select a site before searching for device.');
         return;
       }
     }
 
     _controller.startSearching('Searching for device...');
-
+    
     try {
       if (ZKTecoUSB.isAndroidPlatform) {
         final env = await _device.getAndroidSdkEnvironment();
         final canUseSdk = env['canUseSdk'] == true;
         if (!canUseSdk) {
-          final reason =
-              env['reason']?.toString() ??
+          final reason = env['reason']?.toString() ??
               'Android runtime is not compatible with the ZKTeco SDK.';
           _controller.stopSearching(reason);
           return;
@@ -477,7 +446,7 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-
+      
       // Check device count
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
@@ -485,9 +454,9 @@ class _HomePageState extends State<HomePage> {
         await _device.terminateSdk();
         return;
       }
-
+      
       _controller.setStatus('Found $count device(s). Connecting...');
-
+      
       // Open device
       final opened = await _device.openDevice(0);
       if (opened) {
@@ -519,10 +488,7 @@ class _HomePageState extends State<HomePage> {
         final siteText = siteName != null ? ' | Site: $siteName' : '';
 
         _controller.stopSearching();
-        _controller.setConnected(
-          true,
-          status: 'Connected: ${serial ?? "Unknown"}$siteText',
-        );
+        _controller.setConnected(true, status: 'Connected: ${serial ?? "Unknown"}$siteText');
         await _loadAndRegisterTemplates();
         _startScanLoop();
       } else {
@@ -538,207 +504,82 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadAndRegisterTemplates() async {
     if (!mounted) return;
-    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
-      _controller.setStatus('Please select a site before scanning');
-      return;
-    }
-
     _controller.setStatus('Loading fingerprints...');
     try {
-      final siteId = _selectedSiteId!;
-      await _syncEmployeesPerSiteToLocalDb(siteId);
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 20);
+      try {
+        final urlStr = _selectedSiteId != null
+            ? '$_employeesApiUrl?site_id=$_selectedSiteId'
+            : _employeesApiUrl;
+        final request = await client.getUrl(Uri.parse(urlStr));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers
+            .set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
+        request.headers
+            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
-      final rows = await _readEmployeesFromLocalDb(siteId);
-      _employeeDb.clear();
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
 
-      await _device.clearDatabase();
-
-      int autoId = 1;
-      int registered = 0;
-
-      for (final row in rows) {
-        final empId = (row['employee_id'] ?? row['emp_id'] ?? row['id'])
-            ?.toString();
-        final empName =
-            (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                ?.toString();
-        final templateB64 =
-            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                ?.toString();
-        final rawFid = row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
-        final fid = int.tryParse(rawFid?.toString() ?? '') ?? autoId;
-
-        if (empId == null || templateB64 == null || templateB64.isEmpty) {
-          autoId++;
-          continue;
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          throw Exception('HTTP ${response.statusCode}');
         }
 
-        try {
-          final templateBytes = base64Decode(templateB64);
-          final ok = await _device.registerFingerprint(fid, templateBytes);
-          if (ok) {
-            _employeeDb[fid] = _EmployeeEntry(
-              id: empId,
-              name: empName ?? empId,
-            );
-            registered++;
-          }
-        } catch (_) {}
-        autoId++;
-      }
+        final decoded = jsonDecode(body);
+        final rows = _extractSiteRows(decoded);
+        _employeeDb.clear();
+        int autoId = 1;
+        int registered = 0;
 
-      if (!mounted) return;
-      _controller.setStatus(
-        registered > 0
-            ? 'Ready — $registered fingerprint(s) loaded'
-            : 'Ready — place finger on scanner',
-      );
+        for (final row in rows) {
+          final empId =
+              (row['employee_id'] ?? row['emp_id'] ?? row['id'])?.toString();
+          final empName =
+              (row['employee_name'] ?? row['full_name'] ?? row['name'])
+                  ?.toString();
+          final templateB64 =
+              (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+                  ?.toString();
+          final rawFid =
+              row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
+          final fid =
+              int.tryParse(rawFid?.toString() ?? '') ?? autoId;
+
+          if (empId == null || templateB64 == null || templateB64.isEmpty) {
+            autoId++;
+            continue;
+          }
+
+          try {
+            final templateBytes = base64Decode(templateB64);
+            final ok = await _device.registerFingerprint(fid, templateBytes);
+            if (ok) {
+              _employeeDb[fid] = _EmployeeEntry(
+                id: empId,
+                name: empName ?? empId,
+              );
+              registered++;
+            }
+          } catch (_) {}
+          autoId++;
+        }
+
+        if (!mounted) return;
+        _controller.setStatus(
+          registered > 0
+              ? 'Ready — $registered fingerprint(s) loaded'
+              : 'Ready — place finger on scanner',
+        );
+      } finally {
+        client.close(force: true);
+      }
     } catch (e) {
       if (!mounted) return;
       _controller.setStatus('Ready — place finger on scanner');
       debugPrint('_loadAndRegisterTemplates: $e');
-    }
-  }
-
-  Future<void> _syncEmployeesPerSiteToLocalDb(String siteId) async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
-    Database? db;
-
-    try {
-      final request = await client.getUrl(
-        Uri.parse('$_employeesPerSiteApiUrl?siteID=$siteId'),
-      );
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
-
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-
-      final decoded = jsonDecode(body);
-      final rows = _extractSiteRows(decoded);
-
-      db = await _openScannerDb();
-      await db.execute(
-        "DELETE FROM scanner_employee WHERE site_id = ? AND source = 'api'",
-        [siteId],
-      );
-
-      final batch = db.batch();
-      final now = DateTime.now().toIso8601String();
-      for (final row in rows) {
-        final templateB64 =
-            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                ?.toString();
-        if (templateB64 == null || templateB64.isEmpty) {
-          continue;
-        }
-
-        batch.insert('scanner_employee', {
-          'site_id': siteId,
-          'employee_id': (row['employee_id'] ?? row['emp_id'] ?? row['id'])
-              ?.toString(),
-          'employee_name':
-              (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                  ?.toString(),
-          'finger_id': (row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'])
-              ?.toString(),
-          'finger_template': templateB64,
-          'synced_at': now,
-          'source': 'api',
-        });
-      }
-      await batch.commit(noResult: true);
-    } catch (e) {
-      debugPrint('_syncEmployeesPerSiteToLocalDb error: $e');
-      if (mounted) {
-        _controller.setStatus('Sync failed — check API connection.');
-      }
-    } finally {
-      client.close(force: true);
-      await db?.close();
-    }
-  }
-
-  Future<List<Map<String, Object?>>> _readEmployeesFromLocalDb(
-    String siteId,
-  ) async {
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      return db.query(
-        'scanner_employee',
-        where: 'site_id = ?',
-        whereArgs: [siteId],
-        orderBy: 'id ASC',
-      );
-    } finally {
-      await db?.close();
-    }
-  }
-
-  Future<Database> _openScannerDb() async {
-    final dbDir = Directory(r'C:\SQLiteDB');
-    if (!await dbDir.exists()) {
-      await dbDir.create(recursive: true);
-    }
-
-    final dbFile = File(_scannerDbPath);
-    if (!await dbFile.exists()) {
-      await dbFile.create(recursive: true);
-    }
-
-    sqfliteFfiInit();
-    final db = await databaseFactoryFfi.openDatabase(_scannerDbPath);
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS scanner_employee (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        site_id TEXT NOT NULL,
-        employee_id TEXT,
-        employee_name TEXT,
-        finger_id TEXT,
-        finger_template TEXT,
-        synced_at TEXT,
-        source TEXT DEFAULT 'api'
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS scanner_attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        site_id TEXT NOT NULL,
-        employee_id TEXT,
-        attendance_type TEXT,
-        created_at TEXT
-      )
-    ''');
-
-    try {
-      await db.execute(
-        "ALTER TABLE scanner_employee ADD COLUMN source TEXT DEFAULT 'api'",
-      );
-    } catch (_) {}
-
-    return db;
-  }
-
-  Future<void> _ensureScannerDbReady() async {
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      _controller.setStatus('Local DB ready: $_scannerDbPath');
-    } catch (e) {
-      _controller.setStatus('Local DB init failed: $e');
-      debugPrint('_ensureScannerDbReady: $e');
-    } finally {
-      await db?.close();
     }
   }
 
@@ -752,8 +593,9 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Windows: poll the sensor every 250ms
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!_controller.isScanning.value || !_device.isConnected) {
+    _scanTimer =
+        Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!_isScanning || !_device.isConnected) {
         _stopScanLoop();
         return;
       }
@@ -789,186 +631,68 @@ class _HomePageState extends State<HomePage> {
     final employee = fingerId != null ? _employeeDb[fingerId] : null;
 
     if (employee != null) {
-      await _recordAttendanceToScannerDb(employee.id);
-      _displayResult(
-        _ScanResult(
-          success: true,
-          timestamp: DateTime.now(),
-          employeeId: employee.id,
-          employeeName: employee.name,
-          attendanceType: 'TIMED IN',
-        ),
-      );
+      final attendanceType = await _postAttendance(employee.id);
+      _displayResult(_ScanResult(
+        success: true,
+        timestamp: DateTime.now(),
+        employeeId: employee.id,
+        employeeName: employee.name,
+        attendanceType: attendanceType,
+      ));
     } else {
-      final shouldAdd = await _showAddBiometricUserPrompt(
-        hasFingerprintMatch: fid != null,
-      );
+      _displayResult(_ScanResult(
+        success: false,
+        timestamp: DateTime.now(),
+        errorMessage: fid != null
+            ? 'Employee not on record'
+            : 'Fingerprint not registered',
+      ));
+    }
+  }
 
-      if (shouldAdd) {
-        final added = await _addScannedUserToScannerDb(
-          template: template,
-          fid: fid,
-        );
-        if (added) {
-          unawaited(_refreshTemplatesAfterAdd());
-          _displayResult(
-            _ScanResult(
-              success: true,
-              timestamp: DateTime.now(),
-              employeeName: 'New Biometric User',
-              attendanceType: 'ADDED',
-            ),
-          );
-        } else {
-          _displayResult(
-            _ScanResult(
-              success: false,
-              timestamp: DateTime.now(),
-              errorMessage: 'Failed to add to local biometric_scanner.db',
-            ),
-          );
+  Future<String?> _postAttendance(String employeeId) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 10);
+      try {
+        final request =
+            await client.postUrl(Uri.parse(_attendanceApiUrl));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers
+            .set(HttpHeaders.contentTypeHeader, 'application/json');
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers
+            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+        final payload = jsonEncode({
+          'employee_id': employeeId,
+          'site_id': _selectedSiteId,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        request.contentLength = utf8.encode(payload).length;
+        request.write(payload);
+
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          try {
+            final decoded = jsonDecode(body);
+            final type = decoded['attendance_type'] ??
+                decoded['type'] ??
+                decoded['status'] ??
+                decoded['log_type'];
+            if (type != null) return type.toString().toUpperCase();
+          } catch (_) {}
         }
-      } else {
-        _displayResult(
-          _ScanResult(
-            success: false,
-            timestamp: DateTime.now(),
-            errorMessage: fid != null
-                ? 'Employee not on record'
-                : 'Fingerprint not registered',
-          ),
-        );
+      } finally {
+        client.close(force: true);
       }
-    }
-  }
-
-  Future<void> _refreshTemplatesAfterAdd() async {
-    try {
-      await _loadAndRegisterTemplates().timeout(const Duration(seconds: 8));
     } catch (e) {
-      debugPrint('_refreshTemplatesAfterAdd: $e');
+      debugPrint('_postAttendance: $e');
     }
-  }
-
-  Future<bool> _showAddBiometricUserPrompt({
-    required bool hasFingerprintMatch,
-  }) async {
-    if (!mounted) return false;
-
-    final action = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Unregistered Fingerprint'),
-          content: Text(
-            hasFingerprintMatch
-                ? 'This fingerprint matched a device template but is not in the registered list.\n\nAdd it to biometric_user?'
-                : 'This fingerprint is not in the registered list.\n\nAdd it to biometric_user?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Skip'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Add'),
-            ),
-          ],
-        );
-      },
-    );
-
-    return action == true;
-  }
-
-  Future<bool> _addScannedUserToScannerDb({
-    required Uint8List template,
-    String? fid,
-  }) async {
-    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
-      _controller.setStatus('Cannot add user: no site selected');
-      return false;
-    }
-
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      final siteId = _selectedSiteId!;
-      final parsedFid = int.tryParse(fid ?? '');
-
-      int nextFid;
-      if (parsedFid != null && parsedFid > 0) {
-        nextFid = parsedFid;
-      } else {
-        final maxRows = await db.rawQuery(
-          '''
-          SELECT MAX(CAST(finger_id AS INTEGER)) AS max_fid
-          FROM scanner_employee
-          WHERE site_id = ?
-        ''',
-          [siteId],
-        );
-        final rawMax = maxRows.isNotEmpty ? maxRows.first['max_fid'] : null;
-        final maxFid = int.tryParse('${rawMax ?? ''}') ?? 0;
-        nextFid = maxFid + 1;
-      }
-
-      final now = DateTime.now();
-      final employeeId = 'LOCAL-${now.millisecondsSinceEpoch}';
-
-      await db.insert('scanner_employee', {
-        'site_id': siteId,
-        'employee_id': employeeId,
-        'employee_name': 'New Biometric User',
-        'finger_id': nextFid.toString(),
-        'finger_template': base64Encode(template),
-        'synced_at': now.toIso8601String(),
-        'source': 'local',
-      });
-
-      final registered = await _device.registerFingerprint(nextFid, template);
-      if (registered) {
-        _employeeDb[nextFid] = _EmployeeEntry(
-          id: employeeId,
-          name: 'New Biometric User',
-        );
-      }
-
-      return true;
-    } catch (e) {
-      debugPrint('_addScannedUserToScannerDb: $e');
-      _controller.setStatus('Add user failed: $e');
-      return false;
-    } finally {
-      await db?.close();
-    }
-  }
-
-  Future<bool> _recordAttendanceToScannerDb(String employeeId) async {
-    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
-      _controller.setStatus('Cannot log attendance: no site selected');
-      return false;
-    }
-
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      await db.insert('scanner_attendance', {
-        'site_id': _selectedSiteId,
-        'employee_id': employeeId,
-        'attendance_type': 'TIMED IN',
-        'created_at': DateTime.now().toIso8601String(),
-      });
-
-      return true;
-    } catch (e) {
-      debugPrint('_recordAttendanceToScannerDb: $e');
-      _controller.setStatus('Attendance write failed: $e');
-      return false;
-    } finally {
-      await db?.close();
-    }
+    return null;
   }
 
   void _displayResult(_ScanResult result) {
@@ -1002,18 +726,8 @@ class _HomePageState extends State<HomePage> {
   String get _dateString {
     final currentTime = _controller.now.value;
     const months = [
-      'JANUARY',
-      'FEBRUARY',
-      'MARCH',
-      'APRIL',
-      'MAY',
-      'JUNE',
-      'JULY',
-      'AUGUST',
-      'SEPTEMBER',
-      'OCTOBER',
-      'NOVEMBER',
-      'DECEMBER',
+      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
     ];
     return '${months[currentTime.month - 1]} ${currentTime.day}, ${currentTime.year}';
   }
@@ -1022,33 +736,36 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
-    return Scaffold(
-      body: Container(
-        width: screenW,
-        height: screenH,
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/FinalBG.png'),
-            fit: BoxFit.cover,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: screenW * 0.025,
-              vertical: screenH * 0.025,
+    return Obx(
+      () => Scaffold(
+        body: Container(
+          width: screenW,
+          height: screenH,
+          decoration: const BoxDecoration(
+            image: DecorationImage(
+              image: AssetImage('assets/images/Main BG.png'),
+              fit: BoxFit.cover,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Image.asset(
-                  'assets/images/FastLogo.png',
-                  height: screenH * 0.10,
-                  fit: BoxFit.contain,
-                ),
-                SizedBox(height: screenH * 0.018),
-                Expanded(child: _buildMainCard(screenW, screenH)),
-              ],
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: screenW * 0.025,
+                vertical: screenH * 0.025,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SvgPicture.asset(
+                    'assets/logo/Fast Logo.svg',
+                    height: screenH * 0.065,
+                    colorFilter: const ColorFilter.mode(
+                        Colors.white, BlendMode.srcIn),
+                  ),
+                  SizedBox(height: screenH * 0.018),
+                  Expanded(child: _buildMainCard(screenW, screenH)),
+                ],
+              ),
             ),
           ),
         ),
@@ -1062,32 +779,13 @@ class _HomePageState extends State<HomePage> {
 
     return Stack(
       children: [
-        // Particles spread across the card (no dark container)
+        // Card background
         Positioned.fill(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(screenW * 0.015),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final w = constraints.maxWidth;
-                final h = constraints.maxHeight;
-                final size = (w * 0.090).clamp(64.0, 88.0);
-                return Stack(
-                  children: [
-                    _positionedParticle(w, h, 0.08, 0.12, size * 1.25, 0),
-                    _positionedParticle(w, h, 0.130, 0.105, size * 0.5, 0.3),
-                    _positionedParticle(w, h, 0.15, 0.55, size * 0.9, 0.6),
-                    _positionedParticle(w, h, 0.78, 0.5, size * 1.15, 0.2),
-                    _positionedParticle(w, h, 0.45, 0.18, size * 0.55, 0.5),
-                    _positionedParticle(w, h, 0.10, 0.72, size * 1.1, 0.8),
-                    _positionedParticle(w, h, 0.25, 0.35, size * 0.45, 0.15),
-                    _positionedParticle(w, h, 0.7, 0.28, size * 0.95, 0.45),
-                    _positionedParticle(w, h, 0.35, 0.78, size * 0.6, 0.7),
-                    _positionedParticle(w, h, 0.88, 0.65, size * 1.2, 0.25),
-                    _positionedParticle(w, h, 0.05, 0.42, size * 0.5, 0.9),
-                    _positionedParticle(w, h, 0.6, 0.42, size * 0.75, 0.35),
-                  ],
-                );
-              },
+            child: Image.asset(
+              'assets/images/card.png',
+              fit: BoxFit.cover,
             ),
           ),
         ),
@@ -1132,7 +830,7 @@ class _HomePageState extends State<HomePage> {
                           style: TextStyle(
                             fontFamily: 'TRTCENZODEMO',
                             fontWeight: FontWeight.w600,
-                            fontSize: cardW * 0.06,
+                            fontSize: cardW * 0.04,
                             color: Colors.white,
                             height: 1.15,
                             letterSpacing: 1,
@@ -1145,104 +843,95 @@ class _HomePageState extends State<HomePage> {
                     Positioned(
                       left: 0,
                       bottom: 0,
-                      child: Obx(
-                        () => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildStatusButton(
-                              label: _controller.biometricConnected.value
-                                  ? 'BIOMETRIC CONNECTED'
-                                  : 'BIOMETRIC NOT CONNECTED',
-                              textColor: _controller.biometricConnected.value
-                                  ? const Color(0xFF4CAF50)
-                                  : const Color(0xFFE53935),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildStatusButton(
+                            label: _controller.biometricConnected.value
+                                ? 'BIOMETRIC CONNECTED'
+                                : 'BIOMETRIC NOT CONNECTED',
+                            textColor: _controller.biometricConnected.value
+                                ? const Color(0xFF4CAF50)
+                                : const Color(0xFFE53935),
+                            cardW: cardW,
+                            cardH: cardH,
+                          ),
+                          SizedBox(height: cardH * 0.02),
+                          GestureDetector(
+                            onTap: (_controller.isSearching.value ||
+                                    _controller.biometricConnected.value)
+                                ? null
+                                : _searchAndConnect,
+                            child: _buildStatusButton(
+                              label: _controller.isSearching.value
+                                  ? 'SEARCHING...'
+                                  : _controller.isScanning.value
+                                      ? 'SCANNING...'
+                                      : _controller.biometricConnected.value
+                                          ? 'ACTIVE'
+                                          : 'SEARCH MODE',
+                              textColor: (_controller.isSearching.value ||
+                                      _controller.isScanning.value)
+                                  ? const Color(0xFFFFB74D)
+                                  : Colors.white,
                               cardW: cardW,
                               cardH: cardH,
+                              showLoading: _controller.isSearching.value ||
+                                  _controller.isScanning.value,
                             ),
-                            SizedBox(height: cardH * 0.02),
-                            GestureDetector(
-                              onTap:
-                                  (_controller.isSearching.value ||
-                                      _controller.biometricConnected.value)
-                                  ? null
-                                  : _searchAndConnect,
-                              child: _buildStatusButton(
-                                label: _controller.isSearching.value
-                                    ? 'SEARCHING...'
-                                    : _controller.isScanning.value
-                                    ? 'SCANNING...'
-                                    : _controller.biometricConnected.value
-                                    ? 'ACTIVE'
-                                    : 'SEARCH MODE',
-                                textColor:
-                                    (_controller.isSearching.value ||
-                                        _controller.isScanning.value)
-                                    ? const Color(0xFFFFB74D)
-                                    : Colors.white,
-                                cardW: cardW,
-                                cardH: cardH,
-                                showLoading:
-                                    _controller.isSearching.value ||
-                                    _controller.isScanning.value,
-                              ),
-                            ),
-                            if (_controller.statusMessage.value.isNotEmpty) ...[
-                              SizedBox(height: cardH * 0.015),
-                              SizedBox(
-                                width: cardW * 0.32,
-                                child: Text(
-                                  _controller.statusMessage.value,
-                                  style: TextStyle(
-                                    fontFamily: 'CEORUSE',
-                                    fontSize: cardW * 0.012,
-                                    color: Colors.white.withValues(alpha: 0.7),
-                                    letterSpacing: 1,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+                          ),
+                          if (_controller.statusMessage.value.isNotEmpty) ...[
+                            SizedBox(height: cardH * 0.015),
+                            SizedBox(
+                              width: cardW * 0.32,
+                              child: Text(
+                                _controller.statusMessage.value,
+                                style: TextStyle(
+                                  fontFamily: 'CEORUSE',
+                                  fontSize: cardW * 0.012,
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                  letterSpacing: 1,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ],
+                            ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
 
                     // ── Bottom-right: time & date ──
                     Positioned(
-                      right: cardW * 0.01,
-                      bottom: cardH * 0.06,
-                      child: Obx(
-                        () => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _timeString,
-                              textAlign: TextAlign.left,
-                              style: TextStyle(
-                                fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.07,
-                                color: Colors.white,
-                                letterSpacing: 4,
-                                height: 1,
-                              ),
+                      right: 0,
+                      bottom: 0,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _timeString,
+                            style: TextStyle(
+                              fontFamily: 'CEORUSE',
+                              fontSize: cardW * 0.055,
+                              color: Colors.white,
+                              letterSpacing: 4,
+                              height: 1,
                             ),
-                            SizedBox(height: cardH * 0.01),
-                            Text(
-                              _dateString,
-                              textAlign: TextAlign.left,
-                              style: TextStyle(
-                                fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.030,
-                                color: Colors.white.withValues(alpha: 0.85),
-                                letterSpacing: 3,
-                                height: 1,
-                              ),
+                          ),
+                          SizedBox(height: cardH * 0.01),
+                          Text(
+                            _dateString,
+                            style: TextStyle(
+                              fontFamily: 'CEORUSE',
+                              fontSize: cardW * 0.024,
+                              color: Colors.white.withValues(alpha: 0.85),
+                              letterSpacing: 3,
+                              height: 1,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
 
@@ -1258,27 +947,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _positionedParticle(
-    double w,
-    double h,
-    double fracLeft,
-    double fracTop,
-    double sizePx,
-    double phase,
-  ) {
-    return Positioned(
-      left: w * fracLeft - sizePx / 2,
-      top: h * fracTop - sizePx / 2,
-      width: sizePx,
-      height: sizePx,
-      child: _RisingFadeParticle(
-        size: sizePx,
-        phase: phase,
-        assetPath: 'assets/icons/square-particles-fx.svg',
-      ),
-    );
-  }
-
   Widget _buildStatusButton({
     required String label,
     required Color textColor,
@@ -1287,12 +955,11 @@ class _HomePageState extends State<HomePage> {
     bool showLoading = false,
   }) {
     return Container(
-      width: cardW * 0.44,
+      width: cardW * 0.32,
       padding: EdgeInsets.symmetric(
-        horizontal: cardW * 0.022,
+        horizontal: cardW * 0.018,
         vertical: cardH * 0.028,
       ),
-      alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(cardW * 0.01),
         border: Border.all(
@@ -1306,7 +973,6 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (showLoading) ...[
             SizedBox(
@@ -1322,11 +988,9 @@ class _HomePageState extends State<HomePage> {
           Flexible(
             child: Text(
               label,
-              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'CEORUSE',
                 fontSize: cardW * 0.016,
-                fontWeight: FontWeight.bold,
                 color: textColor,
                 letterSpacing: 2,
               ),
@@ -1404,98 +1068,6 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Rising + fading particle using square-particles-fx.svg.
-class _RisingFadeParticle extends StatefulWidget {
-  const _RisingFadeParticle({
-    required this.size,
-    required this.assetPath,
-    this.phase = 0.0,
-  });
-
-  final double size;
-  final String assetPath;
-  final double phase;
-
-  @override
-  State<_RisingFadeParticle> createState() => _RisingFadeParticleState();
-}
-
-class _RisingFadeParticleState extends State<_RisingFadeParticle>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-  Animation<double>? _opacity;
-  Animation<double>? _translateY;
-  Animation<double>? _scale;
-
-  static const double _riseDistance = 56.0;
-  static const Duration _duration = Duration(milliseconds: 2800);
-
-  @override
-  void initState() {
-    super.initState();
-    final controller = AnimationController(vsync: this, duration: _duration);
-    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
-    _controller = controller;
-    _opacity = Tween<double>(begin: 0.65, end: 0.0).animate(curve);
-    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
-    _scale = Tween<double>(begin: 1.0, end: 0.75).animate(curve);
-    controller.value = widget.phase;
-    controller.repeat();
-  }
-
-  @override
-  void didUpdateWidget(_RisingFadeParticle oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.phase != widget.phase) _controller?.value = widget.phase;
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    _controller = null;
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    final opacity = _opacity;
-    final translateY = _translateY;
-    final scale = _scale;
-    if (controller == null ||
-        opacity == null ||
-        translateY == null ||
-        scale == null) {
-      return const SizedBox.shrink();
-    }
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, translateY.value),
-          child: Opacity(
-            opacity: opacity.value,
-            child: Transform.scale(
-              scale: scale.value,
-              alignment: Alignment.center,
-              child: SvgPicture.asset(
-                widget.assetPath,
-                width: widget.size,
-                height: widget.size,
-                fit: BoxFit.contain,
-                colorFilter: const ColorFilter.mode(
-                  Color(0xFF5FCFFF),
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }
