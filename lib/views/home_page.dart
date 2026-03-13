@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,31 @@ class _SiteOption {
   final String name;
 }
 
+class _EmployeeEntry {
+  const _EmployeeEntry({required this.id, required this.name});
+
+  final String id;
+  final String name;
+}
+
+class _ScanResult {
+  const _ScanResult({
+    required this.success,
+    required this.timestamp,
+    this.employeeId,
+    this.employeeName,
+    this.attendanceType,
+    this.errorMessage,
+  });
+
+  final bool success;
+  final DateTime timestamp;
+  final String? employeeId;
+  final String? employeeName;
+  final String? attendanceType; // 'TIME IN' or 'TIME OUT'
+  final String? errorMessage;
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -23,6 +49,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   static const String _siteApiUrl =
       'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/site/all';
+  static const String _employeesApiUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/all';
+  static const String _attendanceApiUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/post/attendance/add';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
@@ -38,6 +68,13 @@ class _HomePageState extends State<HomePage> {
   final Map<String, String> _deviceSiteMap = {};
   
   final ZKTecoUSB _device = ZKTecoUSB();
+
+  // Scan loop state
+  bool _isScanning = false;
+  Timer? _scanTimer;
+  _ScanResult? _lastResult;
+  bool _showResult = false;
+  final Map<int, _EmployeeEntry> _employeeDb = {};
 
   @override
   void initState() {
@@ -60,6 +97,10 @@ class _HomePageState extends State<HomePage> {
           _biometricConnected = false;
           _statusMessage = 'Device detached';
         });
+        _stopScanLoop();
+      };
+      _device.onTemplateExtracted = (template, size) {
+        if (_isScanning) _onTemplateReady(template);
       };
     }
   }
@@ -211,8 +252,8 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        return WillPopScope(
-          onWillPop: () async => !requiredSelection,
+        return PopScope(
+          canPop: !requiredSelection,
           child: StatefulBuilder(
             builder: (context, setDialogState) {
               return Dialog(
@@ -278,7 +319,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         child: DropdownButtonFormField<String>(
                           isExpanded: true,
-                          value: selectedId,
+                          initialValue: selectedId,
                           decoration: const InputDecoration(
                             border: InputBorder.none,
                             contentPadding: EdgeInsets.symmetric(
@@ -373,6 +414,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _clockTimer.cancel();
+    _scanTimer?.cancel();
     _device.dispose();
     super.dispose();
   }
@@ -454,6 +496,8 @@ class _HomePageState extends State<HomePage> {
           _isSearching = false;
           _statusMessage = 'Connected: ${serial ?? "Unknown"}$siteText';
         });
+        await _loadAndRegisterTemplates();
+        _startScanLoop();
       } else {
         setState(() {
           _isSearching = false;
@@ -467,6 +511,217 @@ class _HomePageState extends State<HomePage> {
         _statusMessage = 'Error: $e';
       });
     }
+  }
+
+  // ==================== Template Loading & Scan Loop ====================
+
+  Future<void> _loadAndRegisterTemplates() async {
+    if (!mounted) return;
+    setState(() => _statusMessage = 'Loading fingerprints...');
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 20);
+      try {
+        final urlStr = _selectedSiteId != null
+            ? '$_employeesApiUrl?site_id=$_selectedSiteId'
+            : _employeesApiUrl;
+        final request = await client.getUrl(Uri.parse(urlStr));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers
+            .set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
+        request.headers
+            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          throw Exception('HTTP ${response.statusCode}');
+        }
+
+        final decoded = jsonDecode(body);
+        final rows = _extractSiteRows(decoded);
+        _employeeDb.clear();
+        int autoId = 1;
+        int registered = 0;
+
+        for (final row in rows) {
+          final empId =
+              (row['employee_id'] ?? row['emp_id'] ?? row['id'])?.toString();
+          final empName =
+              (row['employee_name'] ?? row['full_name'] ?? row['name'])
+                  ?.toString();
+          final templateB64 =
+              (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+                  ?.toString();
+          final rawFid =
+              row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
+          final fid =
+              int.tryParse(rawFid?.toString() ?? '') ?? autoId;
+
+          if (empId == null || templateB64 == null || templateB64.isEmpty) {
+            autoId++;
+            continue;
+          }
+
+          try {
+            final templateBytes = base64Decode(templateB64);
+            final ok = await _device.registerFingerprint(fid, templateBytes);
+            if (ok) {
+              _employeeDb[fid] = _EmployeeEntry(
+                id: empId,
+                name: empName ?? empId,
+              );
+              registered++;
+            }
+          } catch (_) {}
+          autoId++;
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = registered > 0
+              ? 'Ready — $registered fingerprint(s) loaded'
+              : 'Ready — place finger on scanner';
+        });
+      } finally {
+        client.close(force: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _statusMessage = 'Ready — place finger on scanner');
+      debugPrint('_loadAndRegisterTemplates: $e');
+    }
+  }
+
+  void _startScanLoop() {
+    if (_isScanning || !_device.isConnected) return;
+    if (mounted) setState(() => _isScanning = true);
+
+    if (ZKTecoUSB.isAndroidPlatform) {
+      // Android is event-driven via onTemplateExtracted callback
+      return;
+    }
+
+    // Windows: poll the sensor every 250ms
+    _scanTimer =
+        Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!_isScanning || !_device.isConnected) {
+        _stopScanLoop();
+        return;
+      }
+      final result = _device.acquireFingerprintOnce();
+      if (result.template != null) {
+        _scanTimer?.cancel();
+        _scanTimer = null;
+        _onTemplateReady(result.template!);
+      }
+    });
+  }
+
+  void _stopScanLoop() {
+    _scanTimer?.cancel();
+    _scanTimer = null;
+    if (mounted) setState(() => _isScanning = false);
+  }
+
+  Future<void> _onTemplateReady(Uint8List template) async {
+    if (!mounted || !_device.isConnected) return;
+    if (mounted) setState(() => _isScanning = false);
+
+    String? fid;
+    if (ZKTecoUSB.isAndroidPlatform) {
+      final res = await _device.identifyFingerprint();
+      if (res.found) fid = res.fid;
+    } else {
+      final res = _device.identifyTemplate(template);
+      if (res.fingerId != null) fid = res.fingerId.toString();
+    }
+
+    final fingerId = int.tryParse(fid ?? '');
+    final employee = fingerId != null ? _employeeDb[fingerId] : null;
+
+    if (employee != null) {
+      final attendanceType = await _postAttendance(employee.id);
+      _displayResult(_ScanResult(
+        success: true,
+        timestamp: DateTime.now(),
+        employeeId: employee.id,
+        employeeName: employee.name,
+        attendanceType: attendanceType,
+      ));
+    } else {
+      _displayResult(_ScanResult(
+        success: false,
+        timestamp: DateTime.now(),
+        errorMessage: fid != null
+            ? 'Employee not on record'
+            : 'Fingerprint not registered',
+      ));
+    }
+  }
+
+  Future<String?> _postAttendance(String employeeId) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 10);
+      try {
+        final request =
+            await client.postUrl(Uri.parse(_attendanceApiUrl));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers
+            .set(HttpHeaders.contentTypeHeader, 'application/json');
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers
+            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+        final payload = jsonEncode({
+          'employee_id': employeeId,
+          'site_id': _selectedSiteId,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        request.contentLength = utf8.encode(payload).length;
+        request.write(payload);
+
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          try {
+            final decoded = jsonDecode(body);
+            final type = decoded['attendance_type'] ??
+                decoded['type'] ??
+                decoded['status'] ??
+                decoded['log_type'];
+            if (type != null) return type.toString().toUpperCase();
+          } catch (_) {}
+        }
+      } finally {
+        client.close(force: true);
+      }
+    } catch (e) {
+      debugPrint('_postAttendance: $e');
+    }
+    return null;
+  }
+
+  void _displayResult(_ScanResult result) {
+    if (!mounted) return;
+    setState(() {
+      _lastResult = result;
+      _showResult = true;
+      _statusMessage = result.success
+          ? '${result.employeeName ?? 'Employee'} — ${result.attendanceType ?? 'RECORDED'}'
+          : (result.errorMessage ?? 'Scan failed');
+    });
+    Future.delayed(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      setState(() => _showResult = false);
+      if (_device.isConnected) _startScanLoop();
+    });
   }
 
   String get _timeString {
@@ -613,15 +868,23 @@ class _HomePageState extends State<HomePage> {
                           ),
                           SizedBox(height: cardH * 0.02),
                           GestureDetector(
-                            onTap: _isSearching ? null : _searchAndConnect,
+                            onTap: (_isSearching || _biometricConnected)
+                                ? null
+                                : _searchAndConnect,
                             child: _buildStatusButton(
-                              label: _isSearching ? 'SEARCHING...' : 'SEARCH MODE',
-                              textColor: _isSearching 
+                              label: _isSearching
+                                  ? 'SEARCHING...'
+                                  : _isScanning
+                                      ? 'SCANNING...'
+                                      : _biometricConnected
+                                          ? 'ACTIVE'
+                                          : 'SEARCH MODE',
+                              textColor: (_isSearching || _isScanning)
                                   ? const Color(0xFFFFB74D)
                                   : Colors.white,
                               cardW: cardW,
                               cardH: cardH,
-                              showLoading: _isSearching,
+                              showLoading: _isSearching || _isScanning,
                             ),
                           ),
                           if (_statusMessage.isNotEmpty) ...[
@@ -677,6 +940,9 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
+
+                    // ── Scan result overlay ──
+                    _buildResultOverlay(cardW, cardH),
                   ],
                 );
               },
@@ -737,6 +1003,76 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildResultOverlay(double cardW, double cardH) {
+    if (!_showResult || _lastResult == null) return const SizedBox.shrink();
+
+    final result = _lastResult!;
+    final isSuccess = result.success;
+    final overlayColor = isSuccess
+        ? const Color(0xFF1B5E20).withValues(alpha: 0.93)
+        : const Color(0xFFB71C1C).withValues(alpha: 0.93);
+
+    return Positioned.fill(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(cardW * 0.015),
+        child: Container(
+          color: overlayColor,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isSuccess
+                      ? Icons.check_circle_outline
+                      : Icons.cancel_outlined,
+                  color: Colors.white,
+                  size: cardW * 0.07,
+                ),
+                SizedBox(height: cardH * 0.025),
+                if (isSuccess && result.employeeName != null) ...[
+                  Text(
+                    result.employeeName!.toUpperCase(),
+                    style: TextStyle(
+                      fontFamily: 'CEORUSE',
+                      fontSize: cardW * 0.04,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 2,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: cardH * 0.015),
+                ],
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: cardW * 0.025,
+                    vertical: cardH * 0.012,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isSuccess
+                        ? (result.attendanceType ?? 'RECORDED')
+                        : (result.errorMessage ?? 'UNREGISTERED'),
+                    style: TextStyle(
+                      fontFamily: 'CEORUSE',
+                      fontSize: cardW * 0.028,
+                      color: Colors.white,
+                      letterSpacing: 3,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
