@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
 
@@ -51,10 +52,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   static const String _siteApiUrl =
       'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/site/all';
-  static const String _employeesApiUrl =
-      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/all';
-  static const String _attendanceApiUrl =
-      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/post/attendance/add';
+  static const String _employeesPerSiteApiUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/perSite';
+  static const String _scannerDbPath = r'C:\SQLiteDB\biometric_scanner.db';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
@@ -63,7 +63,7 @@ class _HomePageState extends State<HomePage> {
   String? _selectedSiteId;
   List<_SiteOption> _sites = const [];
   final Map<String, String> _deviceSiteMap = {};
-  
+
   final ZKTecoUSB _device = ZKTecoUSB();
   late final HomePageController _controller;
 
@@ -79,6 +79,7 @@ class _HomePageState extends State<HomePage> {
     _controller = Get.isRegistered<HomePageController>()
         ? Get.find<HomePageController>()
         : Get.put(HomePageController());
+    unawaited(_ensureScannerDbReady());
     _loadDeviceSiteMap();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requireSiteSelectionOnStartup();
@@ -124,11 +125,12 @@ class _HomePageState extends State<HomePage> {
     client.connectionTimeout = const Duration(seconds: 20);
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
-        final basicToken =
-          base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+      final basicToken = base64Encode(
+        utf8.encode('$_apiUsername:$_apiPassword'),
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -143,13 +145,14 @@ class _HomePageState extends State<HomePage> {
       return list
           .map((site) {
             final name =
-            site['site_name'] ??
-            site['SITENAME'] ??
-            site['name'] ??
-            site['site'] ??
-            site['title'];
-            final id = site['site_id'] ??
-            site['SITEID'] ??
+                site['site_name'] ??
+                site['SITENAME'] ??
+                site['name'] ??
+                site['site'] ??
+                site['title'];
+            final id =
+                site['site_id'] ??
+                site['SITEID'] ??
                 site['id'] ??
                 site['siteid'] ??
                 site['site_code'] ??
@@ -178,7 +181,8 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _extractSiteRows(dynamic decoded) {
     dynamic data = decoded;
     if (decoded is Map<String, dynamic>) {
-      data = decoded['data'] ??
+      data =
+          decoded['data'] ??
           decoded['sites'] ??
           decoded['result'] ??
           decoded['records'] ??
@@ -186,7 +190,10 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (data is List) {
-      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
 
     return const [];
@@ -217,7 +224,9 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     if (_sites.isEmpty) {
-      _controller.setStatus('Cannot load site list. Please check API connection.');
+      _controller.setStatus(
+        'Cannot load site list. Please check API connection.',
+      );
       return;
     }
 
@@ -227,7 +236,9 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _selectedSiteId = selected;
     });
-    _controller.setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
+    _controller.setStatus(
+      'Selected site: ${_siteNameById(selected) ?? selected}',
+    );
   }
 
   Future<String?> _showSiteSelectionDialog({
@@ -250,7 +261,10 @@ class _HomePageState extends State<HomePage> {
                 backgroundColor: Colors.transparent,
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 560),
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 24,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
@@ -351,7 +365,9 @@ class _HomePageState extends State<HomePage> {
                                     ? null
                                     : () => Navigator.of(context).pop(),
                                 style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: Color(0xFFD6DBE5)),
+                                  side: const BorderSide(
+                                    color: Color(0xFFD6DBE5),
+                                  ),
                                   foregroundColor: const Color(0xFF9CA3AF),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -366,7 +382,8 @@ class _HomePageState extends State<HomePage> {
                             child: SizedBox(
                               height: 44,
                               child: ElevatedButton(
-                                onPressed: () => Navigator.of(context).pop(selectedId),
+                                onPressed: () =>
+                                    Navigator.of(context).pop(selectedId),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
@@ -410,26 +427,29 @@ class _HomePageState extends State<HomePage> {
     }
     super.dispose();
   }
-  
+
   Future<void> _searchAndConnect() async {
     if (_controller.isSearching.value) return;
 
     if (_selectedSiteId == null) {
       await _requireSiteSelectionOnStartup();
       if (_selectedSiteId == null) {
-        _controller.setStatus('Please select a site before searching for device.');
+        _controller.setStatus(
+          'Please select a site before searching for device.',
+        );
         return;
       }
     }
 
     _controller.startSearching('Searching for device...');
-    
+
     try {
       if (ZKTecoUSB.isAndroidPlatform) {
         final env = await _device.getAndroidSdkEnvironment();
         final canUseSdk = env['canUseSdk'] == true;
         if (!canUseSdk) {
-          final reason = env['reason']?.toString() ??
+          final reason =
+              env['reason']?.toString() ??
               'Android runtime is not compatible with the ZKTeco SDK.';
           _controller.stopSearching(reason);
           return;
@@ -446,7 +466,7 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-      
+
       // Check device count
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
@@ -454,9 +474,9 @@ class _HomePageState extends State<HomePage> {
         await _device.terminateSdk();
         return;
       }
-      
+
       _controller.setStatus('Found $count device(s). Connecting...');
-      
+
       // Open device
       final opened = await _device.openDevice(0);
       if (opened) {
@@ -488,7 +508,10 @@ class _HomePageState extends State<HomePage> {
         final siteText = siteName != null ? ' | Site: $siteName' : '';
 
         _controller.stopSearching();
-        _controller.setConnected(true, status: 'Connected: ${serial ?? "Unknown"}$siteText');
+        _controller.setConnected(
+          true,
+          status: 'Connected: ${serial ?? "Unknown"}$siteText',
+        );
         await _loadAndRegisterTemplates();
         _startScanLoop();
       } else {
@@ -504,82 +527,202 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadAndRegisterTemplates() async {
     if (!mounted) return;
+    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
+      _controller.setStatus('Please select a site before scanning');
+      return;
+    }
+
     _controller.setStatus('Loading fingerprints...');
     try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 20);
-      try {
-        final urlStr = _selectedSiteId != null
-            ? '$_employeesApiUrl?site_id=$_selectedSiteId'
-            : _employeesApiUrl;
-        final request = await client.getUrl(Uri.parse(urlStr));
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers
-            .set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers
-            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+      final siteId = _selectedSiteId!;
+      await _syncEmployeesPerSiteToLocalDb(siteId);
 
-        final response = await request.close();
-        final body = await response.transform(utf8.decoder).join();
+      final rows = await _readEmployeesFromLocalDb(siteId);
+      _employeeDb.clear();
 
-        if (response.statusCode < 200 || response.statusCode > 299) {
-          throw Exception('HTTP ${response.statusCode}');
-        }
+      await _device.clearDatabase();
 
-        final decoded = jsonDecode(body);
-        final rows = _extractSiteRows(decoded);
-        _employeeDb.clear();
-        int autoId = 1;
-        int registered = 0;
+      int autoId = 1;
+      int registered = 0;
 
-        for (final row in rows) {
-          final empId =
-              (row['employee_id'] ?? row['emp_id'] ?? row['id'])?.toString();
-          final empName =
-              (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                  ?.toString();
-          final templateB64 =
-              (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                  ?.toString();
-          final rawFid =
-              row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
-          final fid =
-              int.tryParse(rawFid?.toString() ?? '') ?? autoId;
+      for (final row in rows) {
+        final empId = (row['employee_id'] ?? row['emp_id'] ?? row['id'])
+            ?.toString();
+        final empName =
+            (row['employee_name'] ?? row['full_name'] ?? row['name'])
+                ?.toString();
+        final templateB64 =
+            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+                ?.toString();
+        final rawFid = row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
+        final fid = int.tryParse(rawFid?.toString() ?? '') ?? autoId;
 
-          if (empId == null || templateB64 == null || templateB64.isEmpty) {
-            autoId++;
-            continue;
-          }
-
-          try {
-            final templateBytes = base64Decode(templateB64);
-            final ok = await _device.registerFingerprint(fid, templateBytes);
-            if (ok) {
-              _employeeDb[fid] = _EmployeeEntry(
-                id: empId,
-                name: empName ?? empId,
-              );
-              registered++;
-            }
-          } catch (_) {}
+        if (empId == null || templateB64 == null || templateB64.isEmpty) {
           autoId++;
+          continue;
         }
 
-        if (!mounted) return;
-        _controller.setStatus(
-          registered > 0
-              ? 'Ready — $registered fingerprint(s) loaded'
-              : 'Ready — place finger on scanner',
-        );
-      } finally {
-        client.close(force: true);
+        try {
+          final templateBytes = base64Decode(templateB64);
+          final ok = await _device.registerFingerprint(fid, templateBytes);
+          if (ok) {
+            _employeeDb[fid] = _EmployeeEntry(
+              id: empId,
+              name: empName ?? empId,
+            );
+            registered++;
+          }
+        } catch (_) {}
+        autoId++;
       }
+
+      if (!mounted) return;
+      _controller.setStatus(
+        registered > 0
+            ? 'Ready — $registered fingerprint(s) loaded'
+            : 'Ready — place finger on scanner',
+      );
     } catch (e) {
       if (!mounted) return;
       _controller.setStatus('Ready — place finger on scanner');
       debugPrint('_loadAndRegisterTemplates: $e');
+    }
+  }
+
+  Future<void> _syncEmployeesPerSiteToLocalDb(String siteId) async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 20);
+    Database? db;
+
+    try {
+      final request = await client.getUrl(
+        Uri.parse('$_employeesPerSiteApiUrl?siteID=$siteId'),
+      );
+      final basicToken = base64Encode(
+        utf8.encode('$_apiUsername:$_apiPassword'),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      final decoded = jsonDecode(body);
+      final rows = _extractSiteRows(decoded);
+
+      db = await _openScannerDb();
+      await db.execute(
+        "DELETE FROM scanner_employee WHERE site_id = ? AND source = 'api'",
+        [siteId],
+      );
+
+      final batch = db.batch();
+      final now = DateTime.now().toIso8601String();
+      for (final row in rows) {
+        final templateB64 =
+            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+                ?.toString();
+        if (templateB64 == null || templateB64.isEmpty) {
+          continue;
+        }
+
+        batch.insert('scanner_employee', {
+          'site_id': siteId,
+          'employee_id': (row['employee_id'] ?? row['emp_id'] ?? row['id'])
+              ?.toString(),
+          'employee_name':
+              (row['employee_name'] ?? row['full_name'] ?? row['name'])
+                  ?.toString(),
+          'finger_id': (row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'])
+              ?.toString(),
+          'finger_template': templateB64,
+          'synced_at': now,
+          'source': 'api',
+        });
+      }
+      await batch.commit(noResult: true);
+    } finally {
+      client.close(force: true);
+      await db?.close();
+    }
+  }
+
+  Future<List<Map<String, Object?>>> _readEmployeesFromLocalDb(
+    String siteId,
+  ) async {
+    Database? db;
+    try {
+      db = await _openScannerDb();
+      return db.query(
+        'scanner_employee',
+        where: 'site_id = ?',
+        whereArgs: [siteId],
+        orderBy: 'id ASC',
+      );
+    } finally {
+      await db?.close();
+    }
+  }
+
+  Future<Database> _openScannerDb() async {
+    final dbDir = Directory(r'C:\SQLiteDB');
+    if (!await dbDir.exists()) {
+      await dbDir.create(recursive: true);
+    }
+
+    final dbFile = File(_scannerDbPath);
+    if (!await dbFile.exists()) {
+      await dbFile.create(recursive: true);
+    }
+
+    sqfliteFfiInit();
+    final db = await databaseFactoryFfi.openDatabase(_scannerDbPath);
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS scanner_employee (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        site_id TEXT NOT NULL,
+        employee_id TEXT,
+        employee_name TEXT,
+        finger_id TEXT,
+        finger_template TEXT,
+        synced_at TEXT,
+        source TEXT DEFAULT 'api'
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS scanner_attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        site_id TEXT NOT NULL,
+        employee_id TEXT,
+        attendance_type TEXT,
+        created_at TEXT
+      )
+    ''');
+
+    try {
+      await db.execute(
+        "ALTER TABLE scanner_employee ADD COLUMN source TEXT DEFAULT 'api'",
+      );
+    } catch (_) {}
+
+    return db;
+  }
+
+  Future<void> _ensureScannerDbReady() async {
+    Database? db;
+    try {
+      db = await _openScannerDb();
+      _controller.setStatus('Local DB ready: $_scannerDbPath');
+    } catch (e) {
+      _controller.setStatus('Local DB init failed: $e');
+      debugPrint('_ensureScannerDbReady: $e');
+    } finally {
+      await db?.close();
     }
   }
 
@@ -593,8 +736,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Windows: poll the sensor every 250ms
-    _scanTimer =
-        Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (!_controller.isScanning.value || !_device.isConnected) {
         _stopScanLoop();
         return;
@@ -631,68 +773,186 @@ class _HomePageState extends State<HomePage> {
     final employee = fingerId != null ? _employeeDb[fingerId] : null;
 
     if (employee != null) {
-      final attendanceType = await _postAttendance(employee.id);
-      _displayResult(_ScanResult(
-        success: true,
-        timestamp: DateTime.now(),
-        employeeId: employee.id,
-        employeeName: employee.name,
-        attendanceType: attendanceType,
-      ));
+      await _recordAttendanceToScannerDb(employee.id);
+      _displayResult(
+        _ScanResult(
+          success: true,
+          timestamp: DateTime.now(),
+          employeeId: employee.id,
+          employeeName: employee.name,
+          attendanceType: 'TIMED IN',
+        ),
+      );
     } else {
-      _displayResult(_ScanResult(
-        success: false,
-        timestamp: DateTime.now(),
-        errorMessage: fid != null
-            ? 'Employee not on record'
-            : 'Fingerprint not registered',
-      ));
+      final shouldAdd = await _showAddBiometricUserPrompt(
+        hasFingerprintMatch: fid != null,
+      );
+
+      if (shouldAdd) {
+        final added = await _addScannedUserToScannerDb(
+          template: template,
+          fid: fid,
+        );
+        if (added) {
+          unawaited(_refreshTemplatesAfterAdd());
+          _displayResult(
+            _ScanResult(
+              success: true,
+              timestamp: DateTime.now(),
+              employeeName: 'New Biometric User',
+              attendanceType: 'ADDED',
+            ),
+          );
+        } else {
+          _displayResult(
+            _ScanResult(
+              success: false,
+              timestamp: DateTime.now(),
+              errorMessage: 'Failed to add to local biometric_scanner.db',
+            ),
+          );
+        }
+      } else {
+        _displayResult(
+          _ScanResult(
+            success: false,
+            timestamp: DateTime.now(),
+            errorMessage: fid != null
+                ? 'Employee not on record'
+                : 'Fingerprint not registered',
+          ),
+        );
+      }
     }
   }
 
-  Future<String?> _postAttendance(String employeeId) async {
+  Future<void> _refreshTemplatesAfterAdd() async {
     try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 10);
-      try {
-        final request =
-            await client.postUrl(Uri.parse(_attendanceApiUrl));
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
-        request.headers
-            .set(HttpHeaders.contentTypeHeader, 'application/json');
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers
-            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
-
-        final payload = jsonEncode({
-          'employee_id': employeeId,
-          'site_id': _selectedSiteId,
-          'timestamp': DateTime.now().toIso8601String(),
-        });
-        request.contentLength = utf8.encode(payload).length;
-        request.write(payload);
-
-        final response = await request.close();
-        final body = await response.transform(utf8.decoder).join();
-
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          try {
-            final decoded = jsonDecode(body);
-            final type = decoded['attendance_type'] ??
-                decoded['type'] ??
-                decoded['status'] ??
-                decoded['log_type'];
-            if (type != null) return type.toString().toUpperCase();
-          } catch (_) {}
-        }
-      } finally {
-        client.close(force: true);
-      }
+      await _loadAndRegisterTemplates().timeout(const Duration(seconds: 8));
     } catch (e) {
-      debugPrint('_postAttendance: $e');
+      debugPrint('_refreshTemplatesAfterAdd: $e');
     }
-    return null;
+  }
+
+  Future<bool> _showAddBiometricUserPrompt({
+    required bool hasFingerprintMatch,
+  }) async {
+    if (!mounted) return false;
+
+    final action = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Unregistered Fingerprint'),
+          content: Text(
+            hasFingerprintMatch
+                ? 'This fingerprint matched a device template but is not in the registered list.\n\nAdd it to biometric_user?'
+                : 'This fingerprint is not in the registered list.\n\nAdd it to biometric_user?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Skip'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return action == true;
+  }
+
+  Future<bool> _addScannedUserToScannerDb({
+    required Uint8List template,
+    String? fid,
+  }) async {
+    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
+      _controller.setStatus('Cannot add user: no site selected');
+      return false;
+    }
+
+    Database? db;
+    try {
+      db = await _openScannerDb();
+      final siteId = _selectedSiteId!;
+      final parsedFid = int.tryParse(fid ?? '');
+
+      int nextFid;
+      if (parsedFid != null && parsedFid > 0) {
+        nextFid = parsedFid;
+      } else {
+        final maxRows = await db.rawQuery(
+          '''
+          SELECT MAX(CAST(finger_id AS INTEGER)) AS max_fid
+          FROM scanner_employee
+          WHERE site_id = ?
+        ''',
+          [siteId],
+        );
+        final rawMax = maxRows.isNotEmpty ? maxRows.first['max_fid'] : null;
+        final maxFid = int.tryParse('${rawMax ?? ''}') ?? 0;
+        nextFid = maxFid + 1;
+      }
+
+      final now = DateTime.now();
+      final employeeId = 'LOCAL-${now.millisecondsSinceEpoch}';
+
+      await db.insert('scanner_employee', {
+        'site_id': siteId,
+        'employee_id': employeeId,
+        'employee_name': 'New Biometric User',
+        'finger_id': nextFid.toString(),
+        'finger_template': base64Encode(template),
+        'synced_at': now.toIso8601String(),
+        'source': 'local',
+      });
+
+      final registered = await _device.registerFingerprint(nextFid, template);
+      if (registered) {
+        _employeeDb[nextFid] = _EmployeeEntry(
+          id: employeeId,
+          name: 'New Biometric User',
+        );
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('_addScannedUserToScannerDb: $e');
+      _controller.setStatus('Add user failed: $e');
+      return false;
+    } finally {
+      await db?.close();
+    }
+  }
+
+  Future<bool> _recordAttendanceToScannerDb(String employeeId) async {
+    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
+      _controller.setStatus('Cannot log attendance: no site selected');
+      return false;
+    }
+
+    Database? db;
+    try {
+      db = await _openScannerDb();
+      await db.insert('scanner_attendance', {
+        'site_id': _selectedSiteId,
+        'employee_id': employeeId,
+        'attendance_type': 'TIMED IN',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      return true;
+    } catch (e) {
+      debugPrint('_recordAttendanceToScannerDb: $e');
+      _controller.setStatus('Attendance write failed: $e');
+      return false;
+    } finally {
+      await db?.close();
+    }
   }
 
   void _displayResult(_ScanResult result) {
@@ -726,8 +986,18 @@ class _HomePageState extends State<HomePage> {
   String get _dateString {
     final currentTime = _controller.now.value;
     const months = [
-      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
+      'JANUARY',
+      'FEBRUARY',
+      'MARCH',
+      'APRIL',
+      'MAY',
+      'JUNE',
+      'JULY',
+      'AUGUST',
+      'SEPTEMBER',
+      'OCTOBER',
+      'NOVEMBER',
+      'DECEMBER',
     ];
     return '${months[currentTime.month - 1]} ${currentTime.day}, ${currentTime.year}';
   }
@@ -876,7 +1146,8 @@ class _HomePageState extends State<HomePage> {
                             ),
                             SizedBox(height: cardH * 0.02),
                             GestureDetector(
-                              onTap: (_controller.isSearching.value ||
+                              onTap:
+                                  (_controller.isSearching.value ||
                                       _controller.biometricConnected.value)
                                   ? null
                                   : _searchAndConnect,
@@ -884,17 +1155,19 @@ class _HomePageState extends State<HomePage> {
                                 label: _controller.isSearching.value
                                     ? 'SEARCHING...'
                                     : _controller.isScanning.value
-                                        ? 'SCANNING...'
-                                        : _controller.biometricConnected.value
-                                            ? 'ACTIVE'
-                                            : 'SEARCH MODE',
-                                textColor: (_controller.isSearching.value ||
+                                    ? 'SCANNING...'
+                                    : _controller.biometricConnected.value
+                                    ? 'ACTIVE'
+                                    : 'SEARCH MODE',
+                                textColor:
+                                    (_controller.isSearching.value ||
                                         _controller.isScanning.value)
                                     ? const Color(0xFFFFB74D)
                                     : Colors.white,
                                 cardW: cardW,
                                 cardH: cardH,
-                                showLoading: _controller.isSearching.value ||
+                                showLoading:
+                                    _controller.isSearching.value ||
                                     _controller.isScanning.value,
                               ),
                             ),
@@ -1145,14 +1418,8 @@ class _RisingFadeParticleState extends State<_RisingFadeParticle>
   @override
   void initState() {
     super.initState();
-    final controller = AnimationController(
-      vsync: this,
-      duration: _duration,
-    );
-    final curve = CurvedAnimation(
-      parent: controller,
-      curve: Curves.easeOut,
-    );
+    final controller = AnimationController(vsync: this, duration: _duration);
+    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
     _controller = controller;
     _opacity = Tween<double>(begin: 0.65, end: 0.0).animate(curve);
     _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);

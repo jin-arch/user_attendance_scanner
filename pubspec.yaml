@@ -16,6 +16,8 @@ dependencies:
   ffi: ^2.1.0
   flutter_svg: ^2.0.10+1
   shared_preferences: ^2.5.3
+  sqflite_common_ffi: ^2.3.4+4
+  sqlite3_flutter_libs: ^0.5.32
 
 dev_dependencies:
   flutter_test:
