@@ -757,7 +757,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Image.asset(
                   'assets/images/FastLogo.png',
-                  height: screenH * 0.065,
+                  height: screenH * 0.12,
                   fit: BoxFit.contain,
                 ),
                 SizedBox(height: screenH * 0.018),
@@ -846,7 +846,7 @@ class _HomePageState extends State<HomePage> {
                           style: TextStyle(
                             fontFamily: 'TRTCENZODEMO',
                             fontWeight: FontWeight.w600,
-                            fontSize: cardW * 0.04,
+                            fontSize: cardW * 0.07,
                             color: Colors.white,
                             height: 1.15,
                             letterSpacing: 1,
@@ -996,11 +996,12 @@ class _HomePageState extends State<HomePage> {
     bool showLoading = false,
   }) {
     return Container(
-      width: cardW * 0.32,
+      width: cardW * 0.38,
       padding: EdgeInsets.symmetric(
-        horizontal: cardW * 0.018,
+        horizontal: cardW * 0.022,
         vertical: cardH * 0.028,
       ),
+      alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(cardW * 0.01),
         border: Border.all(
@@ -1014,6 +1015,7 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (showLoading) ...[
             SizedBox(
@@ -1029,6 +1031,7 @@ class _HomePageState extends State<HomePage> {
           Flexible(
             child: Text(
               label,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'CEORUSE',
                 fontSize: cardW * 0.016,
