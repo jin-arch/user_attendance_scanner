@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
 
 class _SiteOption {
@@ -57,20 +59,15 @@ class _HomePageState extends State<HomePage> {
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
 
-  late Timer _clockTimer;
-  DateTime _now = DateTime.now();
-  bool _biometricConnected = false;
-  bool _isSearching = false;
   bool _isLoadingSites = false;
-  String _statusMessage = '';
   String? _selectedSiteId;
   List<_SiteOption> _sites = const [];
   final Map<String, String> _deviceSiteMap = {};
   
   final ZKTecoUSB _device = ZKTecoUSB();
+  late final HomePageController _controller;
 
   // Scan loop state
-  bool _isScanning = false;
   Timer? _scanTimer;
   _ScanResult? _lastResult;
   bool _showResult = false;
@@ -79,28 +76,25 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _controller = Get.isRegistered<HomePageController>()
+        ? Get.find<HomePageController>()
+        : Get.put(HomePageController());
     _loadDeviceSiteMap();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requireSiteSelectionOnStartup();
     });
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() => _now = DateTime.now());
-    });
-    
+
     // Set up Android callbacks
     if (ZKTecoUSB.isAndroidPlatform) {
       _device.onDeviceAttached = () {
-        setState(() => _statusMessage = 'Device attached!');
+        _controller.setStatus('Device attached!');
       };
       _device.onDeviceDetached = () {
-        setState(() {
-          _biometricConnected = false;
-          _statusMessage = 'Device detached';
-        });
+        _controller.setConnected(false, status: 'Device detached');
         _stopScanLoop();
       };
       _device.onTemplateExtracted = (template, size) {
-        if (_isScanning) _onTemplateReady(template);
+        if (_controller.isScanning.value) _onTemplateReady(template);
       };
     }
   }
@@ -210,9 +204,7 @@ class _HomePageState extends State<HomePage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _statusMessage = 'Connected, but site list failed to load: $e';
-      });
+      _controller.setStatus('Connected, but site list failed to load: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoadingSites = false);
@@ -225,9 +217,7 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     if (_sites.isEmpty) {
-      setState(() {
-        _statusMessage = 'Cannot load site list. Please check API connection.';
-      });
+      _controller.setStatus('Cannot load site list. Please check API connection.');
       return;
     }
 
@@ -236,8 +226,8 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       _selectedSiteId = selected;
-      _statusMessage = 'Selected site: ${_siteNameById(selected) ?? selected}';
     });
+    _controller.setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
   }
 
   Future<String?> _showSiteSelectionDialog({
@@ -413,53 +403,59 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    _clockTimer.cancel();
     _scanTimer?.cancel();
     _device.dispose();
+    if (Get.isRegistered<HomePageController>()) {
+      Get.delete<HomePageController>();
+    }
     super.dispose();
   }
   
   Future<void> _searchAndConnect() async {
-    if (_isSearching) return;
+    if (_controller.isSearching.value) return;
 
     if (_selectedSiteId == null) {
       await _requireSiteSelectionOnStartup();
       if (_selectedSiteId == null) {
-        setState(() {
-          _statusMessage = 'Please select a site before searching for device.';
-        });
+        _controller.setStatus('Please select a site before searching for device.');
         return;
       }
     }
-    
-    setState(() {
-      _isSearching = true;
-      _statusMessage = 'Searching for device...';
-    });
+
+    _controller.startSearching('Searching for device...');
     
     try {
+      if (ZKTecoUSB.isAndroidPlatform) {
+        final env = await _device.getAndroidSdkEnvironment();
+        final canUseSdk = env['canUseSdk'] == true;
+        if (!canUseSdk) {
+          final reason = env['reason']?.toString() ??
+              'Android runtime is not compatible with the ZKTeco SDK.';
+          _controller.stopSearching(reason);
+          return;
+        }
+      }
+
       // Initialize SDK
       final sdkInit = await _device.initSdk();
       if (!sdkInit) {
-        setState(() {
-          _isSearching = false;
-          _statusMessage = 'SDK init failed';
-        });
+        _controller.stopSearching(
+          ZKTecoUSB.isAndroidPlatform
+              ? 'SDK init failed. Use a physical ARM Android device with the scanner attached, or run the Windows build.'
+              : 'SDK init failed',
+        );
         return;
       }
       
       // Check device count
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
-        setState(() {
-          _isSearching = false;
-          _statusMessage = 'No device found';
-        });
+        _controller.stopSearching('No device found');
         await _device.terminateSdk();
         return;
       }
       
-      setState(() => _statusMessage = 'Found $count device(s). Connecting...');
+      _controller.setStatus('Found $count device(s). Connecting...');
       
       // Open device
       final opened = await _device.openDevice(0);
@@ -491,25 +487,16 @@ class _HomePageState extends State<HomePage> {
         final siteName = _siteNameById(siteId);
         final siteText = siteName != null ? ' | Site: $siteName' : '';
 
-        setState(() {
-          _biometricConnected = true;
-          _isSearching = false;
-          _statusMessage = 'Connected: ${serial ?? "Unknown"}$siteText';
-        });
+        _controller.stopSearching();
+        _controller.setConnected(true, status: 'Connected: ${serial ?? "Unknown"}$siteText');
         await _loadAndRegisterTemplates();
         _startScanLoop();
       } else {
-        setState(() {
-          _isSearching = false;
-          _statusMessage = 'Failed to open device';
-        });
+        _controller.stopSearching('Failed to open device');
         await _device.terminateSdk();
       }
     } catch (e) {
-      setState(() {
-        _isSearching = false;
-        _statusMessage = 'Error: $e';
-      });
+      _controller.stopSearching('Error: $e');
     }
   }
 
@@ -517,7 +504,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadAndRegisterTemplates() async {
     if (!mounted) return;
-    setState(() => _statusMessage = 'Loading fingerprints...');
+    _controller.setStatus('Loading fingerprints...');
     try {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 20);
@@ -581,24 +568,24 @@ class _HomePageState extends State<HomePage> {
         }
 
         if (!mounted) return;
-        setState(() {
-          _statusMessage = registered > 0
+        _controller.setStatus(
+          registered > 0
               ? 'Ready — $registered fingerprint(s) loaded'
-              : 'Ready — place finger on scanner';
-        });
+              : 'Ready — place finger on scanner',
+        );
       } finally {
         client.close(force: true);
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _statusMessage = 'Ready — place finger on scanner');
+      _controller.setStatus('Ready — place finger on scanner');
       debugPrint('_loadAndRegisterTemplates: $e');
     }
   }
 
   void _startScanLoop() {
-    if (_isScanning || !_device.isConnected) return;
-    if (mounted) setState(() => _isScanning = true);
+    if (_controller.isScanning.value || !_device.isConnected) return;
+    _controller.setScanning(true);
 
     if (ZKTecoUSB.isAndroidPlatform) {
       // Android is event-driven via onTemplateExtracted callback
@@ -608,7 +595,7 @@ class _HomePageState extends State<HomePage> {
     // Windows: poll the sensor every 250ms
     _scanTimer =
         Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!_isScanning || !_device.isConnected) {
+      if (!_controller.isScanning.value || !_device.isConnected) {
         _stopScanLoop();
         return;
       }
@@ -624,12 +611,12 @@ class _HomePageState extends State<HomePage> {
   void _stopScanLoop() {
     _scanTimer?.cancel();
     _scanTimer = null;
-    if (mounted) setState(() => _isScanning = false);
+    _controller.setScanning(false);
   }
 
   Future<void> _onTemplateReady(Uint8List template) async {
     if (!mounted || !_device.isConnected) return;
-    if (mounted) setState(() => _isScanning = false);
+    _controller.setScanning(false);
 
     String? fid;
     if (ZKTecoUSB.isAndroidPlatform) {
@@ -713,10 +700,12 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _lastResult = result;
       _showResult = true;
-      _statusMessage = result.success
-          ? '${result.employeeName ?? 'Employee'} — ${result.attendanceType ?? 'RECORDED'}'
-          : (result.errorMessage ?? 'Scan failed');
     });
+    _controller.setStatus(
+      result.success
+          ? '${result.employeeName ?? 'Employee'} — ${result.attendanceType ?? 'RECORDED'}'
+          : (result.errorMessage ?? 'Scan failed'),
+    );
     Future.delayed(const Duration(seconds: 4), () {
       if (!mounted) return;
       setState(() => _showResult = false);
@@ -725,20 +714,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   String get _timeString {
-    final hour = _now.hour > 12
-        ? _now.hour - 12
-        : (_now.hour == 0 ? 12 : _now.hour);
-    final minute = _now.minute.toString().padLeft(2, '0');
-    final period = _now.hour >= 12 ? 'PM' : 'AM';
+    final currentTime = _controller.now.value;
+    final hour = currentTime.hour > 12
+        ? currentTime.hour - 12
+        : (currentTime.hour == 0 ? 12 : currentTime.hour);
+    final minute = currentTime.minute.toString().padLeft(2, '0');
+    final period = currentTime.hour >= 12 ? 'PM' : 'AM';
     return '${hour.toString().padLeft(2, '0')}:$minute $period';
   }
 
   String get _dateString {
+    final currentTime = _controller.now.value;
     const months = [
       'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
       'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
     ];
-    return '${months[_now.month - 1]} ${_now.day}, ${_now.year}';
+    return '${months[currentTime.month - 1]} ${currentTime.day}, ${currentTime.year}';
   }
 
   @override
@@ -764,7 +755,6 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // FAST Logo — top-left
                 SvgPicture.asset(
                   'assets/logo/Fast Logo.svg',
                   height: screenH * 0.065,
@@ -772,7 +762,6 @@ class _HomePageState extends State<HomePage> {
                       Colors.white, BlendMode.srcIn),
                 ),
                 SizedBox(height: screenH * 0.018),
-                // Main card
                 Expanded(child: _buildMainCard(screenW, screenH)),
               ],
             ),
@@ -852,59 +841,64 @@ class _HomePageState extends State<HomePage> {
                     Positioned(
                       left: 0,
                       bottom: 0,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildStatusButton(
-                            label: _biometricConnected
-                                ? 'BIOMETRIC CONNECTED'
-                                : 'BIOMETRIC NOT CONNECTED',
-                            textColor: _biometricConnected
-                                ? const Color(0xFF4CAF50)
-                                : const Color(0xFFE53935),
-                            cardW: cardW,
-                            cardH: cardH,
-                          ),
-                          SizedBox(height: cardH * 0.02),
-                          GestureDetector(
-                            onTap: (_isSearching || _biometricConnected)
-                                ? null
-                                : _searchAndConnect,
-                            child: _buildStatusButton(
-                              label: _isSearching
-                                  ? 'SEARCHING...'
-                                  : _isScanning
-                                      ? 'SCANNING...'
-                                      : _biometricConnected
-                                          ? 'ACTIVE'
-                                          : 'SEARCH MODE',
-                              textColor: (_isSearching || _isScanning)
-                                  ? const Color(0xFFFFB74D)
-                                  : Colors.white,
+                      child: Obx(
+                        () => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildStatusButton(
+                              label: _controller.biometricConnected.value
+                                  ? 'BIOMETRIC CONNECTED'
+                                  : 'BIOMETRIC NOT CONNECTED',
+                              textColor: _controller.biometricConnected.value
+                                  ? const Color(0xFF4CAF50)
+                                  : const Color(0xFFE53935),
                               cardW: cardW,
                               cardH: cardH,
-                              showLoading: _isSearching || _isScanning,
                             ),
-                          ),
-                          if (_statusMessage.isNotEmpty) ...[
-                            SizedBox(height: cardH * 0.015),
-                            SizedBox(
-                              width: cardW * 0.32,
-                              child: Text(
-                                _statusMessage,
-                                style: TextStyle(
-                                  fontFamily: 'CEORUSE',
-                                  fontSize: cardW * 0.012,
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                  letterSpacing: 1,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                            SizedBox(height: cardH * 0.02),
+                            GestureDetector(
+                              onTap: (_controller.isSearching.value ||
+                                      _controller.biometricConnected.value)
+                                  ? null
+                                  : _searchAndConnect,
+                              child: _buildStatusButton(
+                                label: _controller.isSearching.value
+                                    ? 'SEARCHING...'
+                                    : _controller.isScanning.value
+                                        ? 'SCANNING...'
+                                        : _controller.biometricConnected.value
+                                            ? 'ACTIVE'
+                                            : 'SEARCH MODE',
+                                textColor: (_controller.isSearching.value ||
+                                        _controller.isScanning.value)
+                                    ? const Color(0xFFFFB74D)
+                                    : Colors.white,
+                                cardW: cardW,
+                                cardH: cardH,
+                                showLoading: _controller.isSearching.value ||
+                                    _controller.isScanning.value,
                               ),
                             ),
+                            if (_controller.statusMessage.value.isNotEmpty) ...[
+                              SizedBox(height: cardH * 0.015),
+                              SizedBox(
+                                width: cardW * 0.32,
+                                child: Text(
+                                  _controller.statusMessage.value,
+                                  style: TextStyle(
+                                    fontFamily: 'CEORUSE',
+                                    fontSize: cardW * 0.012,
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    letterSpacing: 1,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
 
@@ -912,32 +906,34 @@ class _HomePageState extends State<HomePage> {
                     Positioned(
                       right: 0,
                       bottom: 0,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _timeString,
-                            style: TextStyle(
-                              fontFamily: 'CEORUSE',
-                              fontSize: cardW * 0.055,
-                              color: Colors.white,
-                              letterSpacing: 4,
-                              height: 1,
+                      child: Obx(
+                        () => Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _timeString,
+                              style: TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: cardW * 0.055,
+                                color: Colors.white,
+                                letterSpacing: 4,
+                                height: 1,
+                              ),
                             ),
-                          ),
-                          SizedBox(height: cardH * 0.01),
-                          Text(
-                            _dateString,
-                            style: TextStyle(
-                              fontFamily: 'CEORUSE',
-                              fontSize: cardW * 0.024,
-                              color: Colors.white.withValues(alpha: 0.85),
-                              letterSpacing: 3,
-                              height: 1,
+                            SizedBox(height: cardH * 0.01),
+                            Text(
+                              _dateString,
+                              style: TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: cardW * 0.024,
+                                color: Colors.white.withValues(alpha: 0.85),
+                                letterSpacing: 3,
+                                height: 1,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
 

@@ -184,6 +184,7 @@ class MainActivity : FlutterActivity() {
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "initSdk" -> initSdk(result)
+                "getSdkEnvironment" -> getSdkEnvironment(result)
                 "freeSdk" -> freeSdk(result)
                 "getDeviceCount" -> getDeviceCount(result)
                 "openDevice" -> openDevice(call.argument<Int>("index") ?: 0, result)
@@ -226,6 +227,54 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "initSdk error: ${e.message}")
             result.success(false)
+        }
+    }
+
+    private fun getSdkEnvironment(result: MethodChannel.Result) {
+        try {
+            val supportedAbis = Build.SUPPORTED_ABIS?.toList() ?: emptyList()
+            val isEmulator =
+                Build.FINGERPRINT.startsWith("generic") ||
+                Build.FINGERPRINT.startsWith("unknown") ||
+                Build.MODEL.contains("google_sdk") ||
+                Build.MODEL.contains("Emulator") ||
+                Build.MODEL.contains("Android SDK built for x86") ||
+                Build.MANUFACTURER.contains("Genymotion") ||
+                Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic") ||
+                "google_sdk" == Build.PRODUCT
+
+            val hasSupportedAbi = supportedAbis.any {
+                it.equals("armeabi-v7a", ignoreCase = true) ||
+                it.equals("arm64-v8a", ignoreCase = true)
+            }
+
+            val preflightOk = !isEmulator && hasSupportedAbi
+
+            val reason = when {
+                isEmulator -> "Android emulator cannot use the ZKTeco USB SDK. Run this on a physical Android device or use the Windows desktop build."
+                !hasSupportedAbi -> "This Android device ABI is unsupported by the bundled ZKTeco native libraries. Supported ABIs: armeabi-v7a, arm64-v8a."
+                nativeLibsAvailable -> "ZKTeco SDK is available."
+                else -> "Android environment looks compatible. Native libraries will be verified during SDK initialization."
+            }
+
+            result.success(mapOf(
+                "isEmulator" to isEmulator,
+                "supportedAbis" to supportedAbis,
+                "nativeLibsAvailable" to nativeLibsAvailable,
+                "hasSupportedAbi" to hasSupportedAbi,
+                "canUseSdk" to preflightOk,
+                "reason" to reason,
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "getSdkEnvironment error: ${e.message}")
+            result.success(mapOf(
+                "isEmulator" to false,
+                "supportedAbis" to emptyList<String>(),
+                "nativeLibsAvailable" to nativeLibsAvailable,
+                "hasSupportedAbi" to false,
+                "canUseSdk" to false,
+                "reason" to (e.message ?: "Failed to inspect Android runtime environment"),
+            ))
         }
     }
     

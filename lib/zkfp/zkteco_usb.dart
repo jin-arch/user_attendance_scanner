@@ -193,6 +193,32 @@ class ZKTecoUSB {
     debugPrint('SDK terminated');
   }
 
+  Future<Map<String, dynamic>> getAndroidSdkEnvironment() async {
+    if (!isAndroidPlatform) {
+      return const {
+        'canUseSdk': true,
+        'reason': 'Not running on Android',
+      };
+    }
+
+    try {
+      final result = await _channel.invokeMethod<Map>('getSdkEnvironment');
+      if (result == null) {
+        return const {
+          'canUseSdk': false,
+          'reason': 'Android runtime environment is unavailable',
+        };
+      }
+      return Map<String, dynamic>.from(result.cast<dynamic, dynamic>());
+    } catch (e) {
+      debugPrint('getAndroidSdkEnvironment error: $e');
+      return {
+        'canUseSdk': false,
+        'reason': 'Failed to inspect Android runtime environment: $e',
+      };
+    }
+  }
+
   /// Get number of connected devices
   Future<int> getDeviceCountAsync() async {
     if (!_sdkInitialized) return 0;

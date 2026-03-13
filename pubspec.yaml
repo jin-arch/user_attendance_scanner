@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  get: ^4.7.2
   flutter_zkteco: ^1.1.0
   usb_serial: ^0.5.2
   win32: ^4.1.4
