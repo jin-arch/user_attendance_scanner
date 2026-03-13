@@ -36,6 +36,7 @@ flutter:
     - family: CEORUSE
       fonts:
         - asset: assets/fonts/ceoruse.otf
+          weight: 500
 
   assets:
     - assets/images/

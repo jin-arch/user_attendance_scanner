@@ -1282,7 +1282,7 @@ class _HomePageState extends State<HomePage> {
     bool showLoading = false,
   }) {
     return Container(
-      width: cardW * 0.38,
+      width: cardW * 0.44,
       padding: EdgeInsets.symmetric(
         horizontal: cardW * 0.022,
         vertical: cardH * 0.028,
@@ -1295,7 +1295,7 @@ class _HomePageState extends State<HomePage> {
           width: 1.2,
         ),
         image: const DecorationImage(
-          image: AssetImage('assets/images/FinalBG.png'),
+          image: AssetImage('assets/images/Main BG.png'),
           fit: BoxFit.cover,
         ),
       ),
@@ -1321,6 +1321,7 @@ class _HomePageState extends State<HomePage> {
               style: TextStyle(
                 fontFamily: 'CEORUSE',
                 fontSize: cardW * 0.016,
+                fontWeight: FontWeight.bold,
                 color: textColor,
                 letterSpacing: 2,
               ),

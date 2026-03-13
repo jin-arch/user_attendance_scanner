@@ -216,7 +216,7 @@ class _ProgressText extends StatelessWidget {
       style: const TextStyle(
         fontFamily: 'CEORUSE',
         fontSize: 32,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.bold,
         color: Colors.white,
         letterSpacing: 2,
       ),
@@ -234,6 +234,7 @@ class _DownloadingLabel extends StatelessWidget {
       style: TextStyle(
         fontFamily: 'CEORUSE',
         fontSize: 14,
+        fontWeight: FontWeight.bold,
         color: Colors.white.withValues(alpha: 0.95),
         letterSpacing: 2,
       ),
