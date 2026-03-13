@@ -13,26 +13,27 @@ dependencies:
   usb_serial: ^0.5.2
   win32: ^4.1.4
   ffi: ^2.1.0
+  flutter_svg: ^2.0.10+1
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
 
-fonts:
-  - family: TRTCENZODEMO
-    fonts:
-      - asset: assets/fonts/TRTCENZODEMO-SemiBold.ttf
-        weight: 600
-  - family: CEORUSE
-    fonts:
-      - asset: assets/fonts/ceoruse.otf
-        weight: 500
-
 flutter:
   uses-material-design: true
 
-assets:
-  - assets/images/
-  - assets/fonts/
-  - assets/logo/
+  fonts:
+    - family: TRTCENZODEMO
+      fonts:
+        - asset: assets/fonts/TRTCENZODEMO-SemiBold.ttf
+          weight: 600
+    - family: CEORUSE
+      fonts:
+        - asset: assets/fonts/ceoruse.otf
+
+  assets:
+    - assets/images/
+    - assets/fonts/
+    - assets/logo/
