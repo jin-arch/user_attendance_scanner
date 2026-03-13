@@ -1206,18 +1206,19 @@ class _HomePageState extends State<HomePage> {
 
                     // ── Bottom-right: time & date ──
                     Positioned(
-                      right: 0,
-                      bottom: 0,
+                      right: cardW * 0.01,
+                      bottom: cardH * 0.06,
                       child: Obx(
                         () => Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
                               _timeString,
+                              textAlign: TextAlign.left,
                               style: TextStyle(
                                 fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.055,
+                                fontSize: cardW * 0.07,
                                 color: Colors.white,
                                 letterSpacing: 4,
                                 height: 1,
@@ -1226,9 +1227,10 @@ class _HomePageState extends State<HomePage> {
                             SizedBox(height: cardH * 0.01),
                             Text(
                               _dateString,
+                              textAlign: TextAlign.left,
                               style: TextStyle(
                                 fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.024,
+                                fontSize: cardW * 0.030,
                                 color: Colors.white.withValues(alpha: 0.85),
                                 letterSpacing: 3,
                                 height: 1,
