@@ -742,7 +742,7 @@ class _HomePageState extends State<HomePage> {
         height: screenH,
         decoration: const BoxDecoration(
           image: DecorationImage(
-            image: AssetImage('assets/images/Main BG.png'),
+            image: AssetImage('assets/images/FinalBG.png'),
             fit: BoxFit.cover,
           ),
         ),
@@ -755,11 +755,10 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SvgPicture.asset(
-                  'assets/logo/Fast Logo.svg',
+                Image.asset(
+                  'assets/images/FastLogo.png',
                   height: screenH * 0.065,
-                  colorFilter: const ColorFilter.mode(
-                      Colors.white, BlendMode.srcIn),
+                  fit: BoxFit.contain,
                 ),
                 SizedBox(height: screenH * 0.018),
                 Expanded(child: _buildMainCard(screenW, screenH)),
@@ -777,13 +776,32 @@ class _HomePageState extends State<HomePage> {
 
     return Stack(
       children: [
-        // Card background
+        // Particles spread across the card (no dark container)
         Positioned.fill(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(screenW * 0.015),
-            child: Image.asset(
-              'assets/images/card.png',
-              fit: BoxFit.cover,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final w = constraints.maxWidth;
+                final h = constraints.maxHeight;
+                final size = (w * 0.090).clamp(64.0, 88.0);
+                return Stack(
+                  children: [
+                    _positionedParticle(w, h, 0.08, 0.12, size * 1.25, 0),
+                    _positionedParticle(w, h, 0.130, 0.105, size * 0.5, 0.3),
+                    _positionedParticle(w, h, 0.15, 0.55, size * 0.9, 0.6),
+                    _positionedParticle(w, h, 0.78, 0.5, size * 1.15, 0.2),
+                    _positionedParticle(w, h, 0.45, 0.18, size * 0.55, 0.5),
+                    _positionedParticle(w, h, 0.10, 0.72, size * 1.1, 0.8),
+                    _positionedParticle(w, h, 0.25, 0.35, size * 0.45, 0.15),
+                    _positionedParticle(w, h, 0.7, 0.28, size * 0.95, 0.45),
+                    _positionedParticle(w, h, 0.35, 0.78, size * 0.6, 0.7),
+                    _positionedParticle(w, h, 0.88, 0.65, size * 1.2, 0.25),
+                    _positionedParticle(w, h, 0.05, 0.42, size * 0.5, 0.9),
+                    _positionedParticle(w, h, 0.6, 0.42, size * 0.75, 0.35),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -949,6 +967,27 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _positionedParticle(
+    double w,
+    double h,
+    double fracLeft,
+    double fracTop,
+    double sizePx,
+    double phase,
+  ) {
+    return Positioned(
+      left: w * fracLeft - sizePx / 2,
+      top: h * fracTop - sizePx / 2,
+      width: sizePx,
+      height: sizePx,
+      child: _RisingFadeParticle(
+        size: sizePx,
+        phase: phase,
+        assetPath: 'assets/icons/square-particles-fx.svg',
+      ),
+    );
+  }
+
   Widget _buildStatusButton({
     required String label,
     required Color textColor,
@@ -969,7 +1008,7 @@ class _HomePageState extends State<HomePage> {
           width: 1.2,
         ),
         image: const DecorationImage(
-          image: AssetImage('assets/images/Main BG.png'),
+          image: AssetImage('assets/images/FinalBG.png'),
           fit: BoxFit.cover,
         ),
       ),
@@ -1070,6 +1109,104 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Rising + fading particle using square-particles-fx.svg.
+class _RisingFadeParticle extends StatefulWidget {
+  const _RisingFadeParticle({
+    required this.size,
+    required this.assetPath,
+    this.phase = 0.0,
+  });
+
+  final double size;
+  final String assetPath;
+  final double phase;
+
+  @override
+  State<_RisingFadeParticle> createState() => _RisingFadeParticleState();
+}
+
+class _RisingFadeParticleState extends State<_RisingFadeParticle>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _opacity;
+  Animation<double>? _translateY;
+  Animation<double>? _scale;
+
+  static const double _riseDistance = 56.0;
+  static const Duration _duration = Duration(milliseconds: 2800);
+
+  @override
+  void initState() {
+    super.initState();
+    final controller = AnimationController(
+      vsync: this,
+      duration: _duration,
+    );
+    final curve = CurvedAnimation(
+      parent: controller,
+      curve: Curves.easeOut,
+    );
+    _controller = controller;
+    _opacity = Tween<double>(begin: 0.65, end: 0.0).animate(curve);
+    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
+    _scale = Tween<double>(begin: 1.0, end: 0.75).animate(curve);
+    controller.value = widget.phase;
+    controller.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_RisingFadeParticle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.phase != widget.phase) _controller?.value = widget.phase;
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final opacity = _opacity;
+    final translateY = _translateY;
+    final scale = _scale;
+    if (controller == null ||
+        opacity == null ||
+        translateY == null ||
+        scale == null) {
+      return const SizedBox.shrink();
+    }
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, translateY.value),
+          child: Opacity(
+            opacity: opacity.value,
+            child: Transform.scale(
+              scale: scale.value,
+              alignment: Alignment.center,
+              child: SvgPicture.asset(
+                widget.assetPath,
+                width: widget.size,
+                height: widget.size,
+                fit: BoxFit.contain,
+                colorFilter: const ColorFilter.mode(
+                  Color(0xFF5FCFFF),
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
