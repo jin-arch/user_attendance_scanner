@@ -1027,7 +1027,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Image.asset(
                   'assets/images/FastLogo.png',
-                  height: screenH * 0.12,
+                  height: screenH * 0.10,
                   fit: BoxFit.contain,
                 ),
                 SizedBox(height: screenH * 0.018),
@@ -1116,7 +1116,7 @@ class _HomePageState extends State<HomePage> {
                           style: TextStyle(
                             fontFamily: 'TRTCENZODEMO',
                             fontWeight: FontWeight.w600,
-                            fontSize: cardW * 0.07,
+                            fontSize: cardW * 0.06,
                             color: Colors.white,
                             height: 1.15,
                             letterSpacing: 1,

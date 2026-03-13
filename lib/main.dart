@@ -1,4 +1,5 @@
-﻿import 'dart:io' show Platform;
+import 'dart:io' show Platform;
+import 'package:device_preview/device_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,7 +21,12 @@ Future<void> main() async {
     } catch (_) {}
   }
 
-  runApp(const MyApp());
+  runApp(
+    DevicePreview(
+      enabled: kDebugMode,
+      builder: (context) => const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -29,6 +35,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
+      useInheritedMediaQuery: true,
+      locale: DevicePreview.locale(context),
+      builder: DevicePreview.appBuilder,
       debugShowCheckedModeBanner: false,
       title: 'FAST Attendance',
       theme: ThemeData(
