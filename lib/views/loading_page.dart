@@ -157,7 +157,8 @@ class _LoadingPageState extends State<LoadingPage>
                         padding: EdgeInsets.only(bottom: h * 0.08),
                         child: Image.asset(
                           _fingerprintAsset,
-                          width: w * 0.22,
+                          width: w * 0.26,
+                          height: h * 0.30,
                           fit: BoxFit.contain,
                         ),
                       ),

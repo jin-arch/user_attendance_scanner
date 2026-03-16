@@ -36,6 +36,13 @@ flutter:
     - family: CEORUSE
       fonts:
         - asset: assets/fonts/ceoruse.otf
+          weight: 500
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+          weight: 500
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700
 
   assets:
     - assets/images/
