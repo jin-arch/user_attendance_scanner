@@ -20,7 +20,6 @@ class LoadingPage extends StatefulWidget {
 class _LoadingPageState extends State<LoadingPage>
     with SingleTickerProviderStateMixin {
   int _progress = 0;
-  bool _loadComplete = false;
   late AnimationController _progressController;
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
@@ -47,7 +46,6 @@ class _LoadingPageState extends State<LoadingPage>
   Future<void> _run() async {
     await widget.loadFuture;
     if (!mounted) return;
-    setState(() => _loadComplete = true);
     if (_progressController.value < 1.0) {
       _progressController.animateTo(1.0,
           duration: const Duration(milliseconds: 300),
@@ -155,7 +153,8 @@ class _LoadingPageState extends State<LoadingPage>
                         padding: EdgeInsets.only(bottom: h * 0.08),
                         child: Image.asset(
                           _fingerprintAsset,
-                          width: w * 0.22,
+                          width: w * 0.26,
+                          height: h * 0.30,
                           fit: BoxFit.contain,
                         ),
                       ),
