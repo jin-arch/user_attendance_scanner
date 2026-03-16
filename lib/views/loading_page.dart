@@ -20,7 +20,6 @@ class LoadingPage extends StatefulWidget {
 class _LoadingPageState extends State<LoadingPage>
     with SingleTickerProviderStateMixin {
   int _progress = 0;
-  bool _loadComplete = false;
   late AnimationController _progressController;
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
@@ -51,7 +50,6 @@ class _LoadingPageState extends State<LoadingPage>
       debugPrint('LoadingPage loadFuture error: $e');
     }
     if (!mounted) return;
-    setState(() => _loadComplete = true);
     if (_progressController.value < 1.0) {
       _progressController.animateTo(1.0,
           duration: const Duration(milliseconds: 300),

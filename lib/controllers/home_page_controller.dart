@@ -8,6 +8,7 @@ class HomePageController extends GetxController {
   final RxBool isSearching = false.obs;
   final RxBool isScanning = false.obs;
   final RxString statusMessage = ''.obs;
+  final RxString lastDbSyncLabel = ''.obs;
 
   Timer? _clockTimer;
 
@@ -55,5 +56,17 @@ class HomePageController extends GetxController {
 
   void setStatus(String status) {
     statusMessage.value = status;
+  }
+
+  void setLastDbSync([DateTime? syncedAt]) {
+    final dateTime = syncedAt ?? DateTime.now();
+    final hour12 = dateTime.hour == 0
+        ? 12
+        : (dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour);
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final second = dateTime.second.toString().padLeft(2, '0');
+    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+    lastDbSyncLabel.value =
+        'Last DB Sync: ${hour12.toString().padLeft(2, '0')}:$minute:$second $period';
   }
 }
