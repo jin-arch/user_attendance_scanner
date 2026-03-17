@@ -35,9 +35,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      // Keep loading screen visible while testing UI.
       home: const HomePage(),
-      // home: LoadingPage(loadFuture: Completer<void>().future),
     );
   }
 }
