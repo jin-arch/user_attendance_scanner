@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
+import 'package:user_attendance_scanner/views/home_page.dart';
+import 'package:user_attendance_scanner/views/loading_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +48,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // Keep loading screen visible while testing UI.
-      home: const DashboardPage(),
+      home: const HomePage(),
       // home: LoadingPage(loadFuture: Completer<void>().future),
     );
   }
