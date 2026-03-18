@@ -8,6 +8,7 @@ class LocalDb {
   static Database? _db;
   static const String _dbFileName = 'biometric_scanner.db';
   static const String _legacyDbFileName = 'biometrics_scanner.db';
+  static const String _windowsDbDirectory = r'C:\SQLiteDB';
 
   static Future<void> _ensureSchema(Database db) async {
     await db.execute('''
@@ -60,9 +61,20 @@ class LocalDb {
       databaseFactory = databaseFactoryFfi;
     }
 
-    final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, _dbFileName);
-    final legacyPath = p.join(dbPath, _legacyDbFileName);
+    String path;
+    String legacyPath;
+    if (!kIsWeb && Platform.isWindows) {
+      final windowsDir = Directory(_windowsDbDirectory);
+      if (!await windowsDir.exists()) {
+        await windowsDir.create(recursive: true);
+      }
+      path = p.join(_windowsDbDirectory, _dbFileName);
+      legacyPath = p.join(_windowsDbDirectory, _legacyDbFileName);
+    } else {
+      final dbPath = await getDatabasesPath();
+      path = p.join(dbPath, _dbFileName);
+      legacyPath = p.join(dbPath, _legacyDbFileName);
+    }
 
     final currentFile = File(path);
     final legacyFile = File(legacyPath);
@@ -105,6 +117,40 @@ class LocalDb {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  static Future<void> replaceEmployeesBySite({
+    required String siteId,
+    required List<Map<String, dynamic>> employees,
+  }) async {
+    final database = await db;
+    await database.transaction((txn) async {
+      await txn.delete(
+        'employees',
+        where: 'site_id = ?',
+        whereArgs: [siteId],
+      );
+
+      if (employees.isEmpty) {
+        return;
+      }
+
+      final batch = txn.batch();
+      for (final row in employees) {
+        batch.insert(
+          'employees',
+          {
+            'fid': row['fid'],
+            'employee_id': row['employee_id'],
+            'employee_name': row['employee_name'],
+            'finger_template': row['finger_template'],
+            'site_id': siteId,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   /// Fetch all employees for a given site.
@@ -240,6 +286,38 @@ class LocalDb {
     if (raw == null || raw.isEmpty) return null;
     final decoded = jsonDecode(raw);
     return decoded is Map<String, dynamic> ? decoded : null;
+  }
+
+  static Future<List<Map<String, dynamic>>> getTimelogHistoryForEmployee({
+    required String siteId,
+    required String employeeId,
+    int limit = 10,
+  }) async {
+    final database = await db;
+    final rows = await database.query(
+      'timelog_cache',
+      columns: ['raw_json'],
+      where: 'site_id = ? AND employee_id = ?',
+      whereArgs: [siteId, employeeId],
+      orderBy: 'id DESC',
+      limit: limit,
+    );
+
+    final results = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final raw = row['raw_json'] as String?;
+      if (raw == null || raw.isEmpty) {
+        continue;
+      }
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          results.add(decoded);
+        }
+      } catch (_) {}
+    }
+
+    return results;
   }
 
   static Future<int> getEmployeeCountBySite(String siteId) async {

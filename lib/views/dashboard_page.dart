@@ -1,7 +1,151 @@
-  import 'package:flutter/material.dart';
+import 'dart:async';
 
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+import 'enrollment_page.dart';
+import '../services/local_db.dart';
+
+class DashboardPage extends StatefulWidget {
+  const DashboardPage({
+    super.key,
+    this.employeeId,
+    this.employeeName,
+    this.attendanceType,
+    this.matchedAt,
+    this.siteId,
+    this.onPortalTap,
+    this.onEnrollNowTap,
+  });
+
+  final String? employeeId;
+  final String? employeeName;
+  final String? attendanceType;
+  final DateTime? matchedAt;
+  final String? siteId;
+  final VoidCallback? onPortalTap;
+  final VoidCallback? onEnrollNowTap;
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  List<_DashboardRow> _rows = const [];
+  bool _loadingRows = true;
+  DateTime _now = DateTime.now();
+  Timer? _clockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRows();
+    _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadRows() async {
+    final siteId = widget.siteId;
+    final employeeId = widget.employeeId;
+    if (siteId == null || siteId.isEmpty || employeeId == null || employeeId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _rows = const [];
+        _loadingRows = false;
+      });
+      return;
+    }
+
+    try {
+      final history = await LocalDb.getTimelogHistoryForEmployee(
+        siteId: siteId,
+        employeeId: employeeId,
+        limit: 10,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rows = history.map(_rowFromTimelog).toList();
+        _loadingRows = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _rows = const [];
+        _loadingRows = false;
+      });
+    }
+  }
+
+  String _pickFirst(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final value = row[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  bool _isBlank(String value) {
+    final text = value.trim();
+    return text.isEmpty ||
+        text == '00:00:00' ||
+        text == '0' ||
+        text.toLowerCase() == 'null';
+  }
+
+  DateTime? _parseDate(String text) => text.isEmpty ? null : DateTime.tryParse(text);
+
+  String _formatDate(DateTime date) {
+    const months = [
+      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  String _formatDay(DateTime date) {
+    const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    return days[date.weekday - 1];
+  }
+
+  _DashboardRow _rowFromTimelog(Map<String, dynamic> row) {
+    final dateText = _pickFirst(row, ['timelog', 'timeLogDate', 'timelog_date', 'datecaptured', 'datelog']);
+    final parsedDate = _parseDate(dateText);
+    final timeInMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning']);
+    final timeOutMorning = _pickFirst(row, ['timeOutMorning', 'timeoutmorning']);
+    final timeInAfternoon = _pickFirst(row, ['timeInAfternoon', 'timeinafternoon']);
+    final timeOutAfternoon = _pickFirst(row, ['timeOutAfternoon', 'timeoutafternoon']);
+    final firstIn = !_isBlank(timeInMorning)
+        ? timeInMorning
+        : (!_isBlank(timeInAfternoon) ? timeInAfternoon : '-');
+    final lastOut = !_isBlank(timeOutAfternoon)
+        ? timeOutAfternoon
+        : (!_isBlank(timeOutMorning) ? timeOutMorning : '-');
+    final hasIn = !_isBlank(timeInMorning) || !_isBlank(timeInAfternoon);
+    final hasOut = !_isBlank(timeOutMorning) || !_isBlank(timeOutAfternoon);
+    final status = hasIn && hasOut ? 'COMPLETE' : (hasIn ? 'INCOMPLETE' : 'NO LOG');
+
+    return _DashboardRow(
+      date: parsedDate != null ? _formatDate(parsedDate) : (dateText.isEmpty ? '-' : dateText),
+      day: parsedDate != null ? _formatDay(parsedDate) : '-',
+      shift: _pickFirst(row, ['schedule', 'schedCode']).isEmpty
+          ? '-'
+          : _pickFirst(row, ['schedule', 'schedCode']),
+      timeLogs: '$firstIn | $lastOut',
+      status: status,
+      isComplete: status == 'COMPLETE',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13,40 +157,96 @@ class DashboardPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(w * 0.02),
-          child: ClipRRect(
-            borderRadius: outerRadius,
-            child: Container(
-              decoration: const BoxDecoration(
-                image: DecorationImage(
-                  image: AssetImage('assets/images/Main BG.png'),
-                  fit: BoxFit.cover,
-                ),
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: w * 0.02,
-                  vertical: h * 0.025,
-                ),
-                child: Column(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: _buildTopRow(w, h),
+      body: Container(
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/Main BG.png'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.all(w * 0.02),
+            child: ClipRRect(
+              borderRadius: outerRadius,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Image.asset(
+                      'assets/images/Main BG.png',
+                      fit: BoxFit.cover,
                     ),
-                    SizedBox(height: h * 0.022),
-                    Expanded(
-                      flex: 2,
-                      child: _buildBottomTable(w, h),
+                  ),
+                  Positioned.fill(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cw = constraints.maxWidth;
+                        final ch = constraints.maxHeight;
+                        final ps = (cw * 0.06).clamp(32.0, 56.0);
+                        return Stack(
+                          children: [
+                            _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                            _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                            _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                            _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                            _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                            _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                            _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                            _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                            _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                            _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                            _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                            _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                          ],
+                        );
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: w * 0.02,
+                      vertical: h * 0.025,
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: _buildTopRow(w, h),
+                        ),
+                        SizedBox(height: h * 0.022),
+                        Expanded(
+                          flex: 2,
+                          child: _buildBottomTable(w, h),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _particle(
+    double w,
+    double h,
+    double fracLeft,
+    double fracTop,
+    double sizePx,
+    double phase,
+  ) {
+    return Positioned(
+      left: w * fracLeft - sizePx / 2,
+      top: h * fracTop - sizePx / 2,
+      width: sizePx,
+      height: sizePx,
+      child: _DashboardRisingFadeParticle(
+        size: sizePx,
+        phase: phase,
+        assetPath: 'assets/icons/square-particles-fx.svg',
       ),
     );
   }
@@ -83,7 +283,6 @@ class DashboardPage extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Avatar / photo placeholder
           Container(
             width: w * 0.2,
             decoration: BoxDecoration(
@@ -136,92 +335,111 @@ class DashboardPage extends StatelessWidget {
           ),
           Expanded(
             child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: w * 0.022,
-                  vertical: h * 0.024,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Align(
-                      alignment: Alignment.topRight,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _buildTopPill(w, label: 'PORTAL'),
-                          ),
-                          SizedBox(width: w * 0.012),
-                          Expanded(
-                            child: _buildTopPill(w, label: 'ENROLL NOW'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: h * 0.016),
-                    Text(
-                      'BOLD NI WALLY',
-                      style: TextStyle(
-                        fontFamily: 'TRTCENZODEMO',
-                        fontSize: w * 0.027,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                        letterSpacing: 1.3,
-                      ),
-                    ),
-                    SizedBox(height: h * 0.012),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: w * 0.013,
-                        vertical: h * 0.004,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1D7CFF),
-                        borderRadius: BorderRadius.circular(w * 0.013),
-                      ),
-                      child: Text(
-                        '250727648',
-                        style: TextStyle(
-                          fontFamily: 'CEORUSE',
-                          fontSize: w * 0.013,
-                          color: Colors.white,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: h * 0.012),
-                    Text(
-                      'UI/UX Designer',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontStyle: FontStyle.italic,
-                        fontSize: w * 0.015,
-                        color: Colors.white.withValues(alpha: 0.8),
-                        letterSpacing: 1.4,
-                      ),
-                    ),
-                    SizedBox(height: h * 0.006),
-                    Text(
-                      'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: w * 0.014,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 1.7,
-                        height: 1.25,
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
-                ),
+              padding: EdgeInsets.symmetric(
+                horizontal: w * 0.022,
+                vertical: h * 0.024,
               ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: widget.onPortalTap,
+                            child: _buildTopPill(w, label: 'PORTAL', active: false),
+                          ),
+                        ),
+                        SizedBox(width: w * 0.012),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: widget.onEnrollNowTap ??
+                                () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => const EnrollmentPage(),
+                                    ),
+                                  );
+                                },
+                            child: _buildTopPill(w, label: 'ENROLL NOW', active: true),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: h * 0.016),
+                  Text(
+                    (widget.employeeName ?? 'UNKNOWN USER').toUpperCase(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'TRTCENZODEMO',
+                      fontSize: w * 0.027,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                      letterSpacing: 1.3,
+                    ),
+                  ),
+                  SizedBox(height: h * 0.012),
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: w * 0.013,
+                      vertical: h * 0.004,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1D7CFF),
+                      borderRadius: BorderRadius.circular(w * 0.013),
+                    ),
+                    child: Text(
+                      widget.employeeId ?? 'N/A',
+                      style: TextStyle(
+                        fontFamily: 'CEORUSE',
+                        fontSize: w * 0.013,
+                        color: Colors.white,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: h * 0.012),
+                  Text(
+                    widget.attendanceType ?? 'RECORDED',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontStyle: FontStyle.italic,
+                      fontSize: w * 0.015,
+                      color: Colors.white.withValues(alpha: 0.8),
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                  SizedBox(height: h * 0.006),
+                  Text(
+                    'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: w * 0.014,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 1.7,
+                      height: 1.25,
+                    ),
+                  ),
+                  const Spacer(),
+                ],
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTopPill(double w, {required String label}) {
+  Widget _buildTopPill(double w, {required String label, bool active = false}) {
     final radius = BorderRadius.circular(w * 0.018);
 
     return Container(
@@ -231,7 +449,15 @@ class DashboardPage extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         borderRadius: radius,
-        color: const Color(0xFF0E1F33).withValues(alpha: 0.92),
+        color: active
+            ? const Color(0xFF1A4EA6).withValues(alpha: 0.95)
+            : const Color(0xFF0E1F33).withValues(alpha: 0.92),
+        border: Border.all(
+          color: active
+              ? const Color(0xFF77A8F9)
+              : Colors.white.withValues(alpha: 0.18),
+          width: 1,
+        ),
       ),
       child: FittedBox(
         fit: BoxFit.scaleDown,
@@ -239,7 +465,7 @@ class DashboardPage extends StatelessWidget {
           label,
           style: TextStyle(
             fontFamily: 'CEORUSE',
-            fontSize: w * 0.013,
+            fontSize: w * 0.012,
             fontWeight: FontWeight.bold,
             color: Colors.white,
             letterSpacing: 1.6,
@@ -250,6 +476,10 @@ class DashboardPage extends StatelessWidget {
   }
 
   Widget _buildTimePanel(double w, double h) {
+    final now = _now;
+    final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final minute = now.minute.toString().padLeft(2, '0');
+    final period = now.hour >= 12 ? 'PM' : 'AM';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: w * 0.024,
@@ -264,7 +494,7 @@ class DashboardPage extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '03:36 PM',
+                '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
                   fontSize: w * 0.042,
@@ -275,7 +505,7 @@ class DashboardPage extends StatelessWidget {
               ),
               SizedBox(height: h * 0.006),
               Text(
-                'MARCH 10, 2026',
+                _formatDate(now),
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
                   fontSize: w * 0.02,
@@ -286,7 +516,7 @@ class DashboardPage extends StatelessWidget {
               ),
               SizedBox(height: h * 0.002),
               Text(
-                'TUESDAY',
+                _formatDay(now),
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
                   fontSize: w * 0.014,
@@ -302,6 +532,11 @@ class DashboardPage extends StatelessWidget {
   }
 
   Widget _buildTodayLogCard(double w, double h) {
+    final now = widget.matchedAt ?? DateTime.now();
+    final todayDate = _formatDate(now);
+    final todayLog = _rows.isNotEmpty ? _rows.first.timeLogs.split('|') : const ['-', '-'];
+    final todayIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
+    final todayOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: w * 0.024,
@@ -422,7 +657,7 @@ class DashboardPage extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'March 10, 2026',
+                    todayDate,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Poppins',
@@ -434,7 +669,7 @@ class DashboardPage extends StatelessWidget {
                 ),
                 Expanded(
                   child: Text(
-                    '8:00AM',
+                    todayIn,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Poppins',
@@ -446,7 +681,7 @@ class DashboardPage extends StatelessWidget {
                 ),
                 Expanded(
                   child: Text(
-                    '6:38PM',
+                    todayOut,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Poppins',
@@ -480,52 +715,19 @@ class DashboardPage extends StatelessWidget {
       letterSpacing: 1.4,
     );
 
-    final rows = <_DashboardRow>[
-      const _DashboardRow(
-        date: 'March 10, 2026',
-        day: 'Thursday',
-        shift: '8:00AM - 6:30PM',
-        timeLogs: '8:00AM | 7:00PM',
-        status: 'COMPLETE',
-        isComplete: true,
-      ),
-      const _DashboardRow(
-        date: 'March 10, 2026',
-        day: 'Wednesday',
-        shift: '8:00AM - 6:30PM',
-        timeLogs: '8:00AM |',
-        status: 'INCOMPLETE',
-        isComplete: false,
-      ),
-      const _DashboardRow(
-        date: 'March 10, 2026',
-        day: 'Tuesday',
-        shift: '8:00AM - 6:30PM',
-        timeLogs: '10:00AM | 6:38PM',
-        status: 'COMPLETE',
-        isComplete: true,
-      ),
-      const _DashboardRow(
-        date: 'March 10, 2026',
-        day: 'Monday',
-        shift: '8:00AM - 7:00PM',
-        timeLogs: '7:00PM |',
-        status: 'INCOMPLETE',
-        isComplete: false,
-      ),
-    ];
+    final rows = _rows;
 
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(w * 0.028),
-        color: const Color.fromRGBO(4, 17, 27, 1).withValues(alpha: 0.80),
+        color: const Color.fromRGBO(4, 17, 27, 1).withValues(alpha: 0.50),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF05080C).withValues(alpha: 0.20),
+              color: const Color(0xFF05080C).withValues(alpha: 0.10),
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(w * 0.028),
                 topRight: Radius.circular(w * 0.028),
@@ -562,55 +764,69 @@ class DashboardPage extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: ListView.separated(
-              padding: EdgeInsets.symmetric(
-                horizontal: 0,
-                vertical: 0,
-              ),
-              itemBuilder: (context, index) {
-                final row = rows[index];
-                return Container(
-                  decoration: BoxDecoration(
-                    color: index.isEven
-                        ? const Color(0xFF071A2B).withValues(alpha: 0.50)
-                        : const Color(0xFF071A2B).withValues(alpha: 0.30),
-                  ),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: w * 0.024,
-                    vertical: h * 0.008,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: Text(row.date, style: cellStyle),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: Text(row.day, style: cellStyle),
-                      ),
-                      Expanded(
-                        flex: 3,
-                        child: Text(row.shift, style: cellStyle),
-                      ),
-                      Expanded(
-                        flex: 3,
-                        child: Text(row.timeLogs, style: cellStyle),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: _buildStatusChip(w, row),
+            child: _loadingRows
+                ? const Center(child: CircularProgressIndicator())
+                : rows.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No timelog history found',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: w * 0.014,
+                            color: Colors.white70,
+                            letterSpacing: 1.2,
+                          ),
                         ),
+                      )
+                    : ListView.separated(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 0,
+                          vertical: 0,
+                        ),
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: index.isEven
+                                  ? const Color(0xFF071A2B).withValues(alpha: 0.50)
+                                  : const Color(0xFF071A2B).withValues(alpha: 0.30),
+                            ),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: w * 0.024,
+                              vertical: h * 0.008,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(row.date, style: cellStyle),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(row.day, style: cellStyle),
+                                ),
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(row.shift, style: cellStyle),
+                                ),
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(row.timeLogs, style: cellStyle),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: _buildStatusChip(w, row),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        separatorBuilder: (_, __) => const SizedBox.shrink(),
+                        itemCount: rows.length,
                       ),
-                    ],
-                  ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox.shrink(),
-              itemCount: rows.length,
-            ),
           ),
         ],
       ),
@@ -678,4 +894,91 @@ class _DashboardRow {
   final String timeLogs;
   final String status;
   final bool isComplete;
+}
+
+class _DashboardRisingFadeParticle extends StatefulWidget {
+  const _DashboardRisingFadeParticle({
+    required this.size,
+    required this.assetPath,
+    this.phase = 0.0,
+  });
+
+  final double size;
+  final String assetPath;
+  final double phase;
+
+  @override
+  State<_DashboardRisingFadeParticle> createState() =>
+      _DashboardRisingFadeParticleState();
+}
+
+class _DashboardRisingFadeParticleState
+    extends State<_DashboardRisingFadeParticle>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _opacity;
+  Animation<double>? _translateY;
+  Animation<double>? _scale;
+
+  static const double _riseDistance = 48.0;
+  static const Duration _duration = Duration(milliseconds: 2600);
+
+  @override
+  void initState() {
+    super.initState();
+    final controller = AnimationController(vsync: this, duration: _duration);
+    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
+    _controller = controller;
+    _opacity = Tween<double>(begin: 0.100, end: 0.0).animate(curve);
+    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
+    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
+    controller.value = widget.phase;
+    controller.repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final opacity = _opacity;
+    final translateY = _translateY;
+    final scale = _scale;
+    if (controller == null ||
+        opacity == null ||
+        translateY == null ||
+        scale == null) {
+      return const SizedBox.shrink();
+    }
+
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, translateY.value),
+          child: Opacity(
+            opacity: opacity.value,
+            child: Transform.scale(
+              scale: scale.value,
+              alignment: Alignment.center,
+              child: SvgPicture.asset(
+                widget.assetPath,
+                width: widget.size,
+                height: widget.size,
+                fit: BoxFit.contain,
+                colorFilter: const ColorFilter.mode(
+                  Color(0xFF5FCFFF),
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

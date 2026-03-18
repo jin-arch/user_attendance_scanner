@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+import 'dashboard_page.dart';
 
 class EnrollmentPage extends StatelessWidget {
   const EnrollmentPage({super.key});
@@ -11,103 +14,159 @@ class EnrollmentPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(w * 0.02),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(w * 0.04),
-            child: Container(
-              decoration: const BoxDecoration(
-                image: DecorationImage(
-                  image: AssetImage('assets/images/Main BG.png'),
-                  fit: BoxFit.cover,
-                ),
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: w * 0.018,
-                  vertical: h * 0.02,
-                ),
-                child: Column(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _EnrollmentProfileCard(width: w, height: h),
-                          SizedBox(width: w * 0.018),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                _EnrollmentTimePanel(width: w, height: h),
-                                SizedBox(height: h * 0.016),
-                                _TodayLogCard(width: w, height: h),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/Main BG.png'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.all(w * 0.02),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(w * 0.04),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Image.asset(
+                      'assets/images/Main BG.png',
+                      fit: BoxFit.cover,
                     ),
-                    SizedBox(height: h * 0.02),
-                    Expanded(
-                      flex: 3,
-                      child: Row(
-                        children: [
-                          _EnrollmentGuideCard(width: w, height: h),
-                          SizedBox(width: w * 0.012),
-                          _ScannerImageCard(width: w, height: h),
-                          SizedBox(width: w * 0.012),
-                          _FingerprintPreviewCard(width: w, height: h),
-                          SizedBox(width: w * 0.012),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                _StatusCard(
-                                  width: w,
-                                  height: h,
-                                  title: 'LEFT THUMB STATUS',
-                                  activeCount: 0,
-                                ),
-                                SizedBox(height: h * 0.018),
-                                _StatusCard(
-                                  width: w,
-                                  height: h,
-                                  title: 'RIGHT THUMB STATUS',
-                                  activeCount: 3,
-                                ),
-                                const Spacer(),
-                                Row(
+                  ),
+                  Positioned.fill(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cw = constraints.maxWidth;
+                        final ch = constraints.maxHeight;
+                        final ps = (cw * 0.06).clamp(32.0, 56.0);
+                        return Stack(
+                          children: [
+                            _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                            _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                            _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                            _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                            _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                            _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                            _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                            _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                            _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                            _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                            _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                            _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: w * 0.018,
+                      vertical: h * 0.02,
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _EnrollmentProfileCard(width: w, height: h),
+                              SizedBox(width: w * 0.018),
+                              Expanded(
+                                child: Column(
                                   children: [
-                                    Expanded(
-                                      child: _ActionButton(
-                                        width: w,
-                                        label: 'RESET',
-                                        color: const Color(0xFF244D86),
-                                      ),
+                                    _EnrollmentTimePanel(width: w, height: h),
+                                    SizedBox(height: h * 0.016),
+                                    _TodayLogCard(width: w, height: h),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: h * 0.02),
+                        Expanded(
+                          flex: 3,
+                          child: Row(
+                            children: [
+                              _EnrollmentGuideCard(width: w, height: h),
+                              SizedBox(width: w * 0.012),
+                              _ScannerImageCard(width: w, height: h),
+                              SizedBox(width: w * 0.012),
+                              _FingerprintPreviewCard(width: w, height: h),
+                              SizedBox(width: w * 0.012),
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    _StatusCard(
+                                      width: w,
+                                      height: h,
+                                      title: 'LEFT THUMB STATUS',
+                                      activeCount: 0,
                                     ),
-                                    SizedBox(width: w * 0.012),
-                                    Expanded(
-                                      child: _ActionButton(
-                                        width: w,
-                                        label: 'SAVE',
-                                        color: const Color(0xFF44D980),
-                                      ),
+                                    SizedBox(height: h * 0.018),
+                                    _StatusCard(
+                                      width: w,
+                                      height: h,
+                                      title: 'RIGHT THUMB STATUS',
+                                      activeCount: 3,
+                                    ),
+                                    const Spacer(),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: _ActionButton(
+                                            width: w,
+                                            label: 'RESET',
+                                            color: const Color(0xFF244D86),
+                                          ),
+                                        ),
+                                        SizedBox(width: w * 0.012),
+                                        Expanded(
+                                          child: _ActionButton(
+                                            width: w,
+                                            label: 'SAVE',
+                                            color: const Color(0xFF44D980),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _particle(
+    double w,
+    double h,
+    double fracLeft,
+    double fracTop,
+    double sizePx,
+    double phase,
+  ) {
+    return Positioned(
+      left: w * fracLeft - sizePx / 2,
+      top: h * fracTop - sizePx / 2,
+      width: sizePx,
+      height: sizePx,
+      child: _EnrollmentRisingFadeParticle(
+        size: sizePx,
+        phase: phase,
+        assetPath: 'assets/icons/square-particles-fx.svg',
       ),
     );
   }
@@ -141,10 +200,26 @@ class _EnrollmentProfileCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    children: const [
-                      Expanded(child: _TopPill(label: 'PORTAL')),
-                      SizedBox(width: 12),
-                      Expanded(child: _TopPill(label: 'LOGIN')),
+                    children: [
+                      const Expanded(child: _TopPill(label: 'PORTAL')),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            final nav = Navigator.of(context);
+                            if (nav.canPop()) {
+                              nav.pop();
+                              return;
+                            }
+                            nav.pushReplacement(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const DashboardPage(),
+                              ),
+                            );
+                          },
+                          child: const _TopPill(label: 'LOGIN'),
+                        ),
+                      ),
                     ],
                   ),
                   SizedBox(height: height * 0.02),
@@ -712,6 +787,93 @@ class _TableValueCell extends StatelessWidget {
           letterSpacing: 1.4,
         ),
       ),
+    );
+  }
+}
+
+class _EnrollmentRisingFadeParticle extends StatefulWidget {
+  const _EnrollmentRisingFadeParticle({
+    required this.size,
+    required this.assetPath,
+    this.phase = 0.0,
+  });
+
+  final double size;
+  final String assetPath;
+  final double phase;
+
+  @override
+  State<_EnrollmentRisingFadeParticle> createState() =>
+      _EnrollmentRisingFadeParticleState();
+}
+
+class _EnrollmentRisingFadeParticleState
+    extends State<_EnrollmentRisingFadeParticle>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _opacity;
+  Animation<double>? _translateY;
+  Animation<double>? _scale;
+
+  static const double _riseDistance = 48.0;
+  static const Duration _duration = Duration(milliseconds: 2600);
+
+  @override
+  void initState() {
+    super.initState();
+    final controller = AnimationController(vsync: this, duration: _duration);
+    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
+    _controller = controller;
+    _opacity = Tween<double>(begin: 0.7, end: 0.0).animate(curve);
+    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
+    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
+    controller.value = widget.phase;
+    controller.repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    final opacity = _opacity;
+    final translateY = _translateY;
+    final scale = _scale;
+    if (controller == null ||
+        opacity == null ||
+        translateY == null ||
+        scale == null) {
+      return const SizedBox.shrink();
+    }
+
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, translateY.value),
+          child: Opacity(
+            opacity: opacity.value,
+            child: Transform.scale(
+              scale: scale.value,
+              alignment: Alignment.center,
+              child: SvgPicture.asset(
+                widget.assetPath,
+                width: widget.size,
+                height: widget.size,
+                fit: BoxFit.contain,
+                colorFilter: const ColorFilter.mode(
+                  Color(0xFF5FCFFF),
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

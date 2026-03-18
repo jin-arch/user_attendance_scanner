@@ -6,10 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../services/local_db.dart';
 import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
+import 'dashboard_page.dart';
 import 'loading_page.dart';
 
 class _SiteOption {
@@ -30,17 +30,11 @@ class _ScanResult {
   const _ScanResult({
     required this.success,
     required this.timestamp,
-    this.employeeId,
-    this.employeeName,
-    this.attendanceType,
     this.errorMessage,
   });
 
   final bool success;
   final DateTime timestamp;
-  final String? employeeId;
-  final String? employeeName;
-  final String? attendanceType; // 'TIME IN' or 'TIME OUT'
   final String? errorMessage;
 }
 
@@ -68,6 +62,8 @@ class _PendingTimeLog {
   final String? timeOutAfternoon;
 }
 
+enum _HomeUiMode { scanner, portal, enroll }
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -80,8 +76,8 @@ class _HomePageState extends State<HomePage> {
     'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
   static const String _siteApiUrl =
     '${_apiBaseUrl}get/site/all';
-  static const String _employeesPerSiteApiUrl =
-    '${_apiBaseUrl}get/employee/perSite';
+  static const String _employeesApiUrl =
+    '${_apiBaseUrl}get/employee/perSite?siteID=';
   static const String _timelogPerSiteApiUrl =
     '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
   static const String _timeInApiEndpoint = 'update/timeLog/timeIn';
@@ -89,9 +85,10 @@ class _HomePageState extends State<HomePage> {
   static const String _insertHrisLogsApiEndpoint =
     'insert/hris/logs/transaction';
   static const String _insertTimeLogApiEndpoint = 'insert/timeLog';
+  static const String _thumbDetailsApiEndpoint =
+    'update/employee/thumbDetails';
   static const String _legacyAttendanceApiUrl =
     '${_apiBaseUrl}post/attendance/add';
-  static const String _scannerDbPath = r'C:\SQLiteDB\biometric_scanner.db';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
@@ -100,16 +97,23 @@ class _HomePageState extends State<HomePage> {
   String? _selectedSiteId;
   List<_SiteOption> _sites = const [];
   final Map<String, String> _deviceSiteMap = {};
-
+  
   final ZKTecoUSB _device = ZKTecoUSB();
   late final HomePageController _controller;
 
   // Scan loop state
   Timer? _scanTimer;
+  Timer? _liveSyncTimer;
+  Timer? _portalAutoReturnTimer;
+  bool _isLiveSyncRunning = false;
   _ScanResult? _lastResult;
   bool _showResult = false;
-  bool _lastAddUsedFallbackLocalDb = false;
   final Map<int, _EmployeeEntry> _employeeDb = {};
+  final Map<String, _EmployeeEntry> _employeeDbByFid = {};
+  _HomeUiMode _uiMode = _HomeUiMode.scanner;
+  _EmployeeEntry? _matchedEmployee;
+  String? _matchedAttendanceType;
+  DateTime? _matchedAt;
 
   @override
   void initState() {
@@ -117,7 +121,6 @@ class _HomePageState extends State<HomePage> {
     _controller = Get.isRegistered<HomePageController>()
         ? Get.find<HomePageController>()
         : Get.put(HomePageController());
-    unawaited(_ensureScannerDbReady());
     _loadDeviceSiteMap();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requireSiteSelectionOnStartup();
@@ -130,6 +133,10 @@ class _HomePageState extends State<HomePage> {
       };
       _device.onDeviceDetached = () {
         _controller.setConnected(false, status: 'Device detached');
+        _employeeDb.clear();
+        _employeeDbByFid.clear();
+        _portalAutoReturnTimer?.cancel();
+        _stopLiveDbSync();
         _stopScanLoop();
       };
       _device.onTemplateExtracted = (template, size) {
@@ -163,12 +170,11 @@ class _HomePageState extends State<HomePage> {
     client.connectionTimeout = const Duration(seconds: 20);
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
+        final basicToken =
+          base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -183,14 +189,13 @@ class _HomePageState extends State<HomePage> {
       return list
           .map((site) {
             final name =
-                site['site_name'] ??
-                site['SITENAME'] ??
-                site['name'] ??
-                site['site'] ??
-                site['title'];
-            final id =
-                site['site_id'] ??
-                site['SITEID'] ??
+            site['site_name'] ??
+            site['SITENAME'] ??
+            site['name'] ??
+            site['site'] ??
+            site['title'];
+            final id = site['site_id'] ??
+            site['SITEID'] ??
                 site['id'] ??
                 site['siteid'] ??
                 site['site_code'] ??
@@ -219,8 +224,7 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _extractSiteRows(dynamic decoded) {
     dynamic data = decoded;
     if (decoded is Map<String, dynamic>) {
-      data =
-          decoded['data'] ??
+      data = decoded['data'] ??
           decoded['sites'] ??
           decoded['result'] ??
           decoded['records'] ??
@@ -232,13 +236,20 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (data is List) {
-      return data
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
     }
 
     return const [];
+  }
+
+  int _stableFingerprintId(String employeeId, String thumbKey) {
+    var hash = 0x811C9DC5;
+    final input = '$employeeId:$thumbKey';
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
   }
 
   Future<void> _ensureSitesLoaded() async {
@@ -262,35 +273,37 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _requireSiteSelectionOnStartup() async {
+    if (!mounted) return;
+
+    // Step 1 — fetch site list quietly (status bar only, no loading screen)
+    _controller.setStatus('Loading site list...');
     await _ensureSitesLoaded();
     if (!mounted) return;
 
     if (_sites.isEmpty) {
       _controller.setStatus(
-        'Cannot load site list. Please check API connection.',
-      );
+          'Cannot load site list. Please check API connection.');
       return;
     }
+    _controller.setStatus('');
 
+    // Step 2 — let the user choose their work site
     final selected = await _showSiteSelectionDialog(requiredSelection: true);
     if (!mounted || selected == null) return;
 
-    final loadFuture = _syncEmployeesPerSiteToLocalDb(selected);
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => LoadingPage(loadFuture: loadFuture),
-        fullscreenDialog: true,
-      ),
-    );
-    if (!mounted) return;
+    setState(() => _selectedSiteId = selected);
+    await LocalDb.pruneToSite(selected);
+    _controller
+        .setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
 
-    setState(() {
-      _selectedSiteId = selected;
-    });
-    _controller.setStatus(
-      'Selected site: ${_siteNameById(selected) ?? selected}',
-    );
+    // Step 3 — NOW show the loading screen while connecting + syncing data
+    if (!mounted) return;
+    final syncFuture = _connectAndSync();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => LoadingPage(loadFuture: syncFuture),
+      fullscreenDialog: true,
+    ));
+    if (mounted) _startScanLoop();
   }
 
   Future<String?> _showSiteSelectionDialog({
@@ -313,10 +326,7 @@ class _HomePageState extends State<HomePage> {
                 backgroundColor: Colors.transparent,
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 560),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 28,
-                    vertical: 24,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
@@ -417,9 +427,7 @@ class _HomePageState extends State<HomePage> {
                                     ? null
                                     : () => Navigator.of(context).pop(),
                                 style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(
-                                    color: Color(0xFFD6DBE5),
-                                  ),
+                                  side: const BorderSide(color: Color(0xFFD6DBE5)),
                                   foregroundColor: const Color(0xFF9CA3AF),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -434,8 +442,7 @@ class _HomePageState extends State<HomePage> {
                             child: SizedBox(
                               height: 44,
                               child: ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(selectedId),
+                                onPressed: () => Navigator.of(context).pop(selectedId),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
@@ -473,197 +480,149 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _scanTimer?.cancel();
+    _portalAutoReturnTimer?.cancel();
+    _stopLiveDbSync();
     _device.dispose();
     if (Get.isRegistered<HomePageController>()) {
       Get.delete<HomePageController>();
     }
     super.dispose();
   }
-
-  Future<void> _searchAndConnect() async {
-    if (_controller.isSearching.value) return;
-
-    if (_selectedSiteId == null) {
-      await _requireSiteSelectionOnStartup();
-      if (_selectedSiteId == null) {
-        _controller.setStatus(
-          'Please select a site before searching for device.',
-        );
-        return;
-      }
-    }
-
+  
+  /// Pure async connect + sync — NO dialogs, NO Navigator calls.
+  /// Safe to run as the loadFuture inside LoadingPage.
+  Future<void> _connectAndSync() async {
     _controller.startSearching('Searching for device...');
-
     try {
       if (ZKTecoUSB.isAndroidPlatform) {
         final env = await _device.getAndroidSdkEnvironment();
-        final canUseSdk = env['canUseSdk'] == true;
-        if (!canUseSdk) {
-          final reason =
+        if (env['canUseSdk'] != true) {
+          _controller.stopSearching(
               env['reason']?.toString() ??
-              'Android runtime is not compatible with the ZKTeco SDK.';
-          _controller.stopSearching(reason);
+                  'SDK not compatible. Ensure a physical Android device with the scanner attached.');
           return;
         }
       }
 
-      // Initialize SDK
       final sdkInit = await _device.initSdk();
       if (!sdkInit) {
         _controller.stopSearching(
           ZKTecoUSB.isAndroidPlatform
-              ? 'SDK init failed. Use a physical ARM Android device with the scanner attached, or run the Windows build.'
-              : 'SDK init failed',
+              ? 'SDK init failed. Plug in the scanner and retry.'
+              : 'SDK init failed.',
         );
         return;
       }
 
-      // Check device count
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
-        _controller.stopSearching('No device found');
+        _controller.stopSearching('No device found. Plug in the scanner and retry.');
         await _device.terminateSdk();
         return;
       }
 
       _controller.setStatus('Found $count device(s). Connecting...');
 
-      // Open device
       final opened = await _device.openDevice(0);
-      if (opened) {
-        final serial = await _device.getSerialNumber();
-        await _ensureSitesLoaded();
-
-        if (!mounted) return;
-
-        String? siteId;
-        if (serial != null && serial.isNotEmpty) {
-          siteId = _deviceSiteMap[serial];
-          if (siteId == null && _sites.isNotEmpty) {
-            final pickedSiteId = await _showSiteSelectionDialog(
-              requiredSelection: true,
-              initialSiteId: _selectedSiteId,
-            );
-            if (pickedSiteId != null) {
-              _deviceSiteMap[serial] = pickedSiteId;
-              siteId = pickedSiteId;
-              await _saveDeviceSiteMap();
-            }
-          }
-        }
-
-        siteId ??= _selectedSiteId;
-        _selectedSiteId = siteId;
-
-        final siteName = _siteNameById(siteId);
-        final siteText = siteName != null ? ' | Site: $siteName' : '';
-
-        _controller.stopSearching();
-        _controller.setConnected(
-          true,
-          status: 'Connected: ${serial ?? "Unknown"}$siteText',
-        );
-        await _loadAndRegisterTemplates();
-        _startScanLoop();
-      } else {
-        _controller.stopSearching('Failed to open device');
+      if (!opened) {
+        _controller.stopSearching('Failed to open device.');
         await _device.terminateSdk();
+        return;
       }
+
+      final serial = await _device.getSerialNumber();
+
+      // Persist serial → site mapping (no dialog — site was already chosen)
+      if (serial != null && serial.isNotEmpty && _selectedSiteId != null) {
+        _deviceSiteMap[serial] = _selectedSiteId!;
+        await _saveDeviceSiteMap();
+      }
+
+      final siteName = _siteNameById(_selectedSiteId);
+      final siteText = siteName != null ? ' | Site: $siteName' : '';
+      _controller.stopSearching();
+      _controller.setConnected(
+          true, status: 'Connected: ${serial ?? "Unknown"}$siteText');
+
+      // Sync API -> SQLite, then always load/register from SQLite.
+      await _loadAndRegisterTemplates();
+      await _fetchAndCacheSiteTimeLogs();
+      await _syncPendingHrisQueue();
+      _startLiveDbSync();
     } catch (e) {
       _controller.stopSearching('Error: $e');
     }
+  }
+
+  Future<void> _searchAndConnect() async {
+    if (_controller.isSearching.value) return;
+    if (!mounted) return;
+
+    // Step 1 — ensure site list is available (silent, no loading screen)
+    if (_sites.isEmpty) {
+      _controller.setStatus('Loading site list...');
+      await _ensureSitesLoaded();
+      if (!mounted) return;
+    }
+
+    if (_sites.isEmpty) {
+      _controller.setStatus(
+          'Cannot load site list. Please check API connection.');
+      return;
+    }
+    _controller.setStatus('');
+
+    // Step 2 — show site-selection dialog (Cancel IS allowed here)
+    final selected = await _showSiteSelectionDialog(
+      requiredSelection: false,
+      initialSiteId: _selectedSiteId ?? _sites.first.id,
+    );
+    if (!mounted || selected == null) return;
+
+    setState(() => _selectedSiteId = selected);
+    await LocalDb.pruneToSite(selected);
+    _controller
+        .setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
+
+    // Step 3 — ONLY NOW show the loading screen (connect + sync)
+    if (!mounted) return;
+    final syncFuture = _connectAndSync();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => LoadingPage(loadFuture: syncFuture),
+      fullscreenDialog: true,
+    ));
+    if (mounted) _startScanLoop();
   }
 
   // ==================== Template Loading & Scan Loop ====================
 
   Future<void> _loadAndRegisterTemplates() async {
     if (!mounted) return;
-    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
-      _controller.setStatus('Please select a site before scanning');
+    final siteId = _selectedSiteId;
+    if (siteId == null) {
+      _controller.setStatus('No site selected — cannot load fingerprints.');
       return;
     }
 
-    _controller.setStatus('Loading fingerprints...');
-    try {
-      final siteId = _selectedSiteId!;
-      await _syncEmployeesPerSiteToLocalDb(siteId);
-
-      final rows = await _readEmployeesFromLocalDb(siteId);
-      _employeeDb.clear();
-
-      await _device.clearDatabase();
-
-      int autoId = 1;
-      int registered = 0;
-
-      for (final row in rows) {
-        final empId = (row['employee_id'] ?? row['emp_id'] ?? row['id'])
-            ?.toString();
-        final empName =
-            (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                ?.toString();
-        final templateB64 =
-            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                ?.toString();
-        final rawFid = row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'];
-        final fid = int.tryParse(rawFid?.toString() ?? '') ?? autoId;
-
-        if (empId == null || templateB64 == null || templateB64.isEmpty) {
-          autoId++;
-          continue;
-        }
-
-        try {
-          final templateBytes = base64Decode(templateB64);
-          final ok = await _device.registerFingerprint(fid, templateBytes);
-          if (ok) {
-            _employeeDb[fid] = _EmployeeEntry(
-              id: empId,
-              name: empName ?? empId,
-            );
-            registered++;
-          }
-        } catch (_) {}
-        autoId++;
-      }
-
-      if (!mounted) return;
-      _controller.setStatus(
-        registered > 0
-            ? 'Ready — $registered fingerprint(s) loaded'
-            : 'Ready — place finger on scanner',
-      );
-
-      // Keep timelog cache and offline queue aligned with current site.
-      await _fetchAndCacheSiteTimeLogs();
-      await _syncPendingHrisQueue();
-    } catch (e) {
-      if (!mounted) return;
-      _controller.setStatus('Ready — place finger on scanner');
-      debugPrint('_loadAndRegisterTemplates: $e');
-    }
+    _controller.setStatus('Syncing fingerprint data to local database...');
+    await _syncEmployeesFromApiToLocalDb(siteId);
+    await _loadFromLocalDb(siteId);
   }
 
-  Future<void> _syncEmployeesPerSiteToLocalDb(String siteId) async {
+  Future<void> _syncEmployeesFromApiToLocalDb(String siteId) async {
+    await LocalDb.pruneToSite(siteId);
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
-    Database? db;
-
+    client.connectionTimeout = const Duration(seconds: 30);
     try {
-      final request = await client.getUrl(
-        Uri.parse('$_employeesPerSiteApiUrl?siteID=$siteId'),
-      );
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
+      final urlStr = '$_employeesApiUrl$siteId';
+      final request = await client.getUrl(Uri.parse(urlStr));
+      final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
       request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
-
       if (response.statusCode < 200 || response.statusCode > 299) {
         throw Exception('HTTP ${response.statusCode}');
       }
@@ -671,114 +630,180 @@ class _HomePageState extends State<HomePage> {
       final decoded = jsonDecode(body);
       final rows = _extractSiteRows(decoded);
 
-      db = await _openScannerDb();
-      await db.execute(
-        "DELETE FROM scanner_employee WHERE site_id = ? AND source = 'api'",
-        [siteId],
-      );
-
-      final batch = db.batch();
-      final now = DateTime.now().toIso8601String();
+      int totalEmps = 0;
+      int skippedEmps = 0;
+      int savedFingerprints = 0;
+      int skippedTemplates = 0;
+      final templatesToSave = <Map<String, dynamic>>[];
       for (final row in rows) {
-        final templateB64 =
-            (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                ?.toString();
-        if (templateB64 == null || templateB64.isEmpty) {
+        totalEmps++;
+        final empId =
+            (row['employee_id'] ?? row['emp_id'] ?? row['id'] ?? row['EMPID'])
+                ?.toString()
+                .trim();
+        final firstName = (row['FIRSTNAME'] ?? row['first_name'])?.toString().trim();
+        final middleName = (row['MIDDLENAME'] ?? row['middle_name'])?.toString().trim();
+        final lastName = (row['LASTNAME'] ?? row['last_name'])?.toString().trim();
+        final fullNameParts = [firstName, middleName, lastName]
+            .whereType<String>()
+            .where((part) => part.isNotEmpty && part.toLowerCase() != 'null')
+            .toList();
+        final empName =
+            (row['employee_name'] ?? row['full_name'] ?? row['name'])?.toString().trim();
+        final resolvedName = fullNameParts.isNotEmpty
+            ? fullNameParts.join(' ')
+            : ((empName != null && empName.isNotEmpty && empName.toLowerCase() != 'null')
+                ? empName
+                : null);
+
+        if (empId == null || empId.isEmpty) {
+          skippedEmps++;
           continue;
         }
 
-        batch.insert('scanner_employee', {
-          'site_id': siteId,
-          'employee_id': (row['employee_id'] ?? row['emp_id'] ?? row['id'])
+        final thumbTemplates = <String, String?>{
+          'left': (row['LEFTFINGERTHUMB'] ?? row['leftFingerThumb'] ?? row['left_thumb'])
               ?.toString(),
-          'employee_name':
-              (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                  ?.toString(),
-          'finger_id': (row['finger_id'] ?? row['fid'] ?? row['fingerprint_id'])
+          'right': (row['RIGHTFINGERTHUMB'] ?? row['rightFingerThumb'] ?? row['right_thumb'])
               ?.toString(),
-          'finger_template': templateB64,
-          'synced_at': now,
-          'source': 'api',
-        });
+          'default': (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+              ?.toString(),
+        };
+
+        for (final entry in thumbTemplates.entries) {
+          final templateB64 = entry.value?.trim();
+          if (templateB64 == null ||
+              templateB64.isEmpty ||
+              templateB64.toLowerCase() == 'null') {
+            skippedTemplates++;
+            continue;
+          }
+
+          try {
+            final fid = _stableFingerprintId(empId, entry.key);
+            templatesToSave.add({
+              'fid': fid,
+              'employee_id': empId,
+              'employee_name': resolvedName,
+              'finger_template': base64Decode(templateB64),
+            });
+            savedFingerprints++;
+          } catch (_) {
+            skippedTemplates++;
+          }
+        }
       }
-      await batch.commit(noResult: true);
+
+      await LocalDb.replaceEmployeesBySite(
+        siteId: siteId,
+        employees: templatesToSave,
+      );
+
+      final dbCount = await LocalDb.getEmployeeCountBySite(siteId);
+      debugPrint(
+        '[SYNC_DEBUG] site=$siteId employees=$totalEmps skippedEmployees=$skippedEmps '
+        'savedTemplates=$savedFingerprints skippedTemplates=$skippedTemplates dbCount=$dbCount',
+      );
+      _controller.setLastDbSync();
+    } catch (e) {
+      debugPrint('_syncEmployeesFromApiToLocalDb: $e');
     } finally {
       client.close(force: true);
-      await db?.close();
     }
   }
 
-  Future<List<Map<String, Object?>>> _readEmployeesFromLocalDb(
-    String siteId,
-  ) async {
-    Database? db;
+  void _startLiveDbSync() {
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
+      if (!mounted || _isLiveSyncRunning || !_device.isConnected) return;
+      final siteId = _selectedSiteId;
+      if (siteId == null || siteId.isEmpty) return;
+
+      _isLiveSyncRunning = true;
+      try {
+        await _syncEmployeesFromApiToLocalDb(siteId);
+        await _loadFromLocalDb(siteId);
+        await _fetchAndCacheSiteTimeLogs();
+        await _syncPendingHrisQueue();
+      } catch (e) {
+        debugPrint('_startLiveDbSync tick: $e');
+      } finally {
+        _isLiveSyncRunning = false;
+      }
+    });
+  }
+
+  void _stopLiveDbSync() {
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = null;
+    _isLiveSyncRunning = false;
+  }
+
+  Future<void> _loadFromLocalDb(String siteId) async {
     try {
-      db = await _openScannerDb();
-      return db.query(
-        'scanner_employee',
-        where: 'site_id = ?',
-        whereArgs: [siteId],
-        orderBy: 'id ASC',
+      final rows = await LocalDb.getEmployeesBySite(siteId);
+      _employeeDb.clear();
+      _employeeDbByFid.clear();
+      int registered = 0;
+
+      for (final row in rows) {
+        final fid = row['fid'] as int;
+        final empId = row['employee_id'] as String;
+        final empName = row['employee_name'] as String?;
+        final templateBytes = row['finger_template'] as Uint8List;
+
+        await _device.registerFingerprint(fid, templateBytes);
+        final entry = _EmployeeEntry(
+          id: empId,
+          name: empName ?? empId,
+        );
+        _employeeDb[fid] = entry;
+        _employeeDbByFid[fid.toString()] = entry;
+        registered++;
+      }
+
+      if (!mounted) return;
+      _controller.setStatus(
+        registered > 0
+        ? 'Ready - $registered fingerprint(s) loaded from biometric_scanner.db'
+            : 'No cached fingerprints. Connect to internet and sync.',
       );
-    } finally {
-      await db?.close();
-    }
-  }
-
-  Future<Database> _openScannerDb() async {
-    final dbDir = Directory(r'C:\SQLiteDB');
-    if (!await dbDir.exists()) {
-      await dbDir.create(recursive: true);
-    }
-
-    final dbFile = File(_scannerDbPath);
-    if (!await dbFile.exists()) {
-      await dbFile.create(recursive: true);
-    }
-
-    sqfliteFfiInit();
-    final db = await databaseFactoryFfi.openDatabase(_scannerDbPath);
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS scanner_employee (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        site_id TEXT NOT NULL,
-        employee_id TEXT,
-        employee_name TEXT,
-        finger_id TEXT,
-        finger_template TEXT,
-        synced_at TEXT,
-        source TEXT DEFAULT 'api'
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS scanner_attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        site_id TEXT NOT NULL,
-        employee_id TEXT,
-        attendance_type TEXT,
-        created_at TEXT
-      )
-    ''');
-
-    try {
-      await db.execute(
-        "ALTER TABLE scanner_employee ADD COLUMN source TEXT DEFAULT 'api'",
-      );
-    } catch (_) {}
-
-    return db;
-  }
-
-  Future<void> _ensureScannerDbReady() async {
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      _controller.setStatus('Local DB ready: $_scannerDbPath');
     } catch (e) {
-      _controller.setStatus('Local DB init failed: $e');
-      debugPrint('_ensureScannerDbReady: $e');
-    } finally {
-      await db?.close();
+      if (!mounted) return;
+      _controller.setStatus('Ready — place finger on scanner');
+      debugPrint('_loadFromLocalDb error: $e');
+    }
+  }
+
+  Future<void> _fetchAndCacheSiteTimeLogs() async {
+    final siteId = _selectedSiteId;
+    if (siteId == null) return;
+
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 20);
+      try {
+        final request = await client.getUrl(Uri.parse('$_timelogPerSiteApiUrl$siteId'));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          throw Exception('HTTP ${response.statusCode}');
+        }
+
+        final decoded = jsonDecode(body);
+        final rows = _extractSiteRows(decoded);
+        await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
+      } finally {
+        client.close(force: true);
+      }
+    } catch (e) {
+      debugPrint('_fetchAndCacheSiteTimeLogs: $e');
     }
   }
 
@@ -792,7 +817,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Windows: poll the sensor every 250ms
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _scanTimer =
+        Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (!_controller.isScanning.value || !_device.isConnected) {
         _stopScanLoop();
         return;
@@ -812,6 +838,22 @@ class _HomePageState extends State<HomePage> {
     _controller.setScanning(false);
   }
 
+  void _scheduleScannerResume() {
+    _portalAutoReturnTimer?.cancel();
+    _portalAutoReturnTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      setState(() {
+        _uiMode = _HomeUiMode.scanner;
+        _matchedEmployee = null;
+        _matchedAt = null;
+        _matchedAttendanceType = null;
+      });
+      if (_device.isConnected) {
+        _startScanLoop();
+      }
+    });
+  }
+
   Future<void> _onTemplateReady(Uint8List template) async {
     if (!mounted || !_device.isConnected) return;
     _controller.setScanning(false);
@@ -825,205 +867,77 @@ class _HomePageState extends State<HomePage> {
       if (res.fingerId != null) fid = res.fingerId.toString();
     }
 
-    final fingerId = int.tryParse(fid ?? '');
-    final employee = fingerId != null ? _employeeDb[fingerId] : null;
+    final fingerId = _parseFingerId(fid);
+    _EmployeeEntry? employee =
+        (fid != null ? _employeeDbByFid[fid.trim()] : null) ??
+            (fingerId != null ? _employeeDb[fingerId] : null) ??
+            (fingerId != null ? _employeeDbByFid[fingerId.toString()] : null);
+
+    if (employee == null && ZKTecoUSB.isAndroidPlatform) {
+      employee = await _resolveEmployeeByVerificationFallback();
+    }
 
     if (employee != null) {
       final attendanceType = await _recordAttendance(employee.id);
-      _displayResult(
-        _ScanResult(
-          success: true,
-          timestamp: DateTime.now(),
-          employeeId: employee.id,
-          employeeName: employee.name,
-          attendanceType: attendanceType ?? 'RECORDED',
-        ),
-      );
-    } else {
-      final shouldAdd = await _showAddBiometricUserPrompt(
-        hasFingerprintMatch: fid != null,
-      );
-
-      if (shouldAdd) {
-        final added = await _addScannedUserToScannerDb(
-          template: template,
-          fid: fid,
-        );
-        if (added) {
-          if (!_lastAddUsedFallbackLocalDb) {
-            unawaited(_refreshTemplatesAfterAdd());
-          }
-          _displayResult(
-            _ScanResult(
-              success: true,
-              timestamp: DateTime.now(),
-              employeeName: 'New Biometric User',
-              attendanceType: 'ADDED',
-            ),
-          );
-        } else {
-          _displayResult(
-            _ScanResult(
-              success: false,
-              timestamp: DateTime.now(),
-              errorMessage: 'Failed to add to local biometric_scanner.db',
-            ),
-          );
-        }
-      } else {
-        _displayResult(
-          _ScanResult(
-            success: false,
-            timestamp: DateTime.now(),
-            errorMessage: fid != null
-                ? 'Employee not on record'
-                : 'Fingerprint not registered',
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _refreshTemplatesAfterAdd() async {
-    try {
-      await _loadAndRegisterTemplates().timeout(const Duration(seconds: 8));
-    } catch (e) {
-      debugPrint('_refreshTemplatesAfterAdd: $e');
-    }
-  }
-
-  Future<bool> _showAddBiometricUserPrompt({
-    required bool hasFingerprintMatch,
-  }) async {
-    if (!mounted) return false;
-
-    final action = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Unregistered Fingerprint'),
-          content: Text(
-            hasFingerprintMatch
-                ? 'This fingerprint matched a device template but is not in the registered list.\n\nAdd it to biometric_user?'
-                : 'This fingerprint is not in the registered list.\n\nAdd it to biometric_user?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Skip'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Add'),
-            ),
-          ],
-        );
-      },
-    );
-
-    return action == true;
-  }
-
-  Future<bool> _addScannedUserToScannerDb({
-    required Uint8List template,
-    String? fid,
-  }) async {
-    _lastAddUsedFallbackLocalDb = false;
-
-    if (_selectedSiteId == null || _selectedSiteId!.isEmpty) {
-      await _ensureSitesLoaded();
-      if (!mounted || _sites.isEmpty) {
-        _controller.setStatus('Cannot add user: no site selected');
-        return false;
-      }
-
-      final pickedSiteId = await _showSiteSelectionDialog(
-        requiredSelection: true,
-        initialSiteId: _sites.first.id,
-      );
-      if (!mounted || pickedSiteId == null || pickedSiteId.isEmpty) {
-        _controller.setStatus('Cannot add user: no site selected');
-        return false;
-      }
-
+      if (!mounted) return;
       setState(() {
-        _selectedSiteId = pickedSiteId;
+        _matchedEmployee = employee;
+        _matchedAttendanceType = attendanceType ?? 'RECORDED';
+        _matchedAt = DateTime.now();
+        _uiMode = _HomeUiMode.portal;
+        _showResult = false;
       });
+      _scheduleScannerResume();
+      _controller.setStatus(
+          '${employee.name} — ${attendanceType ?? 'RECORDED'}');
+    } else {
+      _displayResult(_ScanResult(
+        success: false,
+        timestamp: DateTime.now(),
+        errorMessage: fid != null
+            ? 'Employee not on record'
+            : 'Fingerprint not registered',
+      ));
+    }
+  }
+
+  Future<_EmployeeEntry?> _resolveEmployeeByVerificationFallback() async {
+    if (!ZKTecoUSB.isAndroidPlatform || _employeeDbByFid.isEmpty) {
+      return null;
     }
 
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      final siteId = _selectedSiteId!;
-      final parsedFid = int.tryParse(fid ?? '');
+    // Fallback for cases where Android identify() misses but verify(fid) works.
+    // Cap the loop so UI does not stall on very large datasets.
+    final entries = _employeeDbByFid.entries.toList();
+    final maxChecks = entries.length > 180 ? 180 : entries.length;
 
-      final maxInMemory = _employeeDb.keys.isEmpty
-          ? 0
-          : _employeeDb.keys.reduce((a, b) => a > b ? a : b);
-      final nextFid = (parsedFid != null && parsedFid > 0)
-          ? parsedFid
-          : (maxInMemory + 1);
-
-      final now = DateTime.now();
-      final employeeId = 'LOCAL-${now.millisecondsSinceEpoch}';
-      var persisted = false;
-
+    for (var index = 0; index < maxChecks; index++) {
+      final entry = entries[index];
       try {
-        await db.insert('scanner_employee', {
-          'site_id': siteId,
-          'employee_id': employeeId,
-          'employee_name': 'New Biometric User',
-          'finger_id': nextFid.toString(),
-          'finger_template': base64Encode(template),
-          'synced_at': now.toIso8601String(),
-          'source': 'local',
+        final verify = await _device
+            .verifyFingerprint(entry.key)
+            .timeout(const Duration(milliseconds: 180), onTimeout: () {
+          return (match: false, score: null);
         });
-        persisted = true;
-      } catch (e) {
-        // Fallback to app-managed DB when scanner db path/schema write fails.
-        debugPrint('_addScannedUserToScannerDb(scanner_db): $e');
-        await LocalDb.upsertEmployee(
-          fid: nextFid,
-          employeeId: employeeId,
-          employeeName: 'New Biometric User',
-          template: template,
-          siteId: siteId,
-        );
-        _lastAddUsedFallbackLocalDb = true;
-        persisted = true;
-      }
-
-      final registered = await _device.registerFingerprint(nextFid, template);
-      if (registered || persisted) {
-        _employeeDb[nextFid] = _EmployeeEntry(
-          id: employeeId,
-          name: 'New Biometric User',
-        );
-      }
-
-      return persisted;
-    } catch (e) {
-      debugPrint('_addScannedUserToScannerDb: $e');
-      _controller.setStatus('Add user failed: $e');
-      return false;
-    } finally {
-      await db?.close();
+        if (verify.match) {
+          return entry.value;
+        }
+      } catch (_) {}
     }
+
+    return null;
   }
 
   Future<String?> _recordAttendance(String employeeId) async {
     final siteId = _selectedSiteId;
-    if (siteId == null || siteId.isEmpty) {
+    if (siteId == null) {
       return 'NO SITE';
     }
 
-    await _recordAttendanceToScannerDb(employeeId, siteId, 'TIMED IN');
-
-    final now = DateTime.now();
     final pending = await _buildPendingTimeLog(
       employeeId: employeeId,
       siteId: siteId,
-      now: now,
+      now: DateTime.now(),
     );
 
     final requests = _buildAttendanceRequests(
@@ -1032,6 +946,7 @@ class _HomePageState extends State<HomePage> {
       pending: pending,
     );
 
+    // First request is the critical write (timeIn/timeOut).
     final primary = requests.first;
     final primarySent = await _sendHrisRequest(
       endpoint: primary.$1,
@@ -1042,6 +957,8 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (primarySent) {
+      // Secondary requests (logs/audit) are important but should not change
+      // the UI result when the core attendance record is already saved.
       for (final request in requests.skip(1)) {
         final sent = await _sendHrisRequest(
           endpoint: request.$1,
@@ -1060,6 +977,7 @@ class _HomePageState extends State<HomePage> {
       return pending.code.startsWith('IN') ? 'TIME IN' : 'TIME OUT';
     }
 
+    // Primary write failed: queue everything for retry.
     for (final request in requests) {
       await LocalDb.queueHrisRequest(
         endpoint: request.$1,
@@ -1067,10 +985,11 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
+    // Fallback: keep attendance working with the legacy endpoint
     final legacyType = await _sendLegacyAttendance(
       employeeId: employeeId,
       siteId: siteId,
-      timestamp: now.toIso8601String(),
+      timestamp: DateTime.now().toIso8601String(),
     ).timeout(
       const Duration(seconds: 5),
       onTimeout: () => null,
@@ -1080,30 +999,6 @@ class _HomePageState extends State<HomePage> {
     }
 
     return 'QUEUED OFFLINE';
-  }
-
-  Future<bool> _recordAttendanceToScannerDb(
-    String employeeId,
-    String siteId,
-    String attendanceType,
-  ) async {
-    Database? db;
-    try {
-      db = await _openScannerDb();
-      await db.insert('scanner_attendance', {
-        'site_id': siteId,
-        'employee_id': employeeId,
-        'attendance_type': attendanceType,
-        'created_at': DateTime.now().toIso8601String(),
-      });
-      return true;
-    } catch (e) {
-      debugPrint('_recordAttendanceToScannerDb: $e');
-      _controller.setStatus('Attendance write failed: $e');
-      return false;
-    } finally {
-      await db?.close();
-    }
   }
 
   Future<_PendingTimeLog> _buildPendingTimeLog({
@@ -1123,7 +1018,8 @@ class _HomePageState extends State<HomePage> {
             cached?['timelog_id'] ??
             '$employeeId-$date')
         .toString();
-    final remarks = (cached?['remarks'] ?? cached?['remark'] ?? '').toString();
+    final remarks =
+        (cached?['remarks'] ?? cached?['remark'] ?? '').toString();
     final schedule =
         (cached?['schedule'] ?? cached?['schedCode'] ?? '').toString();
 
@@ -1131,12 +1027,10 @@ class _HomePageState extends State<HomePage> {
         _isBlank(cached?['timeInMorning']) ? null : '${cached?['timeInMorning']}';
     final existingOutMorning =
         _isBlank(cached?['timeOutMorning']) ? null : '${cached?['timeOutMorning']}';
-    final existingInAfternoon = _isBlank(cached?['timeInAfternoon'])
-        ? null
-        : '${cached?['timeInAfternoon']}';
-    final existingOutAfternoon = _isBlank(cached?['timeOutAfternoon'])
-        ? null
-        : '${cached?['timeOutAfternoon']}';
+    final existingInAfternoon =
+        _isBlank(cached?['timeInAfternoon']) ? null : '${cached?['timeInAfternoon']}';
+    final existingOutAfternoon =
+        _isBlank(cached?['timeOutAfternoon']) ? null : '${cached?['timeOutAfternoon']}';
 
     if (existingInMorning == null) {
       return _PendingTimeLog(
@@ -1196,8 +1090,9 @@ class _HomePageState extends State<HomePage> {
     required String employeeId,
     required _PendingTimeLog pending,
   }) {
-    final timeEndpoint =
-        pending.code.startsWith('IN') ? _timeInApiEndpoint : _timeOutApiEndpoint;
+    final timeEndpoint = pending.code.startsWith('IN')
+        ? _timeInApiEndpoint
+        : _timeOutApiEndpoint;
 
     final timeParams = <String, String>{
       'passedID': 'null',
@@ -1264,7 +1159,8 @@ class _HomePageState extends State<HomePage> {
       client.connectionTimeout = const Duration(seconds: 12);
       try {
         final request = await client.getUrl(uri);
-        final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
         request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
         request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
@@ -1307,37 +1203,49 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _fetchAndCacheSiteTimeLogs() async {
-    final siteId = _selectedSiteId;
-    if (siteId == null || siteId.isEmpty) return;
+  String _formatDateOnly(DateTime dateTime) {
+    final y = dateTime.year.toString().padLeft(4, '0');
+    final m = dateTime.month.toString().padLeft(2, '0');
+    final d = dateTime.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
 
-    try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 20);
-      try {
-        final request = await client.getUrl(
-          Uri.parse('$_timelogPerSiteApiUrl$siteId'),
-        );
-        final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+  String _formatTimeOnly(DateTime dateTime) {
+    final h = dateTime.hour.toString().padLeft(2, '0');
+    final m = dateTime.minute.toString().padLeft(2, '0');
+    final s = dateTime.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
+  }
 
-        final response = await request.close();
-        final body = await response.transform(utf8.decoder).join();
-        if (response.statusCode < 200 || response.statusCode > 299) {
-          throw Exception('HTTP ${response.statusCode}');
-        }
+  bool _isBlank(dynamic value) {
+    if (value == null) return true;
+    final text = value.toString().trim();
+    return text.isEmpty ||
+        text == 'null' ||
+        text == '00:00:00' ||
+        text == '0' ||
+        text.toUpperCase() == 'N/A';
+  }
 
-        final decoded = jsonDecode(body);
-        final rows = _extractSiteRows(decoded);
-        await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
-      } finally {
-        client.close(force: true);
-      }
-    } catch (e) {
-      debugPrint('_fetchAndCacheSiteTimeLogs: $e');
+  int? _parseFingerId(String? rawFid) {
+    if (rawFid == null) return null;
+    final normalized = rawFid.trim();
+    if (normalized.isEmpty) return null;
+
+    final direct = int.tryParse(normalized);
+    if (direct != null) return direct;
+
+    if (normalized.contains('.')) {
+      final beforeDot = normalized.split('.').first.trim();
+      final parsed = int.tryParse(beforeDot);
+      if (parsed != null) return parsed;
     }
+
+    final digitsMatch = RegExp(r'\d+').firstMatch(normalized);
+    if (digitsMatch != null) {
+      return int.tryParse(digitsMatch.group(0)!);
+    }
+    return null;
   }
 
   Future<String?> _sendLegacyAttendance({
@@ -1350,7 +1258,8 @@ class _HomePageState extends State<HomePage> {
       client.connectionTimeout = const Duration(seconds: 8);
       try {
         final request = await client.postUrl(Uri.parse(_legacyAttendanceApiUrl));
-        final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
         request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
         request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
@@ -1388,30 +1297,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String _formatDateOnly(DateTime dateTime) {
-    final y = dateTime.year.toString().padLeft(4, '0');
-    final m = dateTime.month.toString().padLeft(2, '0');
-    final d = dateTime.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-
-  String _formatTimeOnly(DateTime dateTime) {
-    final h = dateTime.hour.toString().padLeft(2, '0');
-    final m = dateTime.minute.toString().padLeft(2, '0');
-    final s = dateTime.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
-  bool _isBlank(dynamic value) {
-    if (value == null) return true;
-    final text = value.toString().trim();
-    return text.isEmpty ||
-        text == 'null' ||
-        text == '00:00:00' ||
-        text == '0' ||
-        text.toUpperCase() == 'N/A';
-  }
-
   void _displayResult(_ScanResult result) {
     if (!mounted) return;
     setState(() {
@@ -1419,9 +1304,7 @@ class _HomePageState extends State<HomePage> {
       _showResult = true;
     });
     _controller.setStatus(
-      result.success
-          ? '${result.employeeName ?? 'Employee'} — ${result.attendanceType ?? 'RECORDED'}'
-          : (result.errorMessage ?? 'Scan failed'),
+      result.success ? 'RECORDED' : (result.errorMessage ?? 'Scan failed'),
     );
     Future.delayed(const Duration(seconds: 4), () {
       if (!mounted) return;
@@ -1443,18 +1326,8 @@ class _HomePageState extends State<HomePage> {
   String get _dateString {
     final currentTime = _controller.now.value;
     const months = [
-      'JANUARY',
-      'FEBRUARY',
-      'MARCH',
-      'APRIL',
-      'MAY',
-      'JUNE',
-      'JULY',
-      'AUGUST',
-      'SEPTEMBER',
-      'OCTOBER',
-      'NOVEMBER',
-      'DECEMBER',
+      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
     ];
     return '${months[currentTime.month - 1]} ${currentTime.day}, ${currentTime.year}';
   }
@@ -1463,32 +1336,100 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
+
+    if (_uiMode == _HomeUiMode.portal) {
+      return DashboardPage(
+        employeeId: _matchedEmployee?.id,
+        employeeName: _matchedEmployee?.name,
+        attendanceType: _matchedAttendanceType,
+        matchedAt: _matchedAt,
+        siteId: _selectedSiteId,
+        onPortalTap: () {
+          _portalAutoReturnTimer?.cancel();
+          setState(() {
+            _uiMode = _HomeUiMode.scanner;
+            _matchedEmployee = null;
+            _matchedAt = null;
+            _matchedAttendanceType = null;
+          });
+          if (_device.isConnected) _startScanLoop();
+        },
+        onEnrollNowTap: () => setState(() => _uiMode = _HomeUiMode.enroll),
+      );
+    }
+
     return Scaffold(
       body: Container(
         width: screenW,
         height: screenH,
         decoration: const BoxDecoration(
           image: DecorationImage(
-            image: AssetImage('assets/images/FinalBG.png'),
+            image: AssetImage('assets/images/Main BG.png'),
             fit: BoxFit.cover,
           ),
         ),
         child: SafeArea(
           child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: screenW * 0.020,
-              vertical: screenH * 0.042,
+              horizontal: screenW * 0.015,
+              vertical: screenH * 0.015,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Image.asset(
-                  'assets/images/FastLogo.png',
-                  height: screenH * 0.09,
-                  fit: BoxFit.contain,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Obx(
+                      () => _controller.biometricConnected.value
+                          ? GestureDetector(
+                              onTap: _showAddUserDialog,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x223E7DDD),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(0xFF3E7DDD),
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.person_add_outlined,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'ADD USER',
+                                      style: TextStyle(
+                                        fontFamily: 'CEORUSE',
+                                        fontSize: 11,
+                                        color: Colors.white,
+                                        letterSpacing: 2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
                 ),
                 SizedBox(height: screenH * 0.018),
-                Expanded(child: _buildMainCard(screenW, screenH)),
+                Expanded(
+                  child: Center(
+                    child: FractionallySizedBox(
+                      widthFactor: 0.96,
+                      heightFactor: 0.95,
+                      child: _buildMainCard(screenW, screenH),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1498,34 +1439,44 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMainCard(double screenW, double screenH) {
-    final cardPadH = screenW * 0.03;
-    final cardPadV = screenH * 0.04;
+    final cardPadH = screenW * 0.02;
+    final cardPadV = screenH * 0.03;
 
     return Stack(
       children: [
-        // Particles spread across the card (no dark container)
+        // Card background
+        Positioned.fill(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(screenW * 0.015),
+            child: Image.asset(
+              'assets/images/CardModified4.png',
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+        // Animated square particles (same style as loading page)
         Positioned.fill(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(screenW * 0.015),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final w = constraints.maxWidth;
-                final h = constraints.maxHeight;
-                final size = (w * 0.090).clamp(64.0, 88.0);
+                final cw = constraints.maxWidth;
+                final ch = constraints.maxHeight;
+                final ps = (cw * 0.06).clamp(32.0, 56.0);
                 return Stack(
                   children: [
-                    _positionedParticle(w, h, 0.08, 0.12, size * 1.25, 0),
-                    _positionedParticle(w, h, 0.130, 0.105, size * 0.5, 0.3),
-                    _positionedParticle(w, h, 0.15, 0.55, size * 0.9, 0.6),
-                    _positionedParticle(w, h, 0.78, 0.5, size * 1.15, 0.2),
-                    _positionedParticle(w, h, 0.45, 0.18, size * 0.55, 0.5),
-                    _positionedParticle(w, h, 0.10, 0.72, size * 1.1, 0.8),
-                    _positionedParticle(w, h, 0.25, 0.35, size * 0.45, 0.15),
-                    _positionedParticle(w, h, 0.7, 0.28, size * 0.95, 0.45),
-                    _positionedParticle(w, h, 0.35, 0.78, size * 0.6, 0.7),
-                    _positionedParticle(w, h, 0.88, 0.65, size * 1.2, 0.25),
-                    _positionedParticle(w, h, 0.05, 0.42, size * 0.5, 0.9),
-                    _positionedParticle(w, h, 0.6, 0.42, size * 0.75, 0.35),
+                    _cardParticle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                    _cardParticle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                    _cardParticle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                    _cardParticle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                    _cardParticle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                    _cardParticle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                    _cardParticle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                    _cardParticle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                    _cardParticle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                    _cardParticle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                    _cardParticle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                    _cardParticle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
                   ],
                 );
               },
@@ -1546,17 +1497,66 @@ class _HomePageState extends State<HomePage> {
 
                 return Stack(
                   children: [
+                    // ── FAST logo — top-left transparent area ──
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: Image.asset(
+                        'assets/images/FastLogo.png',
+                        height: cardH * 0.12,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+
+                    // ── Time & date — bottom-right transparent area ──
+                    Positioned(
+                      right: 0,
+                      bottom: cardH * 0.035,
+                      child: Obx(
+                        () => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _timeString,
+                              style: TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: cardW * 0.07,
+                                color: Colors.white,
+                                letterSpacing: 4,
+                                height: 1,
+                              ),
+                            ),
+                            Text(
+                              _dateString,
+                              style: TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: cardW * 0.024,
+                                color: Colors.white.withValues(alpha: 0.85),
+                                letterSpacing: 3,
+                                height: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
                     // ── Fingerprint icon — top-right ──
                     Positioned(
-                      top: 0,
-                      right: 0,
-                      bottom: cardH * 0.2,
-                      width: cardW * 0.25,
+                      top: cardH * 0.08,
+                      right: cardW * 0.01,
+                      bottom: cardH * 0.18,
+                      width: cardW * 0.30,
                       child: Align(
                         alignment: Alignment.topRight,
-                        child: Image.asset(
-                          'assets/images/Finger Print Icon.png',
-                          fit: BoxFit.contain,
+                        child: Obx(
+                          () => Image.asset(
+                            _controller.biometricConnected.value
+                                ? 'assets/images/HIRSLogo-scanner-connected.png'
+                                : 'assets/images/HIRSLogo-scanner-unconnected.png',
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
                     ),
@@ -1603,8 +1603,7 @@ class _HomePageState extends State<HomePage> {
                             ),
                             SizedBox(height: cardH * 0.02),
                             GestureDetector(
-                              onTap:
-                                  (_controller.isSearching.value ||
+                              onTap: (_controller.isSearching.value ||
                                       _controller.biometricConnected.value)
                                   ? null
                                   : _searchAndConnect,
@@ -1612,26 +1611,24 @@ class _HomePageState extends State<HomePage> {
                                 label: _controller.isSearching.value
                                     ? 'SEARCHING...'
                                     : _controller.isScanning.value
-                                    ? 'SCANNING...'
-                                    : _controller.biometricConnected.value
-                                    ? 'ACTIVE'
-                                    : 'SEARCH MODE',
-                                textColor:
-                                    (_controller.isSearching.value ||
+                                        ? 'SCANNING...'
+                                        : _controller.biometricConnected.value
+                                            ? 'ACTIVE'
+                                            : 'SEARCH MODE',
+                                textColor: (_controller.isSearching.value ||
                                         _controller.isScanning.value)
                                     ? const Color(0xFFFFB74D)
                                     : Colors.white,
                                 cardW: cardW,
                                 cardH: cardH,
-                                showLoading:
-                                    _controller.isSearching.value ||
+                                showLoading: _controller.isSearching.value ||
                                     _controller.isScanning.value,
                               ),
                             ),
                             if (_controller.statusMessage.value.isNotEmpty) ...[
                               SizedBox(height: cardH * 0.015),
                               SizedBox(
-                                width: cardW * 0.32,
+                                width: cardW * 0.43,
                                 child: Text(
                                   _controller.statusMessage.value,
                                   style: TextStyle(
@@ -1645,43 +1642,23 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                             ],
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // ── Bottom-right: time & date ──
-                    Positioned(
-                      right: cardW * 0.01,
-                      bottom: cardH * 0.06,
-                      child: Obx(
-                        () => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _timeString,
-                              textAlign: TextAlign.left,
-                              style: TextStyle(
-                                fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.07,
-                                color: Colors.white,
-                                letterSpacing: 4,
-                                height: 1,
+                            if (_controller.lastDbSyncLabel.value.isNotEmpty) ...[
+                              SizedBox(height: cardH * 0.01),
+                              SizedBox(
+                                width: cardW * 0.43,
+                                child: Text(
+                                  _controller.lastDbSyncLabel.value,
+                                  style: TextStyle(
+                                    fontFamily: 'CEORUSE',
+                                    fontSize: cardW * 0.0105,
+                                    color: Colors.white.withValues(alpha: 0.6),
+                                    letterSpacing: 0.8,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                            ),
-                            SizedBox(height: cardH * 0.01),
-                            Text(
-                              _dateString,
-                              textAlign: TextAlign.left,
-                              style: TextStyle(
-                                fontFamily: 'CEORUSE',
-                                fontSize: cardW * 0.030,
-                                color: Colors.white.withValues(alpha: 0.85),
-                                letterSpacing: 3,
-                                height: 1,
-                              ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -1699,7 +1676,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _positionedParticle(
+  Widget _cardParticle(
     double w,
     double h,
     double fracLeft,
@@ -1712,7 +1689,7 @@ class _HomePageState extends State<HomePage> {
       top: h * fracTop - sizePx / 2,
       width: sizePx,
       height: sizePx,
-      child: _RisingFadeParticle(
+      child: _CardRisingFadeParticle(
         size: sizePx,
         phase: phase,
         assetPath: 'assets/icons/square-particles-fx.svg',
@@ -1728,12 +1705,11 @@ class _HomePageState extends State<HomePage> {
     bool showLoading = false,
   }) {
     return Container(
-      width: cardW * 0.44,
+      width: cardW * 0.47,
       padding: EdgeInsets.symmetric(
-        horizontal: cardW * 0.022,
+        horizontal: cardW * 0.018,
         vertical: cardH * 0.028,
       ),
-      alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(cardW * 0.01),
         border: Border.all(
@@ -1747,7 +1723,6 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (showLoading) ...[
             SizedBox(
@@ -1763,11 +1738,9 @@ class _HomePageState extends State<HomePage> {
           Flexible(
             child: Text(
               label,
-              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'CEORUSE',
                 fontSize: cardW * 0.016,
-                fontWeight: FontWeight.bold,
                 color: textColor,
                 letterSpacing: 2,
               ),
@@ -1804,20 +1777,6 @@ class _HomePageState extends State<HomePage> {
                   size: cardW * 0.07,
                 ),
                 SizedBox(height: cardH * 0.025),
-                if (isSuccess && result.employeeName != null) ...[
-                  Text(
-                    result.employeeName!.toUpperCase(),
-                    style: TextStyle(
-                      fontFamily: 'CEORUSE',
-                      fontSize: cardW * 0.04,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 2,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  SizedBox(height: cardH * 0.015),
-                ],
                 Container(
                   padding: EdgeInsets.symmetric(
                     horizontal: cardW * 0.025,
@@ -1829,7 +1788,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   child: Text(
                     isSuccess
-                        ? (result.attendanceType ?? 'RECORDED')
+                        ? 'RECORDED'
                         : (result.errorMessage ?? 'UNREGISTERED'),
                     style: TextStyle(
                       fontFamily: 'CEORUSE',
@@ -1847,11 +1806,453 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
+  // ── Add User (enrollment) ────────────────────────────────────────────────
+
+  Widget _enrollTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool enabled = true,
+  }) {
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle:
+            const TextStyle(color: Color(0xFF7A9BBD), fontSize: 13),
+        prefixIcon: Icon(icon, color: const Color(0xFF7A9BBD), size: 18),
+        filled: true,
+        fillColor: const Color(0xFF162233),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF3E7DDD)),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF2A3A4A)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAddUserDialog() async {
+    if (!mounted) return;
+    if (!_device.isConnected) {
+      _controller.setStatus('Biometric not connected. Connect scanner first.');
+      return;
+    }
+    _stopScanLoop();
+
+    final empIdCtrl = TextEditingController();
+    final empNameCtrl = TextEditingController();
+    int captureCount = 0;
+    bool isCapturing = false;
+    bool isComplete = false;
+    String statusMsg = 'Enter employee details, then press CAPTURE.';
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dlgCtx) {
+        return StatefulBuilder(
+          builder: (_, setDlg) {
+            Future<void> doCapture() async {
+              final empId = empIdCtrl.text.trim();
+              if (empId.isEmpty) {
+                setDlg(() => statusMsg = 'Employee ID is required.');
+                return;
+              }
+
+              final digits = empId.replaceAll(RegExp(r'\D'), '');
+              final fid = int.tryParse(
+                    digits.length > 8
+                        ? digits.substring(digits.length - 8)
+                        : digits,
+                  ) ??
+                  (empId.hashCode.abs() % 999997 + 1);
+              final siteId = _selectedSiteId;
+
+              Future<void> finalizeEnrollment(
+                Uint8List mergedTemplate,
+                int enrolledFid,
+              ) async {
+                await _device.registerFingerprint(enrolledFid, mergedTemplate);
+                final entry = _EmployeeEntry(
+                  id: empId,
+                  name: empNameCtrl.text.trim().isNotEmpty
+                      ? empNameCtrl.text.trim()
+                      : empId,
+                );
+                _employeeDb[enrolledFid] = entry;
+                _employeeDbByFid[enrolledFid.toString()] = entry;
+
+                if (siteId != null) {
+                  await LocalDb.upsertEmployee(
+                    fid: enrolledFid,
+                    employeeId: empId,
+                    employeeName: empNameCtrl.text.trim().isNotEmpty
+                        ? empNameCtrl.text.trim()
+                        : empId,
+                    template: mergedTemplate,
+                    siteId: siteId,
+                  );
+                }
+
+                final saved = await _postEnrollment(
+                  employeeId: empId,
+                  employeeName: empNameCtrl.text.trim(),
+                  template: mergedTemplate,
+                  fingerId: enrolledFid,
+                );
+
+                setDlg(() {
+                  isComplete = true;
+                  isCapturing = false;
+                  statusMsg = saved
+                      ? 'Enrollment complete — employee registered.'
+                      : 'Saved on scanner, but server update failed.';
+                });
+              }
+
+              setDlg(() {
+                isCapturing = true;
+                statusMsg = 'Place finger on scanner (${captureCount + 1}/3)…';
+              });
+
+              if (ZKTecoUSB.isAndroidPlatform) {
+                final completer = Completer<({
+                  bool success,
+                  String message,
+                  String? fid,
+                  Uint8List? template
+                })>();
+                final prevProgress = _device.onEnrollProgress;
+                final prevResult = _device.onEnrollResult;
+
+                _device.onEnrollProgress = (current, total, message) {
+                  if (!mounted) return;
+                  setDlg(() {
+                    captureCount = current;
+                    statusMsg = message;
+                  });
+                };
+
+                _device.onEnrollResult =
+                    (success, message, resultFid, template) {
+                  if (!completer.isCompleted) {
+                    completer.complete((
+                      success: success,
+                      message: message,
+                      fid: resultFid,
+                      template: template,
+                    ));
+                  }
+                };
+
+                final started =
+                    await _device.startEnrollmentAndroid(fid.toString());
+                if (!started) {
+                  _device.onEnrollProgress = prevProgress;
+                  _device.onEnrollResult = prevResult;
+                  setDlg(() {
+                    isCapturing = false;
+                    statusMsg = 'Unable to start Android enrollment.';
+                  });
+                  return;
+                }
+
+                try {
+                  final result = await completer.future.timeout(
+                    const Duration(seconds: 35),
+                  );
+                  if (!result.success || result.template == null) {
+                    setDlg(() {
+                      isCapturing = false;
+                      statusMsg = result.message;
+                    });
+                    return;
+                  }
+
+                  captureCount = 3;
+                  final enrolledFid = _parseFingerId(result.fid) ?? fid;
+                  await finalizeEnrollment(result.template!, enrolledFid);
+                } catch (_) {
+                  setDlg(() {
+                    isCapturing = false;
+                    statusMsg = 'Enrollment timed out. Please try again.';
+                  });
+                } finally {
+                  _device.onEnrollProgress = prevProgress;
+                  _device.onEnrollResult = prevResult;
+                }
+                return;
+              }
+
+              if (captureCount == 0) _device.startEnrollment();
+              final res = await _device.captureForEnrollment();
+
+              if (res.error != null) {
+                setDlg(() {
+                  isCapturing = false;
+                  statusMsg = res.error!;
+                });
+                return;
+              }
+
+              captureCount = res.count;
+
+              if (res.mergedTemplate != null) {
+                await finalizeEnrollment(res.mergedTemplate!, fid);
+              } else {
+                setDlg(() {
+                  isCapturing = false;
+                  statusMsg =
+                      'Capture $captureCount/3 done. Lift and press CAPTURE again.';
+                });
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 520),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 28, vertical: 26),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E2A3B),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: const Color(0xFF3E5A7A),
+                    width: 1.2,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'ADD EMPLOYEE',
+                      style: TextStyle(
+                        fontFamily: 'CEORUSE',
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: 3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Enroll a new employee fingerprint',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF7A9BBD),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _enrollTextField(
+                      controller: empIdCtrl,
+                      label: 'Employee ID',
+                      icon: Icons.badge_outlined,
+                      enabled: !isCapturing && !isComplete,
+                    ),
+                    const SizedBox(height: 10),
+                    _enrollTextField(
+                      controller: empNameCtrl,
+                      label: 'Employee Name (optional)',
+                      icon: Icons.person_outline,
+                      enabled: !isCapturing && !isComplete,
+                    ),
+                    const SizedBox(height: 18),
+                    // Capture progress dots
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(3, (i) {
+                        final done = i < captureCount;
+                        return Container(
+                          width: 14,
+                          height: 14,
+                          margin:
+                              const EdgeInsets.symmetric(horizontal: 6),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: done
+                                ? const Color(0xFF4CAF50)
+                                : const Color(0xFF2A3A4A),
+                            border: Border.all(
+                              color: done
+                                  ? const Color(0xFF4CAF50)
+                                  : const Color(0xFF5A7A9A),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    // Status area
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF162233),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          if (isCapturing)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    Color(0xFFFFB74D)),
+                              ),
+                            )
+                          else
+                            Icon(
+                              isComplete
+                                  ? Icons.check_circle_outline
+                                  : Icons.info_outline,
+                              size: 14,
+                              color: isComplete
+                                  ? const Color(0xFF4CAF50)
+                                  : const Color(0xFF7A9BBD),
+                            ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              statusMsg,
+                              style: const TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: 11,
+                                color: Colors.white70,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 44,
+                            child: OutlinedButton(
+                              onPressed: isCapturing
+                                  ? null
+                                  : () => Navigator.of(dlgCtx).pop(),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(
+                                    color: Color(0xFF3E5A7A)),
+                                foregroundColor: const Color(0xFF7A9BBD),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child:
+                                  Text(isComplete ? 'DONE' : 'CANCEL'),
+                            ),
+                          ),
+                        ),
+                        if (!isComplete) ...[const SizedBox(width: 12),
+                          Expanded(
+                            child: SizedBox(
+                              height: 44,
+                              child: ElevatedButton(
+                                onPressed:
+                                    isCapturing ? null : doCapture,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      const Color(0xFF3E7DDD),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: Text(captureCount == 0
+                                    ? 'START'
+                                    : 'CAPTURE'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    empIdCtrl.dispose();
+    empNameCtrl.dispose();
+    if (mounted && _device.isConnected) _startScanLoop();
+  }
+
+  Future<bool> _postEnrollment({
+    required String employeeId,
+    required String employeeName,
+    required Uint8List template,
+    required int fingerId,
+  }) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 15);
+      try {
+        final uri = Uri.parse('$_apiBaseUrl$_thumbDetailsApiEndpoint').replace(
+          queryParameters: {'employeeID': employeeId},
+        );
+        final request = await client.putUrl(uri);
+        final basicToken =
+            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers
+            .set(HttpHeaders.contentTypeHeader, 'application/json');
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers
+            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        final payload = jsonEncode({
+          'employeeID': employeeId,
+          'leftFingerThumb': base64Encode(template),
+          'rightFingerThumb': base64Encode(template),
+          'fingerID': fingerId,
+          'employeeName': employeeName,
+        });
+        request.contentLength = utf8.encode(payload).length;
+        request.write(payload);
+        final response = await request.close();
+        await response.transform(utf8.decoder).join();
+        return response.statusCode >= 200 && response.statusCode < 300;
+      } finally {
+        client.close(force: true);
+      }
+    } catch (e) {
+      debugPrint('_postEnrollment error: $e');
+      return false;
+    }
+  }
 }
 
-/// Rising + fading particle using square-particles-fx.svg.
-class _RisingFadeParticle extends StatefulWidget {
-  const _RisingFadeParticle({
+class _CardRisingFadeParticle extends StatefulWidget {
+  const _CardRisingFadeParticle({
     required this.size,
     required this.assetPath,
     this.phase = 0.0,
@@ -1862,18 +2263,19 @@ class _RisingFadeParticle extends StatefulWidget {
   final double phase;
 
   @override
-  State<_RisingFadeParticle> createState() => _RisingFadeParticleState();
+  State<_CardRisingFadeParticle> createState() =>
+      _CardRisingFadeParticleState();
 }
 
-class _RisingFadeParticleState extends State<_RisingFadeParticle>
+class _CardRisingFadeParticleState extends State<_CardRisingFadeParticle>
     with SingleTickerProviderStateMixin {
   AnimationController? _controller;
   Animation<double>? _opacity;
   Animation<double>? _translateY;
   Animation<double>? _scale;
 
-  static const double _riseDistance = 56.0;
-  static const Duration _duration = Duration(milliseconds: 2800);
+  static const double _riseDistance = 48.0;
+  static const Duration _duration = Duration(milliseconds: 2600);
 
   @override
   void initState() {
@@ -1881,23 +2283,16 @@ class _RisingFadeParticleState extends State<_RisingFadeParticle>
     final controller = AnimationController(vsync: this, duration: _duration);
     final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
     _controller = controller;
-    _opacity = Tween<double>(begin: 0.65, end: 0.0).animate(curve);
+    _opacity = Tween<double>(begin: 0.7, end: 0.0).animate(curve);
     _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
-    _scale = Tween<double>(begin: 1.0, end: 0.75).animate(curve);
+    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
     controller.value = widget.phase;
     controller.repeat();
   }
 
   @override
-  void didUpdateWidget(_RisingFadeParticle oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.phase != widget.phase) _controller?.value = widget.phase;
-  }
-
-  @override
   void dispose() {
     _controller?.dispose();
-    _controller = null;
     super.dispose();
   }
 
@@ -1913,6 +2308,7 @@ class _RisingFadeParticleState extends State<_RisingFadeParticle>
         scale == null) {
       return const SizedBox.shrink();
     }
+
     return AnimatedBuilder(
       animation: controller,
       builder: (context, child) {

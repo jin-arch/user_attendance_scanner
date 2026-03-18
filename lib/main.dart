@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
+import 'package:user_attendance_scanner/views/enrollment_page.dart';
 import 'package:user_attendance_scanner/views/home_page.dart';
 
 Future<void> main() async {
@@ -53,9 +54,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      // Keep loading screen visible while testing UI.
-      home: const HomePage(),
-      // home: LoadingPage(loadFuture: Completer<void>().future),
+      home: const DashboardPage(),
     );
   }
 }

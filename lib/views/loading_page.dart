@@ -24,7 +24,7 @@ class _LoadingPageState extends State<LoadingPage>
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
   static const String _fingerprintAsset =
-      'assets/images/Finger Print Icon.png';
+      'assets/images/HIRSLogo-default.png';
 
   @override
   void initState() {
@@ -79,35 +79,42 @@ class _LoadingPageState extends State<LoadingPage>
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Padding(
-          padding: padding,
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 400),
-            builder: (context, value, child) => Opacity(
-              opacity: value,
-              child: child,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: borderRadius,
-                border: Border.all(
-                  color: const Color(0xFF4A90B8).withValues(alpha: 0.5),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                  ),
-                ],
+      body: Container(
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/Main BG.png'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: padding,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 400),
+              builder: (context, value, child) => Opacity(
+                opacity: value,
+                child: child,
               ),
-              child: ClipRRect(
-                borderRadius: borderRadius,
-                child: Stack(
-                  children: [
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: borderRadius,
+                  border: Border.all(
+                    color: const Color(0xFF4A90B8).withValues(alpha: 0.5),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      spreadRadius: 0,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: borderRadius,
+                  child: Stack(
+                    children: [
                     // Gradient background
                     Positioned.fill(
                       child: Container(
@@ -169,13 +176,14 @@ class _LoadingPageState extends State<LoadingPage>
                       top: h * 0.04,
                       child: _ProgressText(progress: _progress),
                     ),
-                    // "DOWNLOADING RESOURCES..." — bottom-right
-                    Positioned(
-                      right: w * 0.04,
-                      bottom: h * 0.04,
-                      child: const _DownloadingLabel(),
-                    ),
-                  ],
+                      // "DOWNLOADING RESOURCES..." — bottom-right
+                      Positioned(
+                        right: w * 0.04,
+                        bottom: h * 0.04,
+                        child: const _DownloadingLabel(),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
