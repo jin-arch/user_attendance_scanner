@@ -788,7 +788,7 @@ class _DashboardPageState extends State<DashboardPage> {
         children: [
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF05080C).withValues(alpha: 0.10),
+              color: const Color(0xFF05080C).withValues(alpha: 0.30),
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(w * 0.028),
                 topRight: Radius.circular(w * 0.028),
@@ -832,7 +832,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         decoration: BoxDecoration(
                           color: index.isEven
                               ? const Color(0xFF071A2B).withValues(alpha: 0.50)
-                              : const Color(0xFF071A2B).withValues(alpha: 0.30),
+                              : const Color.fromARGB(255, 147, 158, 168).withValues(alpha: 0.30),
                         ),
                         padding: EdgeInsets.symmetric(
                           horizontal: w * 0.024,
