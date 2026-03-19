@@ -207,7 +207,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         child: SafeArea(
           child: Padding(
-            padding: EdgeInsets.all(w * 0.02),
+            padding: EdgeInsets.all(w * 0.005),
             child: ClipRRect(
               borderRadius: outerRadius,
               child: Stack(
@@ -591,7 +591,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.045,
+                  fontSize: w * 0.049,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
