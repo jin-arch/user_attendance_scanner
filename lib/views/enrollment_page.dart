@@ -180,7 +180,7 @@ class _EnrollmentProfileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(width * 0.03);
+    final radius = BorderRadius.circular(width * 0.02);
 
     return SizedBox(
       width: width * 0.58,
@@ -201,7 +201,7 @@ class _EnrollmentProfileCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      const Expanded(child: _TopPill(label: 'PORTAL')),
+                      Expanded(child: _buildTopPill(width, label: 'PORTAL')),
                       const SizedBox(width: 12),
                       Expanded(
                         child: GestureDetector(
@@ -217,7 +217,7 @@ class _EnrollmentProfileCard extends StatelessWidget {
                               ),
                             );
                           },
-                          child: const _TopPill(label: 'LOGIN'),
+                          child: _buildTopPill(width, label: 'LOGIN'),
                         ),
                       ),
                     ],
@@ -268,7 +268,7 @@ class _EnrollmentProfileCard extends StatelessWidget {
                     'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
                     style: TextStyle(
                       fontFamily: 'Poppins',
-                      fontSize: width * 0.012,
+                      fontSize: width * 0.011,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                       letterSpacing: 1.8,
@@ -715,34 +715,40 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-class _TopPill extends StatelessWidget {
-  const _TopPill({required this.label});
+Widget _buildTopPill(double w, {required String label, bool active = false}) {
+    final radius = BorderRadius.circular(w * 0.018);
 
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF173765).withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(24),
+      padding: EdgeInsets.symmetric(
+        horizontal: w * 0.001,
+        vertical: w * 0.01,
       ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        color: active
+            ? const Color(0xFF1A4EA6).withValues(alpha: 0.95)
+            : const Color(0xFF0E1F33).withValues(alpha: 0.92),
+        border: Border.all(
+          color: active
+              ? const Color(0xFF77A8F9)
+              : Colors.white.withValues(alpha: 0.18),
+          width: 1,
+        ),
+      ),
+      child: Center(
         child: Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'CEORUSE',
-            fontSize: 10,
+            fontSize: w * 0.012,
+            fontWeight: FontWeight.bold,
             color: Colors.white,
-            letterSpacing: 2,
+            letterSpacing: 0.9,
           ),
         ),
       ),
     );
   }
-}
 
 class _TableHeaderCell extends StatelessWidget {
   const _TableHeaderCell({required this.width, required this.label});

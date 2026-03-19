@@ -197,6 +197,14 @@ class _DashboardPageState extends State<DashboardPage> {
                             _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
                             _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
                             _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                            _particle(cw, ch, 0.15, 0.85, ps * 0.7, 0.12),
+                            _particle(cw, ch, 0.95, 0.12, ps * 0.8, 0.55),
+                            _particle(cw, ch, 0.33, 0.11, ps * 0.6, 0.77),
+                            _particle(cw, ch, 0.60, 0.88, ps * 1.0, 0.41),
+                            _particle(cw, ch, 0.81, 0.22, ps * 0.5, 0.63),
+                            _particle(cw, ch, 0.44, 0.59, ps * 0.9, 0.29),
+                            _particle(cw, ch, 0.21, 0.66, ps * 0.8, 0.84),
+                            _particle(cw, ch, 0.57, 0.33, ps * 0.7, 0.18),
                           ],
                         );
                       },
@@ -272,81 +280,85 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildProfileCard(double w, double h) {
-    final cardRadius = BorderRadius.circular(w * 0.03);
+    final cardRadius = BorderRadius.circular(w * 0.023);
+    final expandedPanelColor = const Color(0xFF092238).withValues(alpha: 0.50);
 
-    return Container(
-      width: w * 0.53,
-      height: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: cardRadius,
-        color: const Color(0xFF092238).withValues(alpha: 0.50),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: w * 0.2,
-            decoration: BoxDecoration(
-              color: const Color(0xFF28496B),
-              borderRadius: BorderRadius.only(
-                topLeft: cardRadius.topLeft,
-                bottomLeft: cardRadius.bottomLeft,
-              ),
-            ),
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: w * 0.11,
-                  height: w * 0.11,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      width: 3,
-                    ),
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Color(0xFF3FA9F5),
-                        Color(0xFF1B75BB),
-                      ],
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.person,
-                    color: Colors.white,
-                    size: 40,
-                  ),
+    return ClipRRect(
+      borderRadius: cardRadius,
+      child: Container(
+        width: w * 0.53,
+        height: double.infinity,
+        color: Colors.transparent,
+        child: Row(
+          children: [
+            Container(
+              width: w * 0.2,
+              decoration: BoxDecoration(
+                color: const Color(0xFF092238).withValues(alpha: 0.7),
+                borderRadius: BorderRadius.only(
+                  topLeft: cardRadius.topLeft,
+                  bottomLeft: cardRadius.bottomLeft,
+                  topRight: cardRadius.topRight
                 ),
-                SizedBox(height: h * 0.012),
-                Text(
-                  'PROFILE',
-                  style: TextStyle(
-                    fontFamily: 'CEORUSE',
-                    fontSize: w * 0.012,
-                    color: Colors.white.withValues(alpha: 0.8),
-                    letterSpacing: 2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: w * 0.022,
-                vertical: h * 0.024,
               ),
+              alignment: Alignment.center,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Align(
-                    alignment: Alignment.topRight,
+                  Container(
+                    width: w * 0.11,
+                    height: w * 0.11,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        width: 3,
+                      ),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF3FA9F5),
+                          Color(0xFF1B75BB),
+                        ],
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.person,
+                      color: Colors.white,
+                      size: 40,
+                    ),
+                  ),
+                  SizedBox(height: h * 0.012),
+                  Text(
+                    'PROFILE',
+                    style: TextStyle(
+                      fontFamily: 'CEORUSE',
+                      fontSize: w * 0.012,
+                      color: Colors.white.withValues(alpha: 0.8),
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      w * 0.022,
+                      h * 0.016,
+                      w * 0.022,
+                      h * 0.008,
+                    ),
                     child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
+                          flex: 1,
                           child: GestureDetector(
                             onTap: widget.onPortalTap,
                             child: _buildTopPill(w, label: 'PORTAL', active: false),
@@ -354,6 +366,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                         SizedBox(width: w * 0.012),
                         Expanded(
+                          flex: 1,
                           child: GestureDetector(
                             onTap: widget.onEnrollNowTap ??
                                 () {
@@ -369,72 +382,114 @@ class _DashboardPageState extends State<DashboardPage> {
                       ],
                     ),
                   ),
-                  SizedBox(height: h * 0.016),
-                  Text(
-                    (widget.employeeName ?? 'UNKNOWN USER').toUpperCase(),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'TRTCENZODEMO',
-                      fontSize: w * 0.027,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                      letterSpacing: 1.3,
+                  Expanded(
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned(
+                          top: -(w * 0.02),
+                          left: 0.1,
+                          child: ClipPath(
+                            clipper: const _TopLeftCurvedNotchClipper(),
+                            child: Container(
+                              width: w * 0.039,
+                              height: w * 0.020,
+                              color: expandedPanelColor,
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: expandedPanelColor,
+                              borderRadius: BorderRadius.only(
+                                topRight: Radius.circular(w * 0.03),
+                                bottomRight: Radius.circular(w * 0.03),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                w * 0.022,
+                                h * 0.016,
+                                w * 0.022,
+                                h * 0.024,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    (widget.employeeName ?? 'UNKNOWN USER').toUpperCase(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: 'TRTCENZODEMO',
+                                      fontSize: w * 0.027,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                      letterSpacing: 1.3,
+                                    ),
+                                  ),
+                                  SizedBox(height: h * 0.012),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: w * 0.013,
+                                      vertical: h * 0.004,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1D7CFF),
+                                      borderRadius: BorderRadius.circular(w * 0.013),
+                                    ),
+                                    child: Text(
+                                      widget.employeeId ?? 'N/A',
+                                      style: TextStyle(
+                                        fontFamily: 'CEORUSE',
+                                        fontSize: w * 0.013,
+                                        color: Colors.white,
+                                        letterSpacing: 1.5,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: h * 0.012),
+                                  Text(
+                                    widget.attendanceType ?? 'RECORDED',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontStyle: FontStyle.italic,
+                                      fontSize: w * 0.015,
+                                      color: Colors.white.withValues(alpha: 0.8),
+                                      letterSpacing: 1.4,
+                                    ),
+                                  ),
+                                  SizedBox(height: h * 0.006),
+                                  Text(
+                                    'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: w * 0.014,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      letterSpacing: 1.7,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  SizedBox(height: h * 0.012),
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: w * 0.013,
-                      vertical: h * 0.004,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1D7CFF),
-                      borderRadius: BorderRadius.circular(w * 0.013),
-                    ),
-                    child: Text(
-                      widget.employeeId ?? 'N/A',
-                      style: TextStyle(
-                        fontFamily: 'CEORUSE',
-                        fontSize: w * 0.013,
-                        color: Colors.white,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: h * 0.012),
-                  Text(
-                    widget.attendanceType ?? 'RECORDED',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontStyle: FontStyle.italic,
-                      fontSize: w * 0.015,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      letterSpacing: 1.4,
-                    ),
-                  ),
-                  SizedBox(height: h * 0.006),
-                  Text(
-                    'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: w * 0.014,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 1.7,
-                      height: 1.25,
-                    ),
-                  ),
-                  const Spacer(),
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -444,8 +499,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: w * 0.03,
-        vertical: w * 0.0045,
+        horizontal: w * 0.01,
+        vertical: w * 0.01,
       ),
       decoration: BoxDecoration(
         borderRadius: radius,
@@ -459,8 +514,7 @@ class _DashboardPageState extends State<DashboardPage> {
           width: 1,
         ),
       ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
+      child: Center(
         child: Text(
           label,
           style: TextStyle(
@@ -468,7 +522,7 @@ class _DashboardPageState extends State<DashboardPage> {
             fontSize: w * 0.012,
             fontWeight: FontWeight.bold,
             color: Colors.white,
-            letterSpacing: 1.6,
+            letterSpacing: 0.9,
           ),
         ),
       ),
@@ -497,7 +551,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.042,
+                  fontSize: w * 0.035,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
@@ -750,7 +804,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 Expanded(
                   flex: 3,
-                  child: Text('Shift Description', style: headerStyle),
+                  child: Text('Workhours', style: headerStyle),
                 ),
                 Expanded(
                   flex: 3,
@@ -896,6 +950,27 @@ class _DashboardRow {
   final bool isComplete;
 }
 
+class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
+  const _TopLeftCurvedNotchClipper();
+
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(0, size.height)
+      ..lineTo(size.width, size.height)
+      ..quadraticBezierTo(
+        size.width * 0.20,
+        size.height * 0.92,
+        0,
+        0,
+      )
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
 class _DashboardRisingFadeParticle extends StatefulWidget {
   const _DashboardRisingFadeParticle({
     required this.size,
@@ -929,7 +1004,7 @@ class _DashboardRisingFadeParticleState
     final controller = AnimationController(vsync: this, duration: _duration);
     final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
     _controller = controller;
-    _opacity = Tween<double>(begin: 0.100, end: 0.0).animate(curve);
+    _opacity = Tween<double>(begin: 0.50, end: 0.0).animate(curve);
     _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
     _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
     controller.value = widget.phase;

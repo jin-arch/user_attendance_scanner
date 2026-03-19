@@ -1588,7 +1588,7 @@ class _HomePageState extends State<HomePage> {
                       bottom: 0,
                       child: Obx(
                         () => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _buildStatusButton(
@@ -1723,6 +1723,7 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (showLoading) ...[
             SizedBox(

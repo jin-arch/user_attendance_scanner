@@ -9,6 +9,7 @@ import 'package:get/get.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
 import 'package:user_attendance_scanner/views/enrollment_page.dart';
 import 'package:user_attendance_scanner/views/home_page.dart';
+import 'package:user_attendance_scanner/views/loading_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,12 +50,13 @@ class MyApp extends StatelessWidget {
       locale: DevicePreview.locale(context),
       builder: DevicePreview.appBuilder,
       debugShowCheckedModeBanner: false,
-      title: 'FAST Attendance',
+      title: 'HIRS - Human Resources Information System',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
       home: const DashboardPage(),
+      // home: LoadingPage(loadFuture: Completer<void>().future),
     );
   }
 }
