@@ -299,13 +299,13 @@ class _DashboardPageState extends State<DashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildProfileCard(w, h),
-        SizedBox(width: w * 0.018),
+        SizedBox(width: w * 0.010),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildTimePanel(w, h),
-              SizedBox(height: h * 0.016),
+              SizedBox(height: h * 0.03),
               _buildTodayLogCard(w, h),
             ],
           ),
@@ -321,7 +321,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return ClipRRect(
       borderRadius: cardRadius,
       child: Container(
-        width: w * 0.53,
+        width: w * 0.55,
         height: double.infinity,
         color: Colors.transparent,
         child: Row(
@@ -380,10 +380,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 children: [
                   Padding(
                     padding: EdgeInsets.fromLTRB(
-                      w * 0.022,
+                      w * 0.010,
                       h * 0.016,
-                      w * 0.022,
-                      h * 0.008,
+                      w * 0.005,
+                      h * 0.024,
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -400,7 +400,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ),
                         ),
-                        SizedBox(width: w * 0.012),
+                        SizedBox(width: w * 0.005),
                         Expanded(
                           flex: 1,
                           child: GestureDetector(
@@ -548,14 +548,8 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         borderRadius: radius,
         color: active
-            ? const Color(0xFF1A4EA6).withValues(alpha: 0.95)
-            : const Color(0xFF0E1F33).withValues(alpha: 0.92),
-        border: Border.all(
-          color: active
-              ? const Color(0xFF77A8F9)
-              : Colors.white.withValues(alpha: 0.18),
-          width: 1,
-        ),
+            ? const Color(0xFF0E1F33).withValues(alpha: 0.50)
+            : const Color(0xFF0E1F33).withValues(alpha: 0.50),
       ),
       child: Center(
         child: Text(
@@ -563,7 +557,6 @@ class _DashboardPageState extends State<DashboardPage> {
           style: TextStyle(
             fontFamily: 'CEORUSE',
             fontSize: w * 0.012,
-            fontWeight: FontWeight.bold,
             color: Colors.white,
             letterSpacing: 0.9,
           ),
@@ -591,7 +584,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.049,
+                  fontSize: w * 0.042,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
@@ -602,7 +595,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 _formatDate(now),
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.015,
+                  fontSize: w * 0.020,
                   color: Colors.white.withValues(alpha: 0.9),
                   letterSpacing: 3,
                   height: 1.1,
@@ -640,7 +633,7 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(w * 0.028),
-            color: const Color(0xFF0B2742).withValues(alpha: 0.92),
+            color: const Color(0xFF0B2742).withValues(alpha: 0.70),
           ),
           child: Column(
             children: [
@@ -650,14 +643,15 @@ class _DashboardPageState extends State<DashboardPage> {
                   'TODAYS LOG',
                   style: TextStyle(
                     fontFamily: 'Poppins',
-                    fontSize: w * 0.012,
+                    fontSize: w * 0.020,
+                    fontWeight: FontWeight.bold,
                     color: Colors.white,
                     letterSpacing: 3,
                   ),
                 ),
               ),
               Container(
-                color: const Color(0xFF081A2E),
+                color: const Color(0xFF081A2E).withValues(alpha: 0.50),
                 padding: EdgeInsets.symmetric(
                   horizontal: w * 0.014,
                   vertical: h * 0.016,
@@ -712,7 +706,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   vertical: h * 0.018,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF5D7FAF).withValues(alpha: 0.75),
+                  color: const Color.fromARGB(255, 255, 255, 255).withValues(alpha: 0.40),
                   borderRadius: BorderRadius.only(
                     bottomLeft: Radius.circular(w * 0.028),
                     bottomRight: Radius.circular(w * 0.028),
@@ -947,7 +941,7 @@ class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
     return Path()
       ..moveTo(0, size.height)
       ..lineTo(size.width, size.height)
-      ..quadraticBezierTo(size.width * 0.20, size.height * 0.92, 0, 0)
+      ..quadraticBezierTo(size.width * 0.10, size.height * 0.92, 0, 0)
       ..close();
   }
 
