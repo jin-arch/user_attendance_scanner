@@ -175,7 +175,7 @@ class EnrollmentPage extends StatelessWidget {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.040,
+                  fontSize: w * 0.035,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
@@ -597,7 +597,7 @@ class EnrollmentPage extends StatelessWidget {
             'Enrollment Guide',
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.014,
+              fontSize: w * 0.012,
               fontWeight: FontWeight.bold,
               color: Colors.white,
             ),
@@ -607,7 +607,7 @@ class EnrollmentPage extends StatelessWidget {
             'Open Settings →\nBiometrics → Add\nFingerprint, then place\nyour finger on the sensor\nand lift it repeatedly until\nthe scan is complete. Your\nfingerprint will then be\nregistered.',
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.011,
+              fontSize: w * 0.010,
               color: Colors.white,
               height: 1.6,
               letterSpacing: 0.5,
@@ -838,7 +838,7 @@ class EnrollmentPage extends StatelessWidget {
                               child: Column(
                                 children: [
                                   _buildTimePanel(w, h),
-                                  SizedBox(height: h * 0.005),
+                                  SizedBox(height: h * 0.05),
                                   _buildTodayLogCard(w, h),
                                 ],
                               ),
