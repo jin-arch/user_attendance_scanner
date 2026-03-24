@@ -55,7 +55,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const DashboardPage(),
+      home: const EnrollmentPage(),
       // home: LoadingPage(loadFuture: Completer<void>().future),
     );
   }
