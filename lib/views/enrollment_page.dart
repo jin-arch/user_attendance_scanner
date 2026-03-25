@@ -98,56 +98,6 @@ class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
-class _ScanCornerPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.cyanAccent.withOpacity(0.85)
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    const len = 28.0;
-    const pad = 14.0;
-
-    // Top-left
-    canvas.drawPath(
-      Path()
-        ..moveTo(pad, pad + len)
-        ..lineTo(pad, pad)
-        ..lineTo(pad + len, pad),
-      paint,
-    );
-    // Top-right
-    canvas.drawPath(
-      Path()
-        ..moveTo(size.width - pad - len, pad)
-        ..lineTo(size.width - pad, pad)
-        ..lineTo(size.width - pad, pad + len),
-      paint,
-    );
-    // Bottom-left
-    canvas.drawPath(
-      Path()
-        ..moveTo(pad, size.height - pad - len)
-        ..lineTo(pad, size.height - pad)
-        ..lineTo(pad + len, size.height - pad),
-      paint,
-    );
-    // Bottom-right
-    canvas.drawPath(
-      Path()
-        ..moveTo(size.width - pad - len, size.height - pad)
-        ..lineTo(size.width - pad, size.height - pad)
-        ..lineTo(size.width - pad, size.height - pad - len),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
 class EnrollmentPage extends StatelessWidget {
   const EnrollmentPage({super.key});
 
@@ -159,9 +109,8 @@ class EnrollmentPage extends StatelessWidget {
     final minute = now.minute.toString().padLeft(2, '0');
     final period = now.hour >= 12 ? 'PM' : 'AM';
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: w * 0.020,
-        vertical: h * 0.020,
+      padding: EdgeInsets.all(
+        h * 0.045,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -239,7 +188,7 @@ class EnrollmentPage extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(w * 0.028),
-            color: const Color(0xFF0B2742).withOpacity(0.7),
+            color: const Color(0xFF0B2742).withOpacity(0.70),
           ),
           child: Column(
             children: [
@@ -560,7 +509,7 @@ class EnrollmentPage extends StatelessWidget {
         Container(
           padding: EdgeInsets.all(w * 0.010),
           decoration: BoxDecoration(
-            color: const Color(0xFF0B2742).withOpacity(0.75),
+            color: const Color(0xFF0B2742).withOpacity(0.70),
             borderRadius: BorderRadius.circular(w * 0.022),
           ),
           child: Row(
@@ -584,10 +533,10 @@ class EnrollmentPage extends StatelessWidget {
       width: w * 0.20,
       padding: EdgeInsets.symmetric(
         horizontal: w * 0.020,
-        vertical: h * 0.030,
+        vertical: h * 0.020,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.75),
+        color: const Color(0xFF0B2742).withOpacity(0.70),
         borderRadius: BorderRadius.circular(w * 0.022),
       ),
       child: Column(
@@ -607,7 +556,7 @@ class EnrollmentPage extends StatelessWidget {
             'Open Settings →\nBiometrics → Add\nFingerprint, then place\nyour finger on the sensor\nand lift it repeatedly until\nthe scan is complete. Your\nfingerprint will then be\nregistered.',
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.010,
+              fontSize: w * 0.011,
               color: Colors.white,
               height: 1.6,
               letterSpacing: 0.5,
@@ -680,7 +629,7 @@ class EnrollmentPage extends StatelessWidget {
         vertical: h * 0.026,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.75),
+        color: const Color(0xFF0B2742).withOpacity(0.70),
         borderRadius: BorderRadius.circular(w * 0.022),
       ),
       child: Column(
@@ -782,7 +731,7 @@ class EnrollmentPage extends StatelessWidget {
         ),
         child: SafeArea(
           child: Padding(
-            padding: EdgeInsets.all(w * 0.023),
+            padding: EdgeInsets.all(w * 0.020),
             child: Stack(
               children: [
                 // Particle FX layer
@@ -838,7 +787,7 @@ class EnrollmentPage extends StatelessWidget {
                               child: Column(
                                 children: [
                                   _buildTimePanel(w, h),
-                                  SizedBox(height: h * 0.05),
+                                  SizedBox(height: h * 0.01),
                                   _buildTodayLogCard(w, h),
                                 ],
                               ),
