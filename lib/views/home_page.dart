@@ -73,22 +73,20 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   static const String _apiBaseUrl =
-    'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
-  static const String _siteApiUrl =
-    '${_apiBaseUrl}get/site/all';
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
+  static const String _siteApiUrl = '${_apiBaseUrl}get/site/all';
   static const String _employeesApiUrl =
-    '${_apiBaseUrl}get/employee/perSite?siteID=';
+      '${_apiBaseUrl}get/employee/perSite?siteID=';
   static const String _timelogPerSiteApiUrl =
-    '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
+      '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
   static const String _timeInApiEndpoint = 'update/timeLog/timeIn';
   static const String _timeOutApiEndpoint = 'update/timeLog/timeOut';
   static const String _insertHrisLogsApiEndpoint =
-    'insert/hris/logs/transaction';
+      'insert/hris/logs/transaction';
   static const String _insertTimeLogApiEndpoint = 'insert/timeLog';
-  static const String _thumbDetailsApiEndpoint =
-    'update/employee/thumbDetails';
+  static const String _thumbDetailsApiEndpoint = 'update/employee/thumbDetails';
   static const String _legacyAttendanceApiUrl =
-    '${_apiBaseUrl}post/attendance/add';
+      '${_apiBaseUrl}post/attendance/add';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
@@ -97,7 +95,7 @@ class _HomePageState extends State<HomePage> {
   String? _selectedSiteId;
   List<_SiteOption> _sites = const [];
   final Map<String, String> _deviceSiteMap = {};
-  
+
   final ZKTecoUSB _device = ZKTecoUSB();
   late final HomePageController _controller;
 
@@ -170,11 +168,12 @@ class _HomePageState extends State<HomePage> {
     client.connectionTimeout = const Duration(seconds: 20);
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
-        final basicToken =
-          base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+      final basicToken = base64Encode(
+        utf8.encode('$_apiUsername:$_apiPassword'),
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -189,13 +188,14 @@ class _HomePageState extends State<HomePage> {
       return list
           .map((site) {
             final name =
-            site['site_name'] ??
-            site['SITENAME'] ??
-            site['name'] ??
-            site['site'] ??
-            site['title'];
-            final id = site['site_id'] ??
-            site['SITEID'] ??
+                site['site_name'] ??
+                site['SITENAME'] ??
+                site['name'] ??
+                site['site'] ??
+                site['title'];
+            final id =
+                site['site_id'] ??
+                site['SITEID'] ??
                 site['id'] ??
                 site['siteid'] ??
                 site['site_code'] ??
@@ -224,7 +224,8 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _extractSiteRows(dynamic decoded) {
     dynamic data = decoded;
     if (decoded is Map<String, dynamic>) {
-      data = decoded['data'] ??
+      data =
+          decoded['data'] ??
           decoded['sites'] ??
           decoded['result'] ??
           decoded['records'] ??
@@ -236,7 +237,10 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (data is List) {
-      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
 
     return const [];
@@ -282,7 +286,8 @@ class _HomePageState extends State<HomePage> {
 
     if (_sites.isEmpty) {
       _controller.setStatus(
-          'Cannot load site list. Please check API connection.');
+        'Cannot load site list. Please check API connection.',
+      );
       return;
     }
     _controller.setStatus('');
@@ -293,16 +298,19 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _selectedSiteId = selected);
     await LocalDb.pruneToSite(selected);
-    _controller
-        .setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
+    _controller.setStatus(
+      'Selected site: ${_siteNameById(selected) ?? selected}',
+    );
 
     // Step 3 — NOW show the loading screen while connecting + syncing data
     if (!mounted) return;
     final syncFuture = _connectAndSync();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => LoadingPage(loadFuture: syncFuture),
-      fullscreenDialog: true,
-    ));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LoadingPage(loadFuture: syncFuture),
+        fullscreenDialog: true,
+      ),
+    );
     if (mounted) _startScanLoop();
   }
 
@@ -326,7 +334,10 @@ class _HomePageState extends State<HomePage> {
                 backgroundColor: Colors.transparent,
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 560),
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 24,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
@@ -427,7 +438,9 @@ class _HomePageState extends State<HomePage> {
                                     ? null
                                     : () => Navigator.of(context).pop(),
                                 style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: Color(0xFFD6DBE5)),
+                                  side: const BorderSide(
+                                    color: Color(0xFFD6DBE5),
+                                  ),
                                   foregroundColor: const Color(0xFF9CA3AF),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -442,7 +455,8 @@ class _HomePageState extends State<HomePage> {
                             child: SizedBox(
                               height: 44,
                               child: ElevatedButton(
-                                onPressed: () => Navigator.of(context).pop(selectedId),
+                                onPressed: () =>
+                                    Navigator.of(context).pop(selectedId),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
@@ -488,7 +502,7 @@ class _HomePageState extends State<HomePage> {
     }
     super.dispose();
   }
-  
+
   /// Pure async connect + sync — NO dialogs, NO Navigator calls.
   /// Safe to run as the loadFuture inside LoadingPage.
   Future<void> _connectAndSync() async {
@@ -498,8 +512,9 @@ class _HomePageState extends State<HomePage> {
         final env = await _device.getAndroidSdkEnvironment();
         if (env['canUseSdk'] != true) {
           _controller.stopSearching(
-              env['reason']?.toString() ??
-                  'SDK not compatible. Ensure a physical Android device with the scanner attached.');
+            env['reason']?.toString() ??
+                'SDK not compatible. Ensure a physical Android device with the scanner attached.',
+          );
           return;
         }
       }
@@ -516,7 +531,9 @@ class _HomePageState extends State<HomePage> {
 
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
-        _controller.stopSearching('No device found. Plug in the scanner and retry.');
+        _controller.stopSearching(
+          'No device found. Plug in the scanner and retry.',
+        );
         await _device.terminateSdk();
         return;
       }
@@ -542,7 +559,9 @@ class _HomePageState extends State<HomePage> {
       final siteText = siteName != null ? ' | Site: $siteName' : '';
       _controller.stopSearching();
       _controller.setConnected(
-          true, status: 'Connected: ${serial ?? "Unknown"}$siteText');
+        true,
+        status: 'Connected: ${serial ?? "Unknown"}$siteText',
+      );
 
       // Sync API -> SQLite, then always load/register from SQLite.
       await _loadAndRegisterTemplates();
@@ -567,7 +586,8 @@ class _HomePageState extends State<HomePage> {
 
     if (_sites.isEmpty) {
       _controller.setStatus(
-          'Cannot load site list. Please check API connection.');
+        'Cannot load site list. Please check API connection.',
+      );
       return;
     }
     _controller.setStatus('');
@@ -581,16 +601,19 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _selectedSiteId = selected);
     await LocalDb.pruneToSite(selected);
-    _controller
-        .setStatus('Selected site: ${_siteNameById(selected) ?? selected}');
+    _controller.setStatus(
+      'Selected site: ${_siteNameById(selected) ?? selected}',
+    );
 
     // Step 3 — ONLY NOW show the loading screen (connect + sync)
     if (!mounted) return;
     final syncFuture = _connectAndSync();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => LoadingPage(loadFuture: syncFuture),
-      fullscreenDialog: true,
-    ));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LoadingPage(loadFuture: syncFuture),
+        fullscreenDialog: true,
+      ),
+    );
     if (mounted) _startScanLoop();
   }
 
@@ -600,11 +623,11 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     final siteId = _selectedSiteId;
     if (siteId == null) {
-      _controller.setStatus('No site selected — cannot load fingerprints.');
+      // No site selected, do not proceed.
       return;
     }
 
-    _controller.setStatus('Syncing fingerprint data to local database...');
+    // Removed status text about syncing fingerprint data to local database.
     await _syncEmployeesFromApiToLocalDb(siteId);
     await _loadFromLocalDb(siteId);
   }
@@ -616,7 +639,9 @@ class _HomePageState extends State<HomePage> {
     try {
       final urlStr = '$_employeesApiUrl$siteId';
       final request = await client.getUrl(Uri.parse(urlStr));
-      final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+      final basicToken = base64Encode(
+        utf8.encode('$_apiUsername:$_apiPassword'),
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
       request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
@@ -641,20 +666,30 @@ class _HomePageState extends State<HomePage> {
             (row['employee_id'] ?? row['emp_id'] ?? row['id'] ?? row['EMPID'])
                 ?.toString()
                 .trim();
-        final firstName = (row['FIRSTNAME'] ?? row['first_name'])?.toString().trim();
-        final middleName = (row['MIDDLENAME'] ?? row['middle_name'])?.toString().trim();
-        final lastName = (row['LASTNAME'] ?? row['last_name'])?.toString().trim();
+        final firstName = (row['FIRSTNAME'] ?? row['first_name'])
+            ?.toString()
+            .trim();
+        final middleName = (row['MIDDLENAME'] ?? row['middle_name'])
+            ?.toString()
+            .trim();
+        final lastName = (row['LASTNAME'] ?? row['last_name'])
+            ?.toString()
+            .trim();
         final fullNameParts = [firstName, middleName, lastName]
             .whereType<String>()
             .where((part) => part.isNotEmpty && part.toLowerCase() != 'null')
             .toList();
         final empName =
-            (row['employee_name'] ?? row['full_name'] ?? row['name'])?.toString().trim();
+            (row['employee_name'] ?? row['full_name'] ?? row['name'])
+                ?.toString()
+                .trim();
         final resolvedName = fullNameParts.isNotEmpty
             ? fullNameParts.join(' ')
-            : ((empName != null && empName.isNotEmpty && empName.toLowerCase() != 'null')
-                ? empName
-                : null);
+            : ((empName != null &&
+                      empName.isNotEmpty &&
+                      empName.toLowerCase() != 'null')
+                  ? empName
+                  : null);
 
         if (empId == null || empId.isEmpty) {
           skippedEmps++;
@@ -662,12 +697,19 @@ class _HomePageState extends State<HomePage> {
         }
 
         final thumbTemplates = <String, String?>{
-          'left': (row['LEFTFINGERTHUMB'] ?? row['leftFingerThumb'] ?? row['left_thumb'])
-              ?.toString(),
-          'right': (row['RIGHTFINGERTHUMB'] ?? row['rightFingerThumb'] ?? row['right_thumb'])
-              ?.toString(),
-          'default': (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-              ?.toString(),
+          'left':
+              (row['LEFTFINGERTHUMB'] ??
+                      row['leftFingerThumb'] ??
+                      row['left_thumb'])
+                  ?.toString(),
+          'right':
+              (row['RIGHTFINGERTHUMB'] ??
+                      row['rightFingerThumb'] ??
+                      row['right_thumb'])
+                  ?.toString(),
+          'default':
+              (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
+                  ?.toString(),
         };
 
         for (final entry in thumbTemplates.entries) {
@@ -753,21 +795,14 @@ class _HomePageState extends State<HomePage> {
         final templateBytes = row['finger_template'] as Uint8List;
 
         await _device.registerFingerprint(fid, templateBytes);
-        final entry = _EmployeeEntry(
-          id: empId,
-          name: empName ?? empId,
-        );
+        final entry = _EmployeeEntry(id: empId, name: empName ?? empId);
         _employeeDb[fid] = entry;
         _employeeDbByFid[fid.toString()] = entry;
         registered++;
       }
 
       if (!mounted) return;
-      _controller.setStatus(
-        registered > 0
-        ? 'Ready - $registered fingerprint(s) loaded from biometric_scanner.db'
-            : 'No cached fingerprints. Connect to internet and sync.',
-      );
+      // Status message about loading from local DB removed as requested.
     } catch (e) {
       if (!mounted) return;
       _controller.setStatus('Ready — place finger on scanner');
@@ -783,12 +818,18 @@ class _HomePageState extends State<HomePage> {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 20);
       try {
-        final request = await client.getUrl(Uri.parse('$_timelogPerSiteApiUrl$siteId'));
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        final request = await client.getUrl(
+          Uri.parse('$_timelogPerSiteApiUrl$siteId'),
+        );
+        final basicToken = base64Encode(
+          utf8.encode('$_apiUsername:$_apiPassword'),
+        );
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
         request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Basic $basicToken',
+        );
 
         final response = await request.close();
         final body = await response.transform(utf8.decoder).join();
@@ -817,8 +858,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Windows: poll the sensor every 250ms
-    _scanTimer =
-        Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (!_controller.isScanning.value || !_device.isConnected) {
         _stopScanLoop();
         return;
@@ -870,8 +910,8 @@ class _HomePageState extends State<HomePage> {
     final fingerId = _parseFingerId(fid);
     _EmployeeEntry? employee =
         (fid != null ? _employeeDbByFid[fid.trim()] : null) ??
-            (fingerId != null ? _employeeDb[fingerId] : null) ??
-            (fingerId != null ? _employeeDbByFid[fingerId.toString()] : null);
+        (fingerId != null ? _employeeDb[fingerId] : null) ??
+        (fingerId != null ? _employeeDbByFid[fingerId.toString()] : null);
 
     if (employee == null && ZKTecoUSB.isAndroidPlatform) {
       employee = await _resolveEmployeeByVerificationFallback();
@@ -889,15 +929,18 @@ class _HomePageState extends State<HomePage> {
       });
       _scheduleScannerResume();
       _controller.setStatus(
-          '${employee.name} — ${attendanceType ?? 'RECORDED'}');
+        '${employee.name} — ${attendanceType ?? 'RECORDED'}',
+      );
     } else {
-      _displayResult(_ScanResult(
-        success: false,
-        timestamp: DateTime.now(),
-        errorMessage: fid != null
-            ? 'Employee not on record'
-            : 'Fingerprint not registered',
-      ));
+      _displayResult(
+        _ScanResult(
+          success: false,
+          timestamp: DateTime.now(),
+          errorMessage: fid != null
+              ? 'Employee not on record'
+              : 'Fingerprint not registered',
+        ),
+      );
     }
   }
 
@@ -916,9 +959,12 @@ class _HomePageState extends State<HomePage> {
       try {
         final verify = await _device
             .verifyFingerprint(entry.key)
-            .timeout(const Duration(milliseconds: 180), onTimeout: () {
-          return (match: false, score: null);
-        });
+            .timeout(
+              const Duration(milliseconds: 180),
+              onTimeout: () {
+                return (match: false, score: null);
+              },
+            );
         if (verify.match) {
           return entry.value;
         }
@@ -951,10 +997,7 @@ class _HomePageState extends State<HomePage> {
     final primarySent = await _sendHrisRequest(
       endpoint: primary.$1,
       queryParams: primary.$2,
-    ).timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => false,
-    );
+    ).timeout(const Duration(seconds: 5), onTimeout: () => false);
 
     if (primarySent) {
       // Secondary requests (logs/audit) are important but should not change
@@ -963,10 +1006,7 @@ class _HomePageState extends State<HomePage> {
         final sent = await _sendHrisRequest(
           endpoint: request.$1,
           queryParams: request.$2,
-        ).timeout(
-          const Duration(seconds: 5),
-          onTimeout: () => false,
-        );
+        ).timeout(const Duration(seconds: 5), onTimeout: () => false);
         if (!sent) {
           await LocalDb.queueHrisRequest(
             endpoint: request.$1,
@@ -990,10 +1030,7 @@ class _HomePageState extends State<HomePage> {
       employeeId: employeeId,
       siteId: siteId,
       timestamp: DateTime.now().toIso8601String(),
-    ).timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => null,
-    );
+    ).timeout(const Duration(seconds: 5), onTimeout: () => null);
     if (legacyType != null) {
       return legacyType;
     }
@@ -1013,24 +1050,28 @@ class _HomePageState extends State<HomePage> {
       employeeId: employeeId,
     );
 
-    final timeLogId = (cached?['timelogID'] ??
-            cached?['timeLogID'] ??
-            cached?['timelog_id'] ??
-            '$employeeId-$date')
+    final timeLogId =
+        (cached?['timelogID'] ??
+                cached?['timeLogID'] ??
+                cached?['timelog_id'] ??
+                '$employeeId-$date')
+            .toString();
+    final remarks = (cached?['remarks'] ?? cached?['remark'] ?? '').toString();
+    final schedule = (cached?['schedule'] ?? cached?['schedCode'] ?? '')
         .toString();
-    final remarks =
-        (cached?['remarks'] ?? cached?['remark'] ?? '').toString();
-    final schedule =
-        (cached?['schedule'] ?? cached?['schedCode'] ?? '').toString();
 
-    final existingInMorning =
-        _isBlank(cached?['timeInMorning']) ? null : '${cached?['timeInMorning']}';
-    final existingOutMorning =
-        _isBlank(cached?['timeOutMorning']) ? null : '${cached?['timeOutMorning']}';
-    final existingInAfternoon =
-        _isBlank(cached?['timeInAfternoon']) ? null : '${cached?['timeInAfternoon']}';
-    final existingOutAfternoon =
-        _isBlank(cached?['timeOutAfternoon']) ? null : '${cached?['timeOutAfternoon']}';
+    final existingInMorning = _isBlank(cached?['timeInMorning'])
+        ? null
+        : '${cached?['timeInMorning']}';
+    final existingOutMorning = _isBlank(cached?['timeOutMorning'])
+        ? null
+        : '${cached?['timeOutMorning']}';
+    final existingInAfternoon = _isBlank(cached?['timeInAfternoon'])
+        ? null
+        : '${cached?['timeInAfternoon']}';
+    final existingOutAfternoon = _isBlank(cached?['timeOutAfternoon'])
+        ? null
+        : '${cached?['timeOutAfternoon']}';
 
     if (existingInMorning == null) {
       return _PendingTimeLog(
@@ -1150,20 +1191,24 @@ class _HomePageState extends State<HomePage> {
     required String endpoint,
     required Map<String, String> queryParams,
   }) async {
-    final uri = Uri.parse('$_apiBaseUrl$endpoint').replace(
-      queryParameters: queryParams,
-    );
+    final uri = Uri.parse(
+      '$_apiBaseUrl$endpoint',
+    ).replace(queryParameters: queryParams);
 
     try {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 12);
       try {
         final request = await client.getUrl(uri);
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        final basicToken = base64Encode(
+          utf8.encode('$_apiUsername:$_apiPassword'),
+        );
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
         request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Basic $basicToken',
+        );
         final response = await request.close();
         await response.transform(utf8.decoder).join();
         return response.statusCode >= 200 && response.statusCode < 300;
@@ -1257,12 +1302,18 @@ class _HomePageState extends State<HomePage> {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 8);
       try {
-        final request = await client.postUrl(Uri.parse(_legacyAttendanceApiUrl));
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        final request = await client.postUrl(
+          Uri.parse(_legacyAttendanceApiUrl),
+        );
+        final basicToken = base64Encode(
+          utf8.encode('$_apiUsername:$_apiPassword'),
+        );
         request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Basic $basicToken',
+        );
 
         final payload = jsonEncode({
           'employee_id': employeeId,
@@ -1280,7 +1331,8 @@ class _HomePageState extends State<HomePage> {
 
         try {
           final decoded = jsonDecode(body);
-          final type = decoded['attendance_type'] ??
+          final type =
+              decoded['attendance_type'] ??
               decoded['type'] ??
               decoded['status'] ??
               decoded['log_type'];
@@ -1326,8 +1378,18 @@ class _HomePageState extends State<HomePage> {
   String get _dateString {
     final currentTime = _controller.now.value;
     const months = [
-      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
+      'JANUARY',
+      'FEBRUARY',
+      'MARCH',
+      'APRIL',
+      'MAY',
+      'JUNE',
+      'JULY',
+      'AUGUST',
+      'SEPTEMBER',
+      'OCTOBER',
+      'NOVEMBER',
+      'DECEMBER',
     ];
     return '${months[currentTime.month - 1]} ${currentTime.day}, ${currentTime.year}';
   }
@@ -1359,6 +1421,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: Container(
         width: screenW,
         height: screenH,
@@ -1369,88 +1432,116 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: screenW * 0.015,
-              vertical: screenH * 0.015,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Obx(
-                      () => _controller.biometricConnected.value
-                          ? GestureDetector(
-                              onTap: _showAddUserDialog,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: const Color(0x223E7DDD),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(0xFF3E7DDD),
-                                  ),
+          child: (_selectedSiteId == null)
+              ? const SizedBox.shrink()
+              : Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: screenW * 0.015,
+                    vertical: screenH * 0.015,
+                  ),
+                  child: SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: screenH - (screenH * 0.03),
+                      ),
+                      child: IntrinsicHeight(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Obx(
+                                  () => _controller.biometricConnected.value
+                                      ? GestureDetector(
+                                          onTap: _showAddUserDialog,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0x223E7DDD),
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: const Color(0xFF3E7DDD),
+                                              ),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.person_add_outlined,
+                                                  color: Colors.white,
+                                                  size: 18,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text(
+                                                  'ADD USER',
+                                                  style: TextStyle(
+                                                    fontFamily: 'CEORUSE',
+                                                    fontSize: 11,
+                                                    color: Colors.white,
+                                                    letterSpacing: 2,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(),
                                 ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.person_add_outlined,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'ADD USER',
-                                      style: TextStyle(
-                                        fontFamily: 'CEORUSE',
-                                        fontSize: 11,
-                                        color: Colors.white,
-                                        letterSpacing: 2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              ],
+                            ),
+                            SizedBox(height: screenH * 0.018),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: _buildMainCard(screenW, screenH),
                               ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
-                SizedBox(height: screenH * 0.018),
-                Expanded(
-                  child: Center(
-                    child: FractionallySizedBox(
-                      widthFactor: 0.96,
-                      heightFactor: 0.95,
-                      child: _buildMainCard(screenW, screenH),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
         ),
       ),
     );
   }
 
   Widget _buildMainCard(double screenW, double screenH) {
-    final cardPadH = screenW * 0.02;
-    final cardPadV = screenH * 0.03;
+    final cardPadH = screenW * 0.03;
+    final cardPadV = screenH * 0.1;
 
     return Stack(
       children: [
-        // Card background
+        // Card background with FAST logo inside
         Positioned.fill(
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(screenW * 0.015),
-            child: Image.asset(
-              'assets/images/CardModified4.png',
-              fit: BoxFit.cover,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(screenW * 0.08), // much more radiused
+              topRight: Radius.circular(screenW * 0.015),
+              bottomLeft: Radius.circular(screenW * 0.015),
+              bottomRight: Radius.circular(screenW * 0.015),
+            ),
+            child: Stack(
+              children: [
+                Image.asset(
+                  'assets/images/cardmodified123.png',
+                  fit: BoxFit.cover,
+                ),
+                Positioned(
+                  left: screenW * 0.025,
+                  top: screenH * 0.001,
+                  child: Image.asset(
+                    'assets/images/FastLogo.png',
+                    width: screenW * 0.18,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -1497,21 +1588,10 @@ class _HomePageState extends State<HomePage> {
 
                 return Stack(
                   children: [
-                    // ── FAST logo — top-left transparent area ──
-                    Positioned(
-                      left: 0,
-                      top: 0,
-                      child: Image.asset(
-                        'assets/images/FastLogo.png',
-                        height: cardH * 0.12,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-
                     // ── Time & date — bottom-right transparent area ──
                     Positioned(
                       right: 0,
-                      bottom: cardH * 0.035,
+                      bottom: cardH * 0.045,
                       child: Obx(
                         () => Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1544,9 +1624,9 @@ class _HomePageState extends State<HomePage> {
 
                     // ── Fingerprint icon — top-right ──
                     Positioned(
-                      top: cardH * 0.08,
+                      top: cardH * 0.005,
                       right: cardW * 0.01,
-                      bottom: cardH * 0.18,
+                      bottom: cardH * 0.20,
                       width: cardW * 0.30,
                       child: Align(
                         alignment: Alignment.topRight,
@@ -1603,7 +1683,8 @@ class _HomePageState extends State<HomePage> {
                             ),
                             SizedBox(height: cardH * 0.02),
                             GestureDetector(
-                              onTap: (_controller.isSearching.value ||
+                              onTap:
+                                  (_controller.isSearching.value ||
                                       _controller.biometricConnected.value)
                                   ? null
                                   : _searchAndConnect,
@@ -1611,51 +1692,47 @@ class _HomePageState extends State<HomePage> {
                                 label: _controller.isSearching.value
                                     ? 'SEARCHING...'
                                     : _controller.isScanning.value
-                                        ? 'SCANNING...'
-                                        : _controller.biometricConnected.value
-                                            ? 'ACTIVE'
-                                            : 'SEARCH MODE',
-                                textColor: (_controller.isSearching.value ||
+                                    ? 'SCANNING...'
+                                    : _controller.biometricConnected.value
+                                    ? 'ACTIVE'
+                                    : 'SEARCH MODE',
+                                textColor:
+                                    (_controller.isSearching.value ||
                                         _controller.isScanning.value)
                                     ? const Color(0xFFFFB74D)
                                     : Colors.white,
                                 cardW: cardW,
                                 cardH: cardH,
-                                showLoading: _controller.isSearching.value ||
+                                showLoading:
+                                    _controller.isSearching.value ||
                                     _controller.isScanning.value,
                               ),
                             ),
                             if (_controller.statusMessage.value.isNotEmpty) ...[
-                              SizedBox(height: cardH * 0.015),
-                              SizedBox(
-                                width: cardW * 0.43,
-                                child: Text(
-                                  _controller.statusMessage.value,
-                                  style: TextStyle(
-                                    fontFamily: 'CEORUSE',
-                                    fontSize: cardW * 0.012,
-                                    color: Colors.white.withValues(alpha: 0.7),
-                                    letterSpacing: 1,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
+                              // Status message below the button removed as requested.
                             ],
-                            if (_controller.lastDbSyncLabel.value.isNotEmpty) ...[
+                            if (_controller
+                                .lastDbSyncLabel
+                                .value
+                                .isNotEmpty) ...[
                               SizedBox(height: cardH * 0.01),
                               SizedBox(
                                 width: cardW * 0.43,
-                                child: Text(
-                                  _controller.lastDbSyncLabel.value,
-                                  style: TextStyle(
-                                    fontFamily: 'CEORUSE',
-                                    fontSize: cardW * 0.0105,
-                                    color: Colors.white.withValues(alpha: 0.6),
-                                    letterSpacing: 0.8,
+                                child: Opacity(
+                                  opacity: 0.0,
+                                  child: Text(
+                                    _controller.lastDbSyncLabel.value,
+                                    style: TextStyle(
+                                      fontFamily: 'CEORUSE',
+                                      fontSize: cardW * 0.0105,
+                                      color: Colors.white.withValues(
+                                        alpha: 0.6,
+                                      ),
+                                      letterSpacing: 0.8,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
@@ -1724,6 +1801,7 @@ class _HomePageState extends State<HomePage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (showLoading) ...[
             SizedBox(
@@ -1739,6 +1817,7 @@ class _HomePageState extends State<HomePage> {
           Flexible(
             child: Text(
               label,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'CEORUSE',
                 fontSize: cardW * 0.016,
@@ -1822,8 +1901,7 @@ class _HomePageState extends State<HomePage> {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle:
-            const TextStyle(color: Color(0xFF7A9BBD), fontSize: 13),
+        labelStyle: const TextStyle(color: Color(0xFF7A9BBD), fontSize: 13),
         prefixIcon: Icon(icon, color: const Color(0xFF7A9BBD), size: 18),
         filled: true,
         fillColor: const Color(0xFF162233),
@@ -1876,7 +1954,8 @@ class _HomePageState extends State<HomePage> {
               }
 
               final digits = empId.replaceAll(RegExp(r'\D'), '');
-              final fid = int.tryParse(
+              final fid =
+                  int.tryParse(
                     digits.length > 8
                         ? digits.substring(digits.length - 8)
                         : digits,
@@ -1932,12 +2011,15 @@ class _HomePageState extends State<HomePage> {
               });
 
               if (ZKTecoUSB.isAndroidPlatform) {
-                final completer = Completer<({
-                  bool success,
-                  String message,
-                  String? fid,
-                  Uint8List? template
-                })>();
+                final completer =
+                    Completer<
+                      ({
+                        bool success,
+                        String message,
+                        String? fid,
+                        Uint8List? template,
+                      })
+                    >();
                 final prevProgress = _device.onEnrollProgress;
                 final prevResult = _device.onEnrollResult;
 
@@ -1951,18 +2033,19 @@ class _HomePageState extends State<HomePage> {
 
                 _device.onEnrollResult =
                     (success, message, resultFid, template) {
-                  if (!completer.isCompleted) {
-                    completer.complete((
-                      success: success,
-                      message: message,
-                      fid: resultFid,
-                      template: template,
-                    ));
-                  }
-                };
+                      if (!completer.isCompleted) {
+                        completer.complete((
+                          success: success,
+                          message: message,
+                          fid: resultFid,
+                          template: template,
+                        ));
+                      }
+                    };
 
-                final started =
-                    await _device.startEnrollmentAndroid(fid.toString());
+                final started = await _device.startEnrollmentAndroid(
+                  fid.toString(),
+                );
                 if (!started) {
                   _device.onEnrollProgress = prevProgress;
                   _device.onEnrollResult = prevResult;
@@ -2029,7 +2112,9 @@ class _HomePageState extends State<HomePage> {
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 520),
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 26),
+                  horizontal: 28,
+                  vertical: 26,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E2A3B),
                   borderRadius: BorderRadius.circular(18),
@@ -2055,10 +2140,7 @@ class _HomePageState extends State<HomePage> {
                     const SizedBox(height: 4),
                     const Text(
                       'Enroll a new employee fingerprint',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF7A9BBD),
-                      ),
+                      style: TextStyle(fontSize: 13, color: Color(0xFF7A9BBD)),
                     ),
                     const SizedBox(height: 20),
                     _enrollTextField(
@@ -2083,8 +2165,7 @@ class _HomePageState extends State<HomePage> {
                         return Container(
                           width: 14,
                           height: 14,
-                          margin:
-                              const EdgeInsets.symmetric(horizontal: 6),
+                          margin: const EdgeInsets.symmetric(horizontal: 6),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: done
@@ -2104,7 +2185,9 @@ class _HomePageState extends State<HomePage> {
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF162233),
                         borderRadius: BorderRadius.circular(8),
@@ -2118,7 +2201,8 @@ class _HomePageState extends State<HomePage> {
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                    Color(0xFFFFB74D)),
+                                  Color(0xFFFFB74D),
+                                ),
                               ),
                             )
                           else
@@ -2159,36 +2243,34 @@ class _HomePageState extends State<HomePage> {
                                   : () => Navigator.of(dlgCtx).pop(),
                               style: OutlinedButton.styleFrom(
                                 side: const BorderSide(
-                                    color: Color(0xFF3E5A7A)),
+                                  color: Color(0xFF3E5A7A),
+                                ),
                                 foregroundColor: const Color(0xFF7A9BBD),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                               ),
-                              child:
-                                  Text(isComplete ? 'DONE' : 'CANCEL'),
+                              child: Text(isComplete ? 'DONE' : 'CANCEL'),
                             ),
                           ),
                         ),
-                        if (!isComplete) ...[const SizedBox(width: 12),
+                        if (!isComplete) ...[
+                          const SizedBox(width: 12),
                           Expanded(
                             child: SizedBox(
                               height: 44,
                               child: ElevatedButton(
-                                onPressed:
-                                    isCapturing ? null : doCapture,
+                                onPressed: isCapturing ? null : doCapture,
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor:
-                                      const Color(0xFF3E7DDD),
+                                  backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
                                   shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(8),
                                   ),
                                 ),
-                                child: Text(captureCount == 0
-                                    ? 'START'
-                                    : 'CAPTURE'),
+                                child: Text(
+                                  captureCount == 0 ? 'START' : 'CAPTURE',
+                                ),
                               ),
                             ),
                           ),
@@ -2219,17 +2301,19 @@ class _HomePageState extends State<HomePage> {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 15);
       try {
-        final uri = Uri.parse('$_apiBaseUrl$_thumbDetailsApiEndpoint').replace(
-          queryParameters: {'employeeID': employeeId},
-        );
+        final uri = Uri.parse(
+          '$_apiBaseUrl$_thumbDetailsApiEndpoint',
+        ).replace(queryParameters: {'employeeID': employeeId});
         final request = await client.putUrl(uri);
-        final basicToken =
-            base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
-        request.headers
-            .set(HttpHeaders.contentTypeHeader, 'application/json');
+        final basicToken = base64Encode(
+          utf8.encode('$_apiUsername:$_apiPassword'),
+        );
+        request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers
-            .set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Basic $basicToken',
+        );
         final payload = jsonEncode({
           'employeeID': employeeId,
           'leftFingerThumb': base64Encode(template),
