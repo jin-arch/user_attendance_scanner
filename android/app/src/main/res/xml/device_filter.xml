@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ZKTeco Live20R fingerprint scanner -->
-    <usb-device vendor-id="6997" product-id="288"/>
-    <!-- ZKTeco Live10R fingerprint scanner -->
-    <usb-device vendor-id="6997" product-id="292"/>
+    <!-- ZKTeco fingerprint readers: match by vendor ID so all PIDs are discoverable -->
+    <usb-device vendor-id="6997" />
 </resources>

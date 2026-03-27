@@ -10,6 +10,14 @@ class LocalDb {
   static const String _legacyDbFileName = 'biometrics_scanner.db';
   static const String _windowsDbDirectory = r'C:\SQLiteDB';
 
+  static Future<String> currentDbPath() async {
+    if (!kIsWeb && Platform.isWindows) {
+      return p.join(_windowsDbDirectory, _dbFileName);
+    }
+    final dbPath = await getDatabasesPath();
+    return p.join(dbPath, _dbFileName);
+  }
+
   static Future<void> _ensureSchema(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS employees (
@@ -164,6 +172,18 @@ class LocalDb {
     );
   }
 
+  static Future<List<Map<String, dynamic>>> getEmployeesBySiteAndEmployeeId({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    final database = await db;
+    return database.query(
+      'employees',
+      where: 'site_id = ? AND employee_id = ?',
+      whereArgs: [siteId, employeeId],
+    );
+  }
+
   /// Remove all cached employees for a site (called before a fresh sync).
   static Future<void> deleteEmployeesBySite(String siteId) async {
     final database = await db;
@@ -171,6 +191,18 @@ class LocalDb {
       'employees',
       where: 'site_id = ?',
       whereArgs: [siteId],
+    );
+  }
+
+  static Future<void> deleteEmployeesBySiteAndEmployeeId({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    final database = await db;
+    await database.delete(
+      'employees',
+      where: 'site_id = ? AND employee_id = ?',
+      whereArgs: [siteId, employeeId],
     );
   }
 
@@ -256,9 +288,18 @@ class LocalDb {
     batch.delete('timelog_cache', where: 'site_id = ?', whereArgs: [siteId]);
 
     for (final row in rows) {
-      final employeeId =
-          (row['employee_id'] ?? row['companyID'] ?? row['employeeID'])
-              ?.toString();
+      final employeeId = (row['employee_id'] ??
+              row['employeeID'] ??
+              row['employeeId'] ??
+              row['employeeid'] ??
+              row['companyID'] ??
+              row['companyId'] ??
+              row['company_id'] ??
+              row['emp_id'] ??
+              row['empid'] ??
+              row['EMPID'])
+          ?.toString()
+          .trim();
       batch.insert('timelog_cache', {
         'site_id': siteId,
         'employee_id': employeeId,
@@ -318,6 +359,19 @@ class LocalDb {
     }
 
     return results;
+  }
+
+  static Future<void> pushRealtimeTimelog({
+    required String siteId,
+    required String employeeId,
+    required Map<String, dynamic> row,
+  }) async {
+    final database = await db;
+    await database.insert('timelog_cache', {
+      'site_id': siteId,
+      'employee_id': employeeId,
+      'raw_json': jsonEncode(row),
+    });
   }
 
   static Future<int> getEmployeeCountBySite(String siteId) async {

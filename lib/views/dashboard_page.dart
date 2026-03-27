@@ -35,13 +35,23 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _loadingRows = true;
   DateTime _now = DateTime.now();
   Timer? _clockTimer;
+  bool _shownScanStatusModal = false;
 
   @override
   void initState() {
     super.initState();
     _loadRows();
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _loadRows();
+      }
+    });
     _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() => _now = DateTime.now());
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showScanStatusModalIfNeeded();
     });
   }
 
@@ -149,18 +159,27 @@ class _DashboardPageState extends State<DashboardPage> {
       'datelog',
     ]);
     final parsedDate = _parseDate(dateText);
-    final timeInMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning']);
+    final timeInMorning = _pickFirst(row, [
+      'timeInMorning',
+      'timeinmorning',
+      'time_in_morning',
+      'time_in',
+    ]);
     final timeOutMorning = _pickFirst(row, [
       'timeOutMorning',
       'timeoutmorning',
+      'time_out_morning',
+      'time_out',
     ]);
     final timeInAfternoon = _pickFirst(row, [
       'timeInAfternoon',
       'timeinafternoon',
+      'time_in_afternoon',
     ]);
     final timeOutAfternoon = _pickFirst(row, [
       'timeOutAfternoon',
       'timeoutafternoon',
+      'time_out_afternoon',
     ]);
     final firstIn = !_isBlank(timeInMorning)
         ? timeInMorning
@@ -185,6 +204,60 @@ class _DashboardPageState extends State<DashboardPage> {
       timeLogs: '$firstIn | $lastOut',
       status: status,
       isComplete: status == 'COMPLETE',
+    );
+  }
+
+  void _showScanStatusModalIfNeeded() {
+    if (_shownScanStatusModal) return;
+    final typeRaw = (widget.attendanceType ?? '').trim();
+    if (typeRaw.isEmpty) return;
+    _shownScanStatusModal = true;
+    final type = typeRaw.toUpperCase();
+
+    late final _ScanStatusDialogModel model;
+    if (type == 'TIME IN') {
+      model = const _ScanStatusDialogModel(
+        title: 'TIME IN SUCCESSFUL',
+        message:
+            'Your time in has been recorded successfully. Wishing you a productive day!',
+        buttonLabel: 'PROCEED',
+        theme: _ScanStatusTheme.success,
+      );
+    } else if (type == 'TIME OUT') {
+      model = const _ScanStatusDialogModel(
+        title: 'TIME OUT SUCCESSFUL',
+        message:
+            'Your time has been recorded successfully. Wishing you a productive day!',
+        buttonLabel: 'PROCEED',
+        theme: _ScanStatusTheme.success,
+      );
+    } else if (type == 'ALREADY TIME IN') {
+      model = const _ScanStatusDialogModel(
+        title: 'ALREADY TIMED IN',
+        message: 'You have already timed in for today.',
+        buttonLabel: 'OKIEEE',
+        theme: _ScanStatusTheme.info,
+      );
+    } else if (type == 'ALREADY TIME OUT') {
+      model = const _ScanStatusDialogModel(
+        title: 'ALREADY TIMED OUT',
+        message: 'You have already timed out for today.',
+        buttonLabel: 'OKIEEE',
+        theme: _ScanStatusTheme.info,
+      );
+    } else {
+      model = const _ScanStatusDialogModel(
+        title: 'TIME UNSUCCESSFUL',
+        message: 'We couldn\'t process your request. Please try again.',
+        buttonLabel: 'RETRY',
+        theme: _ScanStatusTheme.error,
+      );
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ScanStatusDialog(model: model),
     );
   }
 
@@ -1032,6 +1105,168 @@ class _DashboardRisingFadeParticleState
           ),
         );
       },
+    );
+  }
+}
+
+enum _ScanStatusTheme { success, info, error }
+
+class _ScanStatusDialogModel {
+  const _ScanStatusDialogModel({
+    required this.title,
+    required this.message,
+    required this.buttonLabel,
+    required this.theme,
+  });
+
+  final String title;
+  final String message;
+  final String buttonLabel;
+  final _ScanStatusTheme theme;
+}
+
+class _ScanStatusDialog extends StatelessWidget {
+  const _ScanStatusDialog({required this.model});
+
+  final _ScanStatusDialogModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final w = size.width;
+    final h = size.height;
+
+    Color ringOuter;
+    Color ringInner;
+    Color iconBg;
+    IconData icon;
+    Color buttonBg;
+    Color buttonBorder;
+    Color buttonText;
+
+    switch (model.theme) {
+      case _ScanStatusTheme.success:
+        ringOuter = const Color(0xFFE5FEEA);
+        ringInner = const Color(0xFFC9FBD4);
+        iconBg = const Color(0xFF8EF4A5);
+        icon = Icons.check;
+        buttonBg = const Color(0xFFA3FFAE);
+        buttonBorder = const Color(0xFF60D56E);
+        buttonText = const Color(0xFF2E8C39);
+        break;
+      case _ScanStatusTheme.info:
+        ringOuter = const Color(0xFFE8F4FF);
+        ringInner = const Color(0xFFD7ECFF);
+        iconBg = const Color(0xFFAED7FF);
+        icon = Icons.access_time;
+        buttonBg = const Color(0xFFAED3FF);
+        buttonBorder = const Color(0xFF5AA6FF);
+        buttonText = const Color(0xFF1D7DE9);
+        break;
+      case _ScanStatusTheme.error:
+        ringOuter = const Color(0xFFFFEBEB);
+        ringInner = const Color(0xFFFFD4D4);
+        iconBg = const Color(0xFFFFA6A6);
+        icon = Icons.close;
+        buttonBg = const Color(0xFFFFB3B3);
+        buttonBorder = const Color(0xFFFF6B6B);
+        buttonText = const Color(0xFFB33A3A);
+        break;
+    }
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: w * 0.74,
+        constraints: BoxConstraints(maxWidth: 760, minHeight: h * 0.22),
+        padding: EdgeInsets.symmetric(
+          horizontal: w * 0.03,
+          vertical: h * 0.025,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(color: ringOuter, shape: BoxShape.circle),
+              child: Center(
+                child: Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: ringInner,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: iconBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(icon, color: Colors.black87, size: 16),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(height: h * 0.014),
+            Text(
+              model.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontWeight: FontWeight.w800,
+                fontSize: 28,
+                color: Color(0xFF10152A),
+              ),
+            ),
+            SizedBox(height: h * 0.008),
+            Text(
+              model.message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 24,
+                color: Color(0xFF4A516A),
+                height: 1.25,
+              ),
+            ),
+            SizedBox(height: h * 0.018),
+            SizedBox(
+              width: w * 0.26,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: buttonBg,
+                  foregroundColor: buttonText,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(color: buttonBorder),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(
+                  model.buttonLabel,
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

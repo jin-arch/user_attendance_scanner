@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,6 +11,7 @@ import '../services/local_db.dart';
 import '../controllers/home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
 import 'dashboard_page.dart';
+import 'enrollment_page.dart';
 import 'loading_page.dart';
 
 class _SiteOption {
@@ -62,7 +64,19 @@ class _PendingTimeLog {
   final String? timeOutAfternoon;
 }
 
-enum _HomeUiMode { scanner, portal, enroll }
+class _ScanActionGate {
+  const _ScanActionGate({
+    required this.blocked,
+    this.label,
+    this.message,
+  });
+
+  final bool blocked;
+  final String? label;
+  final String? message;
+}
+
+enum _HomeUiMode { scanner, portal }
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -103,7 +117,10 @@ class _HomePageState extends State<HomePage> {
   Timer? _scanTimer;
   Timer? _liveSyncTimer;
   Timer? _portalAutoReturnTimer;
+  Timer? _deviceHealthTimer;
   bool _isLiveSyncRunning = false;
+  int _portalSessionToken = 0;
+  String? _lastHrisError;
   _ScanResult? _lastResult;
   bool _showResult = false;
   final Map<int, _EmployeeEntry> _employeeDb = {};
@@ -134,12 +151,28 @@ class _HomePageState extends State<HomePage> {
         _employeeDb.clear();
         _employeeDbByFid.clear();
         _portalAutoReturnTimer?.cancel();
-        _stopLiveDbSync();
+        // Keep API → SQLite sync running when scanner disconnects.
         _stopScanLoop();
       };
       _device.onTemplateExtracted = (template, size) {
         if (_controller.isScanning.value) _onTemplateReady(template);
       };
+    }
+
+    // Desktop (Windows) does not reliably emit attach/detach callbacks.
+    // Keep controller state aligned with the actual device connection.
+    if (ZKTecoUSB.isWindowsPlatform) {
+      _deviceHealthTimer?.cancel();
+      _deviceHealthTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        final actualConnected = _device.isConnected;
+        final uiConnected = _controller.biometricConnected.value;
+        if (uiConnected != actualConnected) {
+          _controller.setConnected(actualConnected);
+          if (!actualConnected) {
+            _stopScanLoop();
+          }
+        }
+      });
     }
   }
 
@@ -496,6 +529,8 @@ class _HomePageState extends State<HomePage> {
     _scanTimer?.cancel();
     _portalAutoReturnTimer?.cancel();
     _stopLiveDbSync();
+    _deviceHealthTimer?.cancel();
+    _deviceHealthTimer = null;
     _device.dispose();
     if (Get.isRegistered<HomePageController>()) {
       Get.delete<HomePageController>();
@@ -506,6 +541,14 @@ class _HomePageState extends State<HomePage> {
   /// Pure async connect + sync — NO dialogs, NO Navigator calls.
   /// Safe to run as the loadFuture inside LoadingPage.
   Future<void> _connectAndSync() async {
+    // Server sync does not require the biometric device. Run first so employees
+    // / timelogs / queued HRIS replay work even if USB open fails.
+    final siteId = _selectedSiteId;
+    if (siteId != null && siteId.isNotEmpty) {
+      await _runBackgroundSyncTick();
+      _startLiveDbSync();
+    }
+
     _controller.startSearching('Searching for device...');
     try {
       if (ZKTecoUSB.isAndroidPlatform) {
@@ -514,6 +557,15 @@ class _HomePageState extends State<HomePage> {
           _controller.stopSearching(
             env['reason']?.toString() ??
                 'SDK not compatible. Ensure a physical Android device with the scanner attached.',
+          );
+          return;
+        }
+        // USB list does not require native SDK; fail fast if nothing is on the bus.
+        final countUsb = await _device.getDeviceCountAsync();
+        if (countUsb == 0) {
+          _controller.stopSearching(
+            'No ZKTeco reader on USB. Use OTG, try another cable/port, '
+            'and grant permission when Android prompts.',
           );
           return;
         }
@@ -532,7 +584,9 @@ class _HomePageState extends State<HomePage> {
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
         _controller.stopSearching(
-          'No device found. Plug in the scanner and retry.',
+          ZKTecoUSB.isAndroidPlatform
+              ? 'Reader not detected after SDK init. Reconnect USB and retry.'
+              : 'No device found. Plug in the scanner and retry.',
         );
         await _device.terminateSdk();
         return;
@@ -563,11 +617,14 @@ class _HomePageState extends State<HomePage> {
         status: 'Connected: ${serial ?? "Unknown"}$siteText',
       );
 
-      // Sync API -> SQLite, then always load/register from SQLite.
+      // Push latest API employees into SQLite and register on scanner.
       await _loadAndRegisterTemplates();
-      await _fetchAndCacheSiteTimeLogs();
-      await _syncPendingHrisQueue();
-      _startLiveDbSync();
+    } on PlatformException catch (e) {
+      _controller.stopSearching(
+        e.message != null && e.message!.isNotEmpty
+            ? '${e.code}: ${e.message}'
+            : e.code,
+      );
     } catch (e) {
       _controller.stopSearching('Error: $e');
     }
@@ -754,24 +811,33 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Sync employees + timelogs + HRIS queue from server; load templates onto
+  /// the scanner only while the device is connected.
+  Future<void> _runBackgroundSyncTick() async {
+    if (!mounted || _isLiveSyncRunning) return;
+    final siteId = _selectedSiteId;
+    if (siteId == null || siteId.isEmpty) return;
+
+    _isLiveSyncRunning = true;
+    try {
+      await _syncEmployeesFromApiToLocalDb(siteId);
+      await _fetchAndCacheSiteTimeLogs();
+      await _syncPendingHrisQueue();
+      if (_device.isConnected) {
+        await _loadFromLocalDb(siteId);
+      }
+    } catch (e) {
+      debugPrint('_runBackgroundSyncTick: $e');
+    } finally {
+      _isLiveSyncRunning = false;
+    }
+  }
+
   void _startLiveDbSync() {
     _liveSyncTimer?.cancel();
-    _liveSyncTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
-      if (!mounted || _isLiveSyncRunning || !_device.isConnected) return;
-      final siteId = _selectedSiteId;
-      if (siteId == null || siteId.isEmpty) return;
-
-      _isLiveSyncRunning = true;
-      try {
-        await _syncEmployeesFromApiToLocalDb(siteId);
-        await _loadFromLocalDb(siteId);
-        await _fetchAndCacheSiteTimeLogs();
-        await _syncPendingHrisQueue();
-      } catch (e) {
-        debugPrint('_startLiveDbSync tick: $e');
-      } finally {
-        _isLiveSyncRunning = false;
-      }
+    // First sync is awaited in _connectAndSync; timer only repeats.
+    _liveSyncTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      unawaited(_runBackgroundSyncTick());
     });
   }
 
@@ -782,6 +848,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadFromLocalDb(String siteId) async {
+    if (!_device.isConnected) return;
     try {
       final rows = await LocalDb.getEmployeesBySite(siteId);
       _employeeDb.clear();
@@ -839,6 +906,29 @@ class _HomePageState extends State<HomePage> {
 
         final decoded = jsonDecode(body);
         final rows = _extractSiteRows(decoded);
+        if (rows.isEmpty) {
+          // Avoid wiping local cache when server temporarily returns no rows.
+          return;
+        }
+        final mappableRows = rows.where((row) {
+          final employeeId = (row['employee_id'] ??
+                  row['employeeID'] ??
+                  row['employeeId'] ??
+                  row['employeeid'] ??
+                  row['companyID'] ??
+                  row['companyId'] ??
+                  row['company_id'] ??
+                  row['emp_id'] ??
+                  row['empid'] ??
+                  row['EMPID'])
+              ?.toString()
+              .trim();
+          return employeeId != null && employeeId.isNotEmpty;
+        }).length;
+        if (mappableRows == 0) {
+          // Endpoint payload shape changed or incomplete; keep previous cache.
+          return;
+        }
         await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
       } finally {
         client.close(force: true);
@@ -880,8 +970,25 @@ class _HomePageState extends State<HomePage> {
 
   void _scheduleScannerResume() {
     _portalAutoReturnTimer?.cancel();
-    _portalAutoReturnTimer = Timer(const Duration(seconds: 6), () {
+    final token = ++_portalSessionToken;
+    _portalAutoReturnTimer = Timer(const Duration(seconds: 50), () {
+      if (token != _portalSessionToken) return;
       if (!mounted) return;
+      setState(() {
+        _uiMode = _HomeUiMode.scanner;
+        _matchedEmployee = null;
+        _matchedAt = null;
+        _matchedAttendanceType = null;
+      });
+      if (_device.isConnected) {
+        _startScanLoop();
+      }
+    });
+    // Fail-safe in case timer callback is skipped during heavy UI work.
+    Future<void>.delayed(const Duration(seconds: 65), () {
+      if (!mounted) return;
+      if (token != _portalSessionToken) return;
+      if (_uiMode != _HomeUiMode.portal) return;
       setState(() {
         _uiMode = _HomeUiMode.scanner;
         _matchedEmployee = null;
@@ -919,6 +1026,7 @@ class _HomePageState extends State<HomePage> {
 
     if (employee != null) {
       final attendanceType = await _recordAttendance(employee.id);
+      unawaited(_fetchAndCacheSiteTimeLogs());
       if (!mounted) return;
       setState(() {
         _matchedEmployee = employee;
@@ -979,14 +1087,26 @@ class _HomePageState extends State<HomePage> {
     if (siteId == null) {
       return 'NO SITE';
     }
+    _lastHrisError = null;
 
-    final pending = await _buildPendingTimeLog(
+    // Pull latest server timelog first so pending IN/OUT decision uses
+    // current HRIS state (including multi-device usage).
+    await _fetchAndCacheSiteTimeLogs().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {},
+    );
+
+    var pending = await _buildPendingTimeLog(
       employeeId: employeeId,
       siteId: siteId,
       now: DateTime.now(),
     );
+    final gate = _scanActionGate(pending, DateTime.now());
+    if (gate.blocked) {
+      return gate.label ?? 'ALREADY TIME IN';
+    }
 
-    final requests = _buildAttendanceRequests(
+    var requests = _buildAttendanceRequests(
       siteId: siteId,
       employeeId: employeeId,
       pending: pending,
@@ -999,10 +1119,46 @@ class _HomePageState extends State<HomePage> {
       queryParams: primary.$2,
     ).timeout(const Duration(seconds: 5), onTimeout: () => false);
 
-    if (primarySent) {
+    var attendanceSaved = primarySent;
+    if (!attendanceSaved) {
+      // Some deployments require a timelog row to exist before update/timeIn|Out.
+      // Bootstrap by inserting the timelog, then retry the primary update once.
+      final seed = requests.where((r) => r.$1 == _insertTimeLogApiEndpoint);
+      if (seed.isNotEmpty) {
+        final seeded = await _sendHrisRequest(
+          endpoint: seed.first.$1,
+          queryParams: seed.first.$2,
+        ).timeout(const Duration(seconds: 5), onTimeout: () => false);
+        if (seeded) {
+          // Refresh after insert because server may assign/normalize timelogID.
+          await _fetchAndCacheSiteTimeLogs();
+          pending = await _buildPendingTimeLog(
+            employeeId: employeeId,
+            siteId: siteId,
+            now: DateTime.now(),
+          );
+          requests = _buildAttendanceRequests(
+            siteId: siteId,
+            employeeId: employeeId,
+            pending: pending,
+          );
+          final retriedPrimary = requests.first;
+          attendanceSaved = await _sendHrisRequest(
+            endpoint: retriedPrimary.$1,
+            queryParams: retriedPrimary.$2,
+          ).timeout(const Duration(seconds: 5), onTimeout: () => false);
+        }
+      }
+    }
+
+    if (attendanceSaved) {
       // Secondary requests (logs/audit) are important but should not change
       // the UI result when the core attendance record is already saved.
       for (final request in requests.skip(1)) {
+        if (request.$1 == _insertTimeLogApiEndpoint && !primarySent) {
+          // Already inserted during bootstrap step above.
+          continue;
+        }
         final sent = await _sendHrisRequest(
           endpoint: request.$1,
           queryParams: request.$2,
@@ -1014,7 +1170,27 @@ class _HomePageState extends State<HomePage> {
           );
         }
       }
-      return pending.code.startsWith('IN') ? 'TIME IN' : 'TIME OUT';
+      final attendanceLabel = pending.code.startsWith('IN')
+          ? 'TIME IN'
+          : 'TIME OUT';
+      await LocalDb.pushRealtimeTimelog(
+        siteId: siteId,
+        employeeId: employeeId,
+        row: {
+          'employee_id': employeeId,
+          'companyID': employeeId,
+          'timelogID': pending.timeLogId,
+          'timelog': pending.timeLogDate,
+          'remarks': pending.remarks,
+          'schedule': pending.schedule,
+          'timeInMorning': pending.timeInMorning ?? '',
+          'timeOutMorning': pending.timeOutMorning ?? '',
+          'timeInAfternoon': pending.timeInAfternoon ?? '',
+          'timeOutAfternoon': pending.timeOutAfternoon ?? '',
+          'code': pending.code,
+        },
+      );
+      return attendanceLabel;
     }
 
     // Primary write failed: queue everything for retry.
@@ -1035,6 +1211,9 @@ class _HomePageState extends State<HomePage> {
       return legacyType;
     }
 
+    if (_lastHrisError != null && _lastHrisError!.isNotEmpty) {
+      _controller.setStatus(_lastHrisError!);
+    }
     return 'QUEUED OFFLINE';
   }
 
@@ -1049,31 +1228,64 @@ class _HomePageState extends State<HomePage> {
       siteId: siteId,
       employeeId: employeeId,
     );
+    final cachedDateText =
+        (cached?['timelog'] ??
+                cached?['timeLogDate'] ??
+                cached?['timelog_date'] ??
+                cached?['datecaptured'] ??
+                cached?['datelog'] ??
+                '')
+            .toString();
+    final cachedDateOnly = _normalizeDateOnly(cachedDateText);
+    final useTodayCache = cachedDateOnly == date;
 
     final timeLogId =
-        (cached?['timelogID'] ??
-                cached?['timeLogID'] ??
-                cached?['timelog_id'] ??
-                '$employeeId-$date')
+        (useTodayCache
+                    ? (cached?['timelogID'] ??
+                        cached?['timeLogID'] ??
+                        cached?['timelog_id'])
+                    : null) ??
+            '$employeeId-$date'
             .toString();
     final remarks = (cached?['remarks'] ?? cached?['remark'] ?? '').toString();
-    final schedule = (cached?['schedule'] ?? cached?['schedCode'] ?? '')
+    final schedule = ((cached?['schedule'] ?? cached?['schedCode']) ?? '')
         .toString();
 
-    final existingInMorning = _isBlank(cached?['timeInMorning'])
+    final existingInMorning = (!useTodayCache)
         ? null
-        : '${cached?['timeInMorning']}';
-    final existingOutMorning = _isBlank(cached?['timeOutMorning'])
+        : (_pickFirstValue(cached, const [
+            'timeInMorning',
+            'timeinmorning',
+            'time_in_morning',
+            'time_in',
+          ]));
+    final existingOutMorning = (!useTodayCache)
         ? null
-        : '${cached?['timeOutMorning']}';
-    final existingInAfternoon = _isBlank(cached?['timeInAfternoon'])
+        : (_pickFirstValue(cached, const [
+            'timeOutMorning',
+            'timeoutmorning',
+            'time_out_morning',
+            'time_out',
+          ]));
+    final existingInAfternoon = (!useTodayCache)
         ? null
-        : '${cached?['timeInAfternoon']}';
-    final existingOutAfternoon = _isBlank(cached?['timeOutAfternoon'])
+        : (_pickFirstValue(cached, const [
+            'timeInAfternoon',
+            'timeinafternoon',
+            'time_in_afternoon',
+          ]));
+    final existingOutAfternoon = (!useTodayCache)
         ? null
-        : '${cached?['timeOutAfternoon']}';
+        : (_pickFirstValue(cached, const [
+            'timeOutAfternoon',
+            'timeoutafternoon',
+            'time_out_afternoon',
+          ]));
 
-    if (existingInMorning == null) {
+    final existingIn = existingInMorning ?? existingInAfternoon;
+    final existingOut = existingOutMorning ?? existingOutAfternoon;
+
+    if (existingIn == null) {
       return _PendingTimeLog(
         timeLogId: timeLogId,
         timeLogDate: date,
@@ -1081,35 +1293,23 @@ class _HomePageState extends State<HomePage> {
         schedule: schedule,
         code: 'IN_AM',
         timeInMorning: time,
-        timeOutMorning: existingOutMorning,
-        timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
+        timeOutMorning: null,
+        timeInAfternoon: null,
+        timeOutAfternoon: null,
       );
     }
-    if (existingOutMorning == null) {
+
+    if (existingOut == null) {
       return _PendingTimeLog(
         timeLogId: timeLogId,
         timeLogDate: date,
         remarks: remarks,
         schedule: schedule,
-        code: 'OUT_AM',
-        timeInMorning: existingInMorning,
+        code: 'OUT_PM',
+        timeInMorning: existingIn,
         timeOutMorning: time,
-        timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-    if (existingInAfternoon == null) {
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'IN_PM',
-        timeInMorning: existingInMorning,
-        timeOutMorning: existingOutMorning,
-        timeInAfternoon: time,
-        timeOutAfternoon: existingOutAfternoon,
+        timeInAfternoon: null,
+        timeOutAfternoon: null,
       );
     }
 
@@ -1118,12 +1318,77 @@ class _HomePageState extends State<HomePage> {
       timeLogDate: date,
       remarks: remarks,
       schedule: schedule,
-      code: 'OUT_PM',
-      timeInMorning: existingInMorning,
-      timeOutMorning: existingOutMorning,
-      timeInAfternoon: existingInAfternoon,
-      timeOutAfternoon: time,
+      code: 'ALREADY_OUT',
+      timeInMorning: existingIn,
+      timeOutMorning: existingOut,
+      timeInAfternoon: null,
+      timeOutAfternoon: null,
     );
+  }
+
+  _ScanActionGate _scanActionGate(_PendingTimeLog pending, DateTime now) {
+    if (pending.code == 'OUT_PM') {
+      final parsedIn = _parseClockTimeToday(
+        pending.timeInMorning ?? pending.timeInAfternoon,
+        now,
+      );
+      if (parsedIn != null && now.difference(parsedIn).inMinutes < 20) {
+        return const _ScanActionGate(
+          blocked: true,
+          label: 'ALREADY TIME IN',
+          message: 'Please wait 20 minutes before time out.',
+        );
+      }
+    }
+    if (pending.code == 'ALREADY_OUT') {
+      return const _ScanActionGate(
+        blocked: true,
+        label: 'ALREADY TIME OUT',
+        message: 'You already timed out for today.',
+      );
+    }
+    return const _ScanActionGate(blocked: false);
+  }
+
+  DateTime? _parseClockTimeToday(String? text, DateTime now) {
+    if (text == null) return null;
+    final clean = text.trim();
+    if (clean.isEmpty) return null;
+    final parts = clean.split(':');
+    if (parts.length < 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    final second = parts.length > 2 ? int.tryParse(parts[2]) ?? 0 : 0;
+    if (hour == null || minute == null) return null;
+    return DateTime(now.year, now.month, now.day, hour, minute, second);
+  }
+
+  String? _pickFirstValue(Map<String, dynamic>? row, List<String> keys) {
+    if (row == null) return null;
+    for (final key in keys) {
+      final raw = row[key];
+      if (_isBlank(raw)) continue;
+      return '$raw';
+    }
+    return null;
+  }
+
+  String _normalizeDateOnly(String raw) {
+    final input = raw.trim();
+    if (input.isEmpty) return '';
+    final parsed = DateTime.tryParse(input);
+    if (parsed != null) return _formatDateOnly(parsed);
+    if (input.contains(' ')) {
+      final first = input.split(' ').first.trim();
+      final parsedFirst = DateTime.tryParse(first);
+      if (parsedFirst != null) return _formatDateOnly(parsedFirst);
+    }
+    if (input.contains('T')) {
+      final first = input.split('T').first.trim();
+      final parsedFirst = DateTime.tryParse(first);
+      if (parsedFirst != null) return _formatDateOnly(parsedFirst);
+    }
+    return input.length >= 10 ? input.substring(0, 10) : input;
   }
 
   List<(String, Map<String, String>)> _buildAttendanceRequests({
@@ -1191,15 +1456,14 @@ class _HomePageState extends State<HomePage> {
     required String endpoint,
     required Map<String, String> queryParams,
   }) async {
-    final uri = Uri.parse(
-      '$_apiBaseUrl$endpoint',
-    ).replace(queryParameters: queryParams);
+    final baseUri = Uri.parse('$_apiBaseUrl$endpoint');
+    final getUri = baseUri.replace(queryParameters: queryParams);
 
     try {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 12);
       try {
-        final request = await client.getUrl(uri);
+        final request = await client.getUrl(getUri);
         final basicToken = base64Encode(
           utf8.encode('$_apiUsername:$_apiPassword'),
         );
@@ -1210,13 +1474,70 @@ class _HomePageState extends State<HomePage> {
           'Basic $basicToken',
         );
         final response = await request.close();
-        await response.transform(utf8.decoder).join();
-        return response.statusCode >= 200 && response.statusCode < 300;
+        final body = await response.transform(utf8.decoder).join();
+        final ok = response.statusCode >= 200 && response.statusCode < 300;
+        if (!ok &&
+            response.statusCode == 405 &&
+            body.toUpperCase().contains('POST')) {
+          // Backend requires POST for this endpoint; retry automatically.
+          final postRequest = await client.postUrl(getUri);
+          postRequest.headers.set(HttpHeaders.acceptHeader, 'application/json');
+          postRequest.headers.set(
+            HttpHeaders.userAgentHeader,
+            'FAST-Attendance/1.0',
+          );
+          postRequest.headers.set(
+            HttpHeaders.authorizationHeader,
+            'Basic $basicToken',
+          );
+          postRequest.headers.set(
+            HttpHeaders.contentTypeHeader,
+            'application/json',
+          );
+          final payload = jsonEncode(queryParams);
+          postRequest.contentLength = utf8.encode(payload).length;
+          postRequest.write(payload);
+          final postResponse = await postRequest.close();
+          final postBody = await postResponse.transform(utf8.decoder).join();
+          final postOk =
+              postResponse.statusCode >= 200 && postResponse.statusCode < 300;
+          if (!postOk) {
+            final compactBody = postBody.replaceAll(RegExp(r'\s+'), ' ').trim();
+            final shortBody = compactBody.length > 220
+                ? '${compactBody.substring(0, 220)}...'
+                : compactBody;
+            _lastHrisError =
+                'HRIS $endpoint POST failed (${postResponse.statusCode}): $shortBody';
+            debugPrint(_lastHrisError);
+          }
+          if (postOk &&
+              (endpoint == _timeInApiEndpoint ||
+                  endpoint == _timeOutApiEndpoint)) {
+            debugPrint('HRIS $endpoint POST success: $queryParams');
+          }
+          return postOk;
+        }
+        if (!ok) {
+          final compactBody = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+          final shortBody = compactBody.length > 220
+              ? '${compactBody.substring(0, 220)}...'
+              : compactBody;
+          _lastHrisError =
+              'HRIS $endpoint failed (${response.statusCode}): $shortBody';
+          debugPrint(_lastHrisError);
+        }
+        if (ok &&
+            (endpoint == _timeInApiEndpoint ||
+                endpoint == _timeOutApiEndpoint)) {
+          debugPrint('HRIS $endpoint success: $queryParams');
+        }
+        return ok;
       } finally {
         client.close(force: true);
       }
     } catch (e) {
-      debugPrint('_sendHrisRequest($endpoint): $e');
+      _lastHrisError = 'HRIS $endpoint error: $e';
+      debugPrint(_lastHrisError);
       return false;
     }
   }
@@ -1291,6 +1612,17 @@ class _HomePageState extends State<HomePage> {
       return int.tryParse(digitsMatch.group(0)!);
     }
     return null;
+  }
+
+  String _normalizeEmployeeId(String raw) {
+    final trimmed = raw.trim().toUpperCase();
+    if (trimmed.isEmpty) return '';
+    final digitsOnly = trimmed.replaceAll(RegExp(r'\D'), '');
+    if (digitsOnly.isNotEmpty) {
+      final noLeadingZeros = digitsOnly.replaceFirst(RegExp(r'^0+'), '');
+      return noLeadingZeros.isEmpty ? '0' : noLeadingZeros;
+    }
+    return trimmed.replaceAll(RegExp(r'\s+'), '');
   }
 
   Future<String?> _sendLegacyAttendance({
@@ -1416,7 +1748,14 @@ class _HomePageState extends State<HomePage> {
           });
           if (_device.isConnected) _startScanLoop();
         },
-        onEnrollNowTap: () => setState(() => _uiMode = _HomeUiMode.enroll),
+        onEnrollNowTap: () {
+          _portalAutoReturnTimer?.cancel();
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const EnrollmentPage(),
+            ),
+          );
+        },
       );
     }
 
@@ -1685,7 +2024,7 @@ class _HomePageState extends State<HomePage> {
                             GestureDetector(
                               onTap:
                                   (_controller.isSearching.value ||
-                                      _controller.biometricConnected.value)
+                                      _device.isConnected)
                                   ? null
                                   : _searchAndConnect,
                               child: _buildStatusButton(
@@ -1894,10 +2233,12 @@ class _HomePageState extends State<HomePage> {
     required String label,
     required IconData icon,
     bool enabled = true,
+    ValueChanged<String>? onChanged,
   }) {
     return TextField(
       controller: controller,
       enabled: enabled,
+      onChanged: onChanged,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
@@ -1939,6 +2280,9 @@ class _HomePageState extends State<HomePage> {
     bool isCapturing = false;
     bool isComplete = false;
     String statusMsg = 'Enter employee details, then press CAPTURE.';
+    bool detectedExisting = false;
+    String detectedExistingName = '';
+    int detectRequestId = 0;
 
     await showDialog<void>(
       context: context,
@@ -1946,6 +2290,59 @@ class _HomePageState extends State<HomePage> {
       builder: (dlgCtx) {
         return StatefulBuilder(
           builder: (_, setDlg) {
+            Future<void> detectEmployeeById() async {
+              final siteId = _selectedSiteId;
+              final input = empIdCtrl.text.trim();
+              final requestId = ++detectRequestId;
+
+              if (siteId == null || input.isEmpty) {
+                if (!mounted || requestId != detectRequestId) return;
+                setDlg(() {
+                  detectedExisting = false;
+                  detectedExistingName = '';
+                  if (!isCapturing && !isComplete) {
+                    statusMsg = 'Enter employee details, then press CAPTURE.';
+                  }
+                });
+                return;
+              }
+
+              final normalizedInput = _normalizeEmployeeId(input);
+              final rows = await LocalDb.getEmployeesBySite(siteId);
+              Map<String, dynamic>? matched;
+              for (final row in rows) {
+                final rowEmpId = (row['employee_id'] ?? '').toString();
+                if (_normalizeEmployeeId(rowEmpId) == normalizedInput) {
+                  matched = row;
+                  break;
+                }
+              }
+
+              if (!mounted || requestId != detectRequestId) return;
+              if (matched != null) {
+                final name = (matched['employee_name'] ?? '').toString().trim();
+                setDlg(() {
+                  detectedExisting = true;
+                  detectedExistingName = name.isNotEmpty
+                      ? name
+                      : (matched!['employee_id'] ?? input).toString();
+                  if (!isCapturing && !isComplete) {
+                    empNameCtrl.text = detectedExistingName;
+                    statusMsg =
+                        'Existing employee detected. Capture will replace fingerprint.';
+                  }
+                });
+              } else {
+                setDlg(() {
+                  detectedExisting = false;
+                  detectedExistingName = '';
+                  if (!isCapturing && !isComplete) {
+                    statusMsg = 'New employee. Press CAPTURE to enroll.';
+                  }
+                });
+              }
+            }
+
             Future<void> doCapture() async {
               final empId = empIdCtrl.text.trim();
               if (empId.isEmpty) {
@@ -1967,6 +2364,47 @@ class _HomePageState extends State<HomePage> {
                 Uint8List mergedTemplate,
                 int enrolledFid,
               ) async {
+                var replacedCount = 0;
+                if (siteId != null) {
+                  final normalizedEmpId = _normalizeEmployeeId(empId);
+                  final allRows = await LocalDb.getEmployeesBySite(siteId);
+                  final existingRows = allRows.where((row) {
+                    final rowFid = row['fid'] as int?;
+                    final rowEmpId = (row['employee_id'] ?? '').toString();
+                    final normalizedRowEmpId = _normalizeEmployeeId(rowEmpId);
+                    if (rowFid != null && rowFid == enrolledFid) return true;
+                    return normalizedEmpId.isNotEmpty &&
+                        normalizedRowEmpId == normalizedEmpId;
+                  }).toList();
+                  replacedCount = existingRows.length;
+
+                  for (final row in existingRows) {
+                    final oldFid = row['fid'] as int?;
+                    if (oldFid == null) continue;
+
+                    try {
+                      await _device.removeFingerprint(oldFid.toString());
+                    } catch (_) {}
+                    _employeeDb.remove(oldFid);
+                    _employeeDbByFid.remove(oldFid.toString());
+                  }
+                  for (final row in existingRows) {
+                    final rowEmpId = (row['employee_id'] ?? '').toString();
+                    final oldFid = row['fid'] as int?;
+                    if (rowEmpId.isNotEmpty) {
+                      await LocalDb.deleteEmployeesBySiteAndEmployeeId(
+                        siteId: siteId,
+                        employeeId: rowEmpId,
+                      );
+                    } else if (oldFid != null) {
+                      await LocalDb.deleteEmployeesBySiteAndEmployeeId(
+                        siteId: siteId,
+                        employeeId: empId,
+                      );
+                    }
+                  }
+                }
+
                 await _device.registerFingerprint(enrolledFid, mergedTemplate);
                 final entry = _EmployeeEntry(
                   id: empId,
@@ -2000,8 +2438,12 @@ class _HomePageState extends State<HomePage> {
                   isComplete = true;
                   isCapturing = false;
                   statusMsg = saved
-                      ? 'Enrollment complete — employee registered.'
-                      : 'Saved on scanner, but server update failed.';
+                      ? (replacedCount > 0
+                            ? 'Fingerprint updated for existing employee.'
+                            : 'Enrollment complete — employee registered.')
+                      : (replacedCount > 0
+                            ? 'Fingerprint updated locally, but server update failed.'
+                            : 'Saved on scanner, but server update failed.');
                 });
               }
 
@@ -2148,6 +2590,9 @@ class _HomePageState extends State<HomePage> {
                       label: 'Employee ID',
                       icon: Icons.badge_outlined,
                       enabled: !isCapturing && !isComplete,
+                      onChanged: (_) {
+                        unawaited(detectEmployeeById());
+                      },
                     ),
                     const SizedBox(height: 10),
                     _enrollTextField(
@@ -2157,6 +2602,29 @@ class _HomePageState extends State<HomePage> {
                       enabled: !isCapturing && !isComplete,
                     ),
                     const SizedBox(height: 18),
+                    if (detectedExisting) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0x1A4CAF50),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF4CAF50)),
+                        ),
+                        child: Text(
+                          'Detected: $detectedExistingName\nThis capture will replace the current fingerprint.',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     // Capture progress dots
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,

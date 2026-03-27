@@ -221,15 +221,22 @@ class ZKTecoUSB {
 
   /// Get number of connected devices
   Future<int> getDeviceCountAsync() async {
-    if (!_sdkInitialized) return 0;
-    
     try {
       if (isAndroidPlatform) {
+        // USB enumeration does not require native libs; run before initSdk so we can
+        // tell the user "scanner plugged" vs "SDK/native load failed".
         final count = await _channel.invokeMethod<int>('getDeviceCount');
         return count ?? 0;
-      } else {
-        return _sdk?.getDeviceCount() ?? 0;
       }
+    } catch (e) {
+      debugPrint('getDeviceCount (Android) error: $e');
+      return 0;
+    }
+
+    if (!_sdkInitialized) return 0;
+
+    try {
+      return _sdk?.getDeviceCount() ?? 0;
     } catch (e) {
       debugPrint('getDeviceCount error: $e');
       return 0;
@@ -255,20 +262,50 @@ class ZKTecoUSB {
       debugPrint('Opening device $index...');
       
       if (isAndroidPlatform) {
-        final result = await _channel.invokeMethod<bool>('openDevice', {'index': index});
-        _deviceOpened = result ?? false;
-        
+        try {
+          final result = await _channel
+              .invokeMethod<bool>('openDevice', {'index': index})
+              .timeout(
+                const Duration(seconds: 120),
+                onTimeout: () {
+                  debugPrint(
+                    'openDevice timed out (waiting for USB permission?).',
+                  );
+                  throw TimeoutException('openDevice timed out');
+                },
+              );
+          _deviceOpened = result ?? false;
+        } on PlatformException catch (e) {
+          debugPrint(
+            'openDevice PlatformException: ${e.code} ${e.message} ${e.details}',
+          );
+          _deviceOpened = false;
+          return false;
+        } on TimeoutException catch (e) {
+          debugPrint('openDevice: $e');
+          _deviceOpened = false;
+          return false;
+        }
+
         if (_deviceOpened) {
           // Start capture immediately on Android
-          await _channel.invokeMethod('startCapture');
-          
-          // Get device info
-          final info = await _channel.invokeMethod<Map>('getDeviceInfo');
-          if (info != null) {
-            _serialNumber = info['serialNumber'] as String?;
+          try {
+            await _channel.invokeMethod('startCapture');
+          } on PlatformException catch (e) {
+            debugPrint(
+              'startCapture PlatformException: ${e.code} ${e.message}',
+            );
           }
+
+          // Get device info
+          try {
+            final info = await _channel.invokeMethod<Map>('getDeviceInfo');
+            if (info != null) {
+              _serialNumber = info['serialNumber'] as String?;
+            }
+          } catch (_) {}
         }
-        
+
         debugPrint('Android device opened: $_deviceOpened');
         return _deviceOpened;
       } else {

@@ -20,7 +20,8 @@ class LoadingPage extends StatefulWidget {
 class _LoadingPageState extends State<LoadingPage>
     with SingleTickerProviderStateMixin {
   int _progress = 0;
-  late AnimationController _progressController;
+  Timer? _progressTimer;
+  bool _loadFinished = false;
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
   static const String _fingerprintAsset =
@@ -29,18 +30,27 @@ class _LoadingPageState extends State<LoadingPage>
   @override
   void initState() {
     super.initState();
-    _progressController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2500),
-    )..addListener(() {
-        if (!mounted) return;
-        setState(() {
-          _progress = (_progressController.value * 100).round().clamp(0, 100);
-        });
-      });
-    _progressController.forward();
+    _startProgressLoop();
 
     unawaited(_run());
+  }
+
+  void _startProgressLoop() {
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 70), (_) {
+      if (!mounted || _loadFinished) return;
+      if (_progress >= 95) return;
+      final step = (_progress < 50)
+          ? 2
+          : (_progress < 80)
+              ? 1
+              : 0;
+      if (step > 0) {
+        setState(() {
+          _progress = (_progress + step).clamp(0, 95);
+        });
+      }
+    });
   }
 
   Future<void> _run() async {
@@ -50,19 +60,21 @@ class _LoadingPageState extends State<LoadingPage>
       debugPrint('LoadingPage loadFuture error: $e');
     }
     if (!mounted) return;
-    if (_progressController.value < 1.0) {
-      _progressController.animateTo(1.0,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut);
+    _loadFinished = true;
+    _progressTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _progress = 100;
+      });
     }
-    await Future<void>.delayed(const Duration(milliseconds: 450));
+    await Future<void>.delayed(const Duration(milliseconds: 220));
     if (!mounted) return;
     Navigator.of(context).pop();
   }
 
   @override
   void dispose() {
-    _progressController.dispose();
+    _progressTimer?.cancel();
     super.dispose();
   }
 

@@ -32,10 +32,21 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.user_attendance_scanner/zkfinger"
     private val TAG = "ZKFingerPlugin"
     
-    // ZKTeco USB constants
+    // ZKTeco USB vendor (many readers share 0x1B55; product IDs vary by model).
     private val ZKTECO_VID = 0x1b55
     private val LIVE20R_PID = 0x0120
     private val LIVE10R_PID = 0x0124
+
+    /** Any USB device with ZKTeco vendor ID is treated as a supported reader. */
+    private fun isZKTecoReader(device: UsbDevice): Boolean {
+        if (device.vendorId != ZKTECO_VID) return false
+        val pid = device.productId
+        val known = pid == LIVE20R_PID || pid == LIVE10R_PID
+        if (!known) {
+            Log.w(TAG, "ZKTeco USB device with less common PID=0x${pid.toString(16)} — attempting open anyway")
+        }
+        return true
+    }
     
     // Native library availability flag
     private var nativeLibsAvailable = false
@@ -301,8 +312,7 @@ class MainActivity : FlutterActivity() {
             val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
             var count = 0
             for (device in usbManager.deviceList.values) {
-                if (device.vendorId == ZKTECO_VID && 
-                    (device.productId == LIVE20R_PID || device.productId == LIVE10R_PID)) {
+                if (isZKTecoReader(device)) {
                     count++
                     usbPid = device.productId
                 }
@@ -330,8 +340,7 @@ class MainActivity : FlutterActivity() {
             var targetDevice: UsbDevice? = null
             
             for (device in usbManager.deviceList.values) {
-                if (device.vendorId == ZKTECO_VID && 
-                    (device.productId == LIVE20R_PID || device.productId == LIVE10R_PID)) {
+                if (isZKTecoReader(device)) {
                     targetDevice = device
                     usbPid = device.productId
                     break
