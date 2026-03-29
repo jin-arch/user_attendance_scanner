@@ -44,7 +44,7 @@ class _LoadingPageState extends State<LoadingPage>
           ? 2
           : (_progress < 80)
               ? 1
-              : 0;
+              : 1;
       if (step > 0) {
         setState(() {
           _progress = (_progress + step).clamp(0, 95);
@@ -62,12 +62,14 @@ class _LoadingPageState extends State<LoadingPage>
     if (!mounted) return;
     _loadFinished = true;
     _progressTimer?.cancel();
-    if (mounted) {
+    while (mounted && _progress < 100) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
       setState(() {
-        _progress = 100;
+        _progress = (_progress + 2).clamp(0, 100);
       });
     }
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await Future<void>.delayed(const Duration(milliseconds: 420));
     if (!mounted) return;
     Navigator.of(context).pop();
   }

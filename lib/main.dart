@@ -1,4 +1,4 @@
-﻿
+
 import 'dart:io' show Platform;
 import 'dart:async';
 import 'package:device_preview/device_preview.dart';

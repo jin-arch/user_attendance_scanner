@@ -82,16 +82,16 @@ class ApiService {
 
   // Attendance Time In
   Future<bool> timeIn(Map<String, dynamic> timeLogModel, String code) async {
-    final uri = Uri.parse('${baseUrl}update/timeLog/timeIn').replace(
-      queryParameters: {
-        'passedID': 'null',
-        'timelogID': '${timeLogModel['timeLogID'] ?? ''}',
-        'remarks': '${timeLogModel['remarks'] ?? ''}',
-        'timelog': '${timeLogModel['timelog'] ?? ''}',
-        'timeInMorning': '${timeLogModel['timeInMorning'] ?? ''}',
-        'timeInAfternoon': '${timeLogModel['timeInAfternoon'] ?? ''}',
-        'code': code,
-      },
+    // Build URL using string concatenation for code param
+    final uri = Uri.parse(
+      '${baseUrl}update/timeLog/timeIn'
+      '?passedID=null'
+      '&timelogID=${timeLogModel['timeLogID'] ?? ''}'
+      '&remarks=${timeLogModel['remarks'] ?? ''}'
+      '&timelog=${timeLogModel['timelog'] ?? ''}'
+      '&timeInMorning=${timeLogModel['timeInMorning'] ?? ''}'
+      '&timeInAfternoon=${timeLogModel['timeInAfternoon'] ?? ''}'
+      '&code=$code'
     );
 
     final response = await http.get(uri, headers: _basicHeaders());
@@ -100,16 +100,16 @@ class ApiService {
 
   // Attendance Time Out
   Future<bool> timeOut(Map<String, dynamic> timeLogModel, String code) async {
-    final uri = Uri.parse('${baseUrl}update/timeLog/timeOut').replace(
-      queryParameters: {
-        'passedID': 'null',
-        'timelogID': '${timeLogModel['timeLogID'] ?? ''}',
-        'timelog': '${timeLogModel['timelog'] ?? ''}',
-        'timeOutMorning': '${timeLogModel['timeOutMorning'] ?? ''}',
-        'timeOutAfternoon': '${timeLogModel['timeOutAfternoon'] ?? ''}',
-        'code': code,
-        'remarks': '${timeLogModel['remarks'] ?? ''}',
-      },
+    // Build URL using string concatenation for code param
+    final uri = Uri.parse(
+      '${baseUrl}update/timeLog/timeOut'
+      '?passedID=null'
+      '&timelogID=${timeLogModel['timeLogID'] ?? ''}'
+      '&timelog=${timeLogModel['timelog'] ?? ''}'
+      '&timeOutMorning=${timeLogModel['timeOutMorning'] ?? ''}'
+      '&timeOutAfternoon=${timeLogModel['timeOutAfternoon'] ?? ''}'
+      '&code=$code'
+      '&remarks=${timeLogModel['remarks'] ?? ''}'
     );
 
     final response = await http.get(uri, headers: _basicHeaders());

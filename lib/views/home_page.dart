@@ -968,6 +968,15 @@ class _HomePageState extends State<HomePage> {
     _controller.setScanning(false);
   }
 
+  void _restartScanWhileOnDashboard() {
+    Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (!mounted || !_device.isConnected) return;
+      // Keep scanner active even while portal/dashboard is visible so
+      // immediate second scans can be validated (e.g. ALREADY TIME IN).
+      _startScanLoop();
+    });
+  }
+
   void _scheduleScannerResume() {
     _portalAutoReturnTimer?.cancel();
     final token = ++_portalSessionToken;
@@ -1039,6 +1048,7 @@ class _HomePageState extends State<HomePage> {
       _controller.setStatus(
         '${employee.name} — ${attendanceType ?? 'RECORDED'}',
       );
+      _restartScanWhileOnDashboard();
     } else {
       _displayResult(
         _ScanResult(
@@ -1101,6 +1111,7 @@ class _HomePageState extends State<HomePage> {
       siteId: siteId,
       now: DateTime.now(),
     );
+    debugPrint('Attempting time log with code: ${pending.code}');
     final gate = _scanActionGate(pending, DateTime.now());
     if (gate.blocked) {
       return gate.label ?? 'ALREADY TIME IN';
@@ -1214,7 +1225,9 @@ class _HomePageState extends State<HomePage> {
     if (_lastHrisError != null && _lastHrisError!.isNotEmpty) {
       _controller.setStatus(_lastHrisError!);
     }
-    return 'QUEUED OFFLINE';
+    return pending.code.startsWith('IN')
+        ? 'TIME IN UNSUCCESSFUL'
+        : 'TIME OUT UNSUCCESSFUL';
   }
 
   Future<_PendingTimeLog> _buildPendingTimeLog({
@@ -1752,7 +1765,11 @@ class _HomePageState extends State<HomePage> {
           _portalAutoReturnTimer?.cancel();
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) => const EnrollmentPage(),
+              builder: (_) => EnrollmentPage(
+                employeeId: _matchedEmployee?.id,
+                employeeName: _matchedEmployee?.name,
+                siteId: _selectedSiteId,
+              ),
             ),
           );
         },

@@ -56,6 +56,23 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   @override
+  void didUpdateWidget(covariant DashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final attendanceChanged = oldWidget.attendanceType != widget.attendanceType;
+    final matchTimeChanged = oldWidget.matchedAt != widget.matchedAt;
+    final employeeChanged = oldWidget.employeeId != widget.employeeId;
+
+    if (attendanceChanged || matchTimeChanged || employeeChanged) {
+      _shownScanStatusModal = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showScanStatusModalIfNeeded();
+      });
+      unawaited(_loadRows());
+    }
+  }
+
+  @override
   void dispose() {
     _clockTimer?.cancel();
     super.dispose();
@@ -82,9 +99,21 @@ class _DashboardPageState extends State<DashboardPage> {
         employeeId: employeeId,
         limit: 10,
       );
+      final seenDays = <String>{};
+      final deduped = <Map<String, dynamic>>[];
+      for (final row in history) {
+        final key = _dateKeyFromRow(row);
+        if (key.isNotEmpty && seenDays.contains(key)) {
+          continue;
+        }
+        if (key.isNotEmpty) {
+          seenDays.add(key);
+        }
+        deduped.add(row);
+      }
       if (!mounted) return;
       setState(() {
-        _rows = history.map(_rowFromTimelog).toList();
+        _rows = deduped.map(_rowFromTimelog).toList();
         _loadingRows = false;
       });
     } catch (_) {
@@ -118,6 +147,25 @@ class _DashboardPageState extends State<DashboardPage> {
 
   DateTime? _parseDate(String text) =>
       text.isEmpty ? null : DateTime.tryParse(text);
+
+  String _dateKeyFromRow(Map<String, dynamic> row) {
+    final raw = _pickFirst(row, [
+      'timelog',
+      'timeLogDate',
+      'timelog_date',
+      'datecaptured',
+      'datelog',
+    ]);
+    if (raw.isEmpty) return '';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      final y = parsed.year.toString().padLeft(4, '0');
+      final m = parsed.month.toString().padLeft(2, '0');
+      final d = parsed.day.toString().padLeft(2, '0');
+      return '$y-$m-$d';
+    }
+    return raw.length >= 10 ? raw.substring(0, 10) : raw;
+  }
 
   String _formatDate(DateTime date) {
     const months = [
@@ -217,7 +265,7 @@ class _DashboardPageState extends State<DashboardPage> {
     late final _ScanStatusDialogModel model;
     if (type == 'TIME IN') {
       model = const _ScanStatusDialogModel(
-        title: 'TIME IN SUCCESSFUL',
+        title: 'TIME IN SUCESSFUL',
         message:
             'Your time in has been recorded successfully. Wishing you a productive day!',
         buttonLabel: 'PROCEED',
@@ -225,7 +273,7 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     } else if (type == 'TIME OUT') {
       model = const _ScanStatusDialogModel(
-        title: 'TIME OUT SUCCESSFUL',
+        title: 'TIME OUT SUCESSFUL',
         message:
             'Your time has been recorded successfully. Wishing you a productive day!',
         buttonLabel: 'PROCEED',
@@ -244,6 +292,20 @@ class _DashboardPageState extends State<DashboardPage> {
         message: 'You have already timed out for today.',
         buttonLabel: 'OKIEEE',
         theme: _ScanStatusTheme.info,
+      );
+    } else if (type == 'TIME IN UNSUCCESSFUL') {
+      model = const _ScanStatusDialogModel(
+        title: 'TIME IN UNSUCCESSFUL',
+        message: 'We couldn\'t process your request. Please try again.',
+        buttonLabel: 'RETRY',
+        theme: _ScanStatusTheme.error,
+      );
+    } else if (type == 'TIME OUT UNSUCCESSFUL') {
+      model = const _ScanStatusDialogModel(
+        title: 'TIME OUT UNSUCCESSFUL',
+        message: 'We couldn\'t process your request. Please try again.',
+        buttonLabel: 'RETRY',
+        theme: _ScanStatusTheme.error,
       );
     } else {
       model = const _ScanStatusDialogModel(
@@ -482,7 +544,11 @@ class _DashboardPageState extends State<DashboardPage> {
                                 () {
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
-                                      builder: (_) => const EnrollmentPage(),
+                                      builder: (_) => EnrollmentPage(
+                                        employeeId: widget.employeeId,
+                                        employeeName: widget.employeeName,
+                                        siteId: widget.siteId,
+                                      ),
                                     ),
                                   );
                                 },

@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:user_attendance_scanner/views/dashboard_page.dart';
+import '../services/local_db.dart';
+import '../zkfp/zkteco_usb.dart';
 
 class _DashboardRisingFadeParticle extends StatefulWidget {
   const _DashboardRisingFadeParticle({
@@ -98,8 +103,363 @@ class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
-class EnrollmentPage extends StatelessWidget {
-  const EnrollmentPage({super.key});
+class EnrollmentPage extends StatefulWidget {
+  const EnrollmentPage({super.key, this.employeeId, this.employeeName, this.siteId});
+
+  final String? employeeId;
+  final String? employeeName;
+  final String? siteId;
+
+  @override
+  State<EnrollmentPage> createState() => _EnrollmentPageState();
+}
+
+class _EnrollmentPageState extends State<EnrollmentPage> {
+    // Ensures device is always ready when page is shown again
+    @override
+    void didChangeDependencies() {
+      super.didChangeDependencies();
+      _resetDeviceState();
+    }
+
+    // Optionally, also reset when coming back from another page
+    @override
+    void didUpdateWidget(covariant EnrollmentPage oldWidget) {
+      super.didUpdateWidget(oldWidget);
+      _resetDeviceState();
+    }
+
+    void _resetDeviceState() {
+      // Dispose and re-initialize the device
+      _device.dispose();
+      _leftCount = 0;
+      _rightCount = 0;
+      _isCapturing = false;
+      _canSave = false;
+      _leftTemplate = null;
+      _rightTemplate = null;
+      _leftFid = null;
+      _rightFid = null;
+      _statusText = 'Press RESET to start capture (3x left, 3x right).';
+      // Optionally, re-initialize device if needed
+      // unawaited(_ensureDeviceReady());
+      setState(() {});
+    }
+  static const String _apiBaseUrl =
+      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
+  static const String _thumbDetailsApiEndpoint = 'update/employee/thumbDetails';
+  static const String _apiUsername = 'devuser';
+  static const String _apiPassword = '12456789!';
+
+  final ZKTecoUSB _device = ZKTecoUSB();
+  int _leftCount = 0;
+  int _rightCount = 0;
+  bool _isCapturing = false;
+  bool _canSave = false;
+  String _statusText = 'Press RESET to start capture (3x left, 3x right).';
+  String _displayEmployeeName = 'UNKNOWN USER';
+  String _displayEmployeeId = 'N/A';
+  String _todayIn = '-';
+  String _todayOut = '-';
+  Uint8List? _leftTemplate;
+  Uint8List? _rightTemplate;
+  int? _leftFid;
+  int? _rightFid;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayEmployeeName = widget.employeeName?.trim().isNotEmpty == true
+        ? widget.employeeName!.trim()
+        : 'UNKNOWN USER';
+    _displayEmployeeId = widget.employeeId?.trim().isNotEmpty == true
+        ? widget.employeeId!.trim()
+        : 'N/A';
+    unawaited(_loadTodayLog());
+  }
+
+  @override
+  void dispose() {
+    _device.dispose();
+    super.dispose();
+  }
+
+  String _pickFirst(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final value = row[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+    }
+    return '';
+  }
+
+  bool _isBlank(String value) {
+    final text = value.trim();
+    return text.isEmpty || text == '00:00:00' || text == '0' || text.toLowerCase() == 'null';
+  }
+
+  int _stableFingerprintId(String employeeId, String thumbKey) {
+    var hash = 0x811C9DC5;
+    final input = '$employeeId:$thumbKey';
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
+  }
+
+  Future<void> _loadTodayLog() async {
+    final siteId = widget.siteId;
+    final employeeId = widget.employeeId;
+    if (siteId == null || employeeId == null || siteId.isEmpty || employeeId.isEmpty) return;
+    final row = await LocalDb.getLatestTimelogForEmployee(siteId: siteId, employeeId: employeeId);
+    if (!mounted || row == null) return;
+    final inMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning', 'time_in_morning']);
+    final inAfternoon = _pickFirst(row, ['timeInAfternoon', 'timeinafternoon', 'time_in_afternoon']);
+    final outMorning = _pickFirst(row, ['timeOutMorning', 'timeoutmorning', 'time_out_morning']);
+    final outAfternoon = _pickFirst(row, ['timeOutAfternoon', 'timeoutafternoon', 'time_out_afternoon']);
+    setState(() {
+      _todayIn = !_isBlank(inMorning) ? inMorning : (!_isBlank(inAfternoon) ? inAfternoon : '-');
+      _todayOut = !_isBlank(outAfternoon) ? outAfternoon : (!_isBlank(outMorning) ? outMorning : '-');
+    });
+  }
+
+  Future<bool> _ensureDeviceReady() async {
+    if (_device.isConnected) return true;
+    final sdk = await _device.initSdk();
+    if (!sdk) return false;
+    final count = await _device.getDeviceCountAsync();
+    if (count <= 0) return false;
+    return _device.openDevice(0);
+  }
+
+  Future<Uint8List?> _captureThumb(String label, int fid) async {
+    if (ZKTecoUSB.isAndroidPlatform) {
+      final completer = Completer<({bool success, String message, Uint8List? template})>();
+      final prevProgress = _device.onEnrollProgress;
+      final prevResult = _device.onEnrollResult;
+      _device.onEnrollProgress = (current, total, message) {
+        if (!mounted) return;
+        setState(() {
+          if (label == 'LEFT') {
+            _leftCount = current;
+          } else {
+            _rightCount = current;
+          }
+          _statusText = '$label: $message';
+        });
+      };
+      _device.onEnrollResult = (success, message, resultFid, template) {
+        if (!completer.isCompleted) {
+          completer.complete((success: success, message: message, template: template));
+        }
+      };
+      final started = await _device.startEnrollmentAndroid(fid.toString());
+      if (!started) {
+        _device.onEnrollProgress = prevProgress;
+        _device.onEnrollResult = prevResult;
+        return null;
+      }
+      try {
+        final result = await completer.future.timeout(const Duration(seconds: 45));
+        if (!result.success) return null;
+        return result.template;
+      } finally {
+        _device.onEnrollProgress = prevProgress;
+        _device.onEnrollResult = prevResult;
+      }
+    }
+
+    _device.startEnrollment();
+    var merged = await _device.captureForEnrollment();
+    while (merged.mergedTemplate == null && merged.error == null) {
+      if (!mounted) return null;
+      setState(() {
+        if (label == 'LEFT') {
+          _leftCount = merged.count;
+        } else {
+          _rightCount = merged.count;
+        }
+      });
+      merged = await _device.captureForEnrollment();
+    }
+    return merged.mergedTemplate;
+  }
+
+  Future<void> _startSixScans() async {
+    final employeeId = widget.employeeId;
+    if (employeeId == null || employeeId.isEmpty) {
+      setState(() => _statusText = 'Employee is missing. Open from dashboard after scanning a user.');
+      return;
+    }
+    if (_isCapturing) return;
+
+    setState(() {
+      _isCapturing = true;
+      _canSave = false;
+      _leftCount = 0;
+      _rightCount = 0;
+      _leftTemplate = null;
+      _rightTemplate = null;
+      _statusText = 'Preparing scanner...';
+    });
+
+    final ready = await _ensureDeviceReady();
+    if (!ready) {
+      if (!mounted) return;
+      setState(() {
+        _isCapturing = false;
+        _statusText = 'Scanner not ready. Connect biometric and retry.';
+      });
+      return;
+    }
+
+    final leftFid = _stableFingerprintId(employeeId, 'LEFT_THUMB');
+    final rightFid = _stableFingerprintId(employeeId, 'RIGHT_THUMB');
+    _leftFid = leftFid;
+    _rightFid = rightFid;
+
+    try {
+      setState(() => _statusText = 'Scan LEFT thumb 3 times...');
+      final left = await _captureThumb('LEFT', leftFid);
+      if (left == null) {
+        setState(() {
+          _isCapturing = false;
+          _statusText = 'Left thumb capture failed.';
+        });
+        return;
+      }
+      setState(() {
+        _leftTemplate = left;
+        _leftCount = 3;
+      });
+
+      setState(() => _statusText = 'Scan RIGHT thumb 3 times...');
+      final right = await _captureThumb('RIGHT', rightFid);
+      if (right == null) {
+        setState(() {
+          _isCapturing = false;
+          _statusText = 'Right thumb capture failed.';
+        });
+        return;
+      }
+      setState(() {
+        _rightTemplate = right;
+        _rightCount = 3;
+        _canSave = true;
+        _isCapturing = false;
+        _statusText = '6 scans complete. Press SAVE.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isCapturing = false;
+        _statusText = 'Capture error: $e';
+      });
+    }
+  }
+
+  Future<bool> _postEnrollment({
+    required String employeeId,
+    required Uint8List leftTemplate,
+    required Uint8List rightTemplate,
+  }) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 10);
+      try {
+        final request = await client.putUrl(
+          Uri.parse('$_apiBaseUrl$_thumbDetailsApiEndpoint')
+              .replace(queryParameters: {'employeeID': employeeId}),
+        );
+        final basicToken = base64Encode(utf8.encode('$_apiUsername:$_apiPassword'));
+        request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+        final payload = jsonEncode({
+          'employeeID': employeeId,
+          'leftFingerThumb': base64Encode(leftTemplate),
+          'rightFingerThumb': base64Encode(rightTemplate),
+        });
+        request.contentLength = utf8.encode(payload).length;
+        request.write(payload);
+        final response = await request.close();
+        await response.transform(utf8.decoder).join();
+        return response.statusCode >= 200 && response.statusCode < 300;
+      } finally {
+        client.close(force: true);
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _saveEnrollment() async {
+    if (!_canSave || _leftTemplate == null || _rightTemplate == null || _leftFid == null || _rightFid == null) {
+      setState(() => _statusText = 'Complete 6 scans first.');
+      return;
+    }
+    final siteId = widget.siteId;
+    final employeeId = widget.employeeId;
+    if (siteId == null || employeeId == null || siteId.isEmpty || employeeId.isEmpty) {
+      setState(() => _statusText = 'Missing site/employee info.');
+      return;
+    }
+
+    setState(() {
+      _isCapturing = true;
+      _statusText = 'Saving enrollment...';
+    });
+    try {
+      final rows = await LocalDb.getEmployeesBySiteAndEmployeeId(siteId: siteId, employeeId: employeeId);
+      for (final row in rows) {
+        final oldFid = row['fid'] as int?;
+        if (oldFid != null) {
+          try {
+            await _device.removeFingerprint(oldFid.toString());
+          } catch (_) {}
+        }
+      }
+      await LocalDb.deleteEmployeesBySiteAndEmployeeId(siteId: siteId, employeeId: employeeId);
+
+      await _device.registerFingerprint(_leftFid!, _leftTemplate!);
+      await _device.registerFingerprint(_rightFid!, _rightTemplate!);
+      await LocalDb.upsertEmployee(
+        fid: _leftFid!,
+        employeeId: employeeId,
+        employeeName: widget.employeeName ?? employeeId,
+        template: _leftTemplate!,
+        siteId: siteId,
+      );
+      await LocalDb.upsertEmployee(
+        fid: _rightFid!,
+        employeeId: employeeId,
+        employeeName: widget.employeeName ?? employeeId,
+        template: _rightTemplate!,
+        siteId: siteId,
+      );
+
+      final posted = await _postEnrollment(
+        employeeId: employeeId,
+        leftTemplate: _leftTemplate!,
+        rightTemplate: _rightTemplate!,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isCapturing = false;
+        _statusText = posted
+            ? 'Enrollment saved successfully.'
+            : 'Saved locally, but HRIS update failed.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isCapturing = false;
+        _statusText = 'Save failed: $e';
+      });
+    }
+  }
 
   // ─── Time Panel ───────────────────────────────────────────────────────────
 
@@ -179,8 +539,8 @@ class EnrollmentPage extends StatelessWidget {
   Widget _buildTodayLogCard(double w, double h) {
     final now = DateTime.now();
     final todayDate = _formatDate(now);
-    const todayIn = '8:00AM';
-    const todayOut = '6:38PM';
+    final todayIn = _todayIn;
+    final todayOut = _todayOut;
     return Align(
       alignment: Alignment.center,
       child: SizedBox(
@@ -362,7 +722,11 @@ class EnrollmentPage extends StatelessWidget {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () {},
+                            onTap: () {
+                              if (Navigator.of(context).canPop()) {
+                                Navigator.of(context).pop();
+                              }
+                            },
                             child: _buildTopPill(w, label: 'PORTAL'),
                           ),
                         ),
@@ -370,11 +734,9 @@ class EnrollmentPage extends StatelessWidget {
                         Expanded(
                           child: GestureDetector(
                             onTap: () {
-                              Navigator.of(context).pushReplacement(
-                                MaterialPageRoute(
-                                  builder: (_) => const DashboardPage(),
-                                ),
-                              );
+                              if (Navigator.of(context).canPop()) {
+                                Navigator.of(context).pop();
+                              }
                             },
                             child: _buildTopPill(w, label: 'LOGIN', active: true),
                           ),
@@ -418,7 +780,7 @@ class EnrollmentPage extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'UNKNOWN USER',
+                                    _displayEmployeeName.toUpperCase(),
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -441,7 +803,7 @@ class EnrollmentPage extends StatelessWidget {
                                           BorderRadius.circular(w * 0.013),
                                     ),
                                     child: Text(
-                                      'N/A',
+                                      _displayEmployeeId,
                                       style: TextStyle(
                                         fontFamily: 'CEORUSE',
                                         fontSize: w * 0.013,
@@ -452,7 +814,7 @@ class EnrollmentPage extends StatelessWidget {
                                   ),
                                   SizedBox(height: h * 0.012),
                                   Text(
-                                    'RECORDED',
+                                    _statusText,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -603,17 +965,33 @@ class EnrollmentPage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Left thumb status
-          _buildThumbStatus(w, h, title: 'LEFT THUMB STATUS', activeCount: 0),
+          _buildThumbStatus(w, h, title: 'LEFT THUMB STATUS', activeCount: _leftCount),
           SizedBox(height: h * 0.018),
           // Right thumb status
-          _buildThumbStatus(w, h, title: 'RIGHT THUMB STATUS', activeCount: 3),
+          _buildThumbStatus(w, h, title: 'RIGHT THUMB STATUS', activeCount: _rightCount),
           const Spacer(),
           // Reset / Save buttons
           Row(
             children: [
-              Expanded(child: _buildActionButton(w, h, label: 'RESET', color: const Color(0xFF244D86))),
+              Expanded(
+                child: _buildActionButton(
+                  w,
+                  h,
+                  label: _isCapturing ? 'SCANNING...' : 'RESET',
+                  color: const Color(0xFF244D86),
+                  onTap: _isCapturing ? null : _startSixScans,
+                ),
+              ),
               SizedBox(width: w * 0.012),
-              Expanded(child: _buildActionButton(w, h, label: 'SAVE', color: const Color(0xFF44D980))),
+              Expanded(
+                child: _buildActionButton(
+                  w,
+                  h,
+                  label: 'SAVE',
+                  color: const Color(0xFF44D980),
+                  onTap: (_isCapturing || !_canSave) ? null : _saveEnrollment,
+                ),
+              ),
             ],
           ),
         ],
@@ -668,14 +1046,14 @@ class EnrollmentPage extends StatelessWidget {
   }
 
   Widget _buildActionButton(double w, double h,
-      {required String label, required Color color}) {
+      {required String label, required Color color, VoidCallback? onTap}) {
     return GestureDetector(
-      onTap: () {},
+      onTap: onTap,
       child: Container(
         height: w * 0.032,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: color,
+          color: onTap == null ? color.withOpacity(0.45) : color,
           borderRadius: BorderRadius.circular(w * 0.022),
         ),
         child: Text(
