@@ -4,8 +4,15 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/local_db.dart';
 import '../zkfp/zkteco_usb.dart';
+import 'success_loading_page.dart';
+
+// Helper function to avoid awaiting futures
+void unawaited(Future<void> future) {
+  // Intentionally not awaiting future
+}
 
 class _DashboardRisingFadeParticle extends StatefulWidget {
   const _DashboardRisingFadeParticle({
@@ -87,22 +94,6 @@ class _DashboardRisingFadeParticleState extends State<_DashboardRisingFadePartic
   }
 }
 
-class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
-  const _TopLeftCurvedNotchClipper();
-
-  @override
-  Path getClip(Size size) {
-    return Path()
-      ..moveTo(0, size.height)
-      ..lineTo(size.width, size.height)
-      ..quadraticBezierTo(size.width * 0.10, size.height * 0.92, 0, 0)
-      ..close();
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
 class EnrollmentPage extends StatefulWidget {
   const EnrollmentPage({super.key, this.employeeId, this.employeeName, this.siteId});
 
@@ -115,36 +106,34 @@ class EnrollmentPage extends StatefulWidget {
 }
 
 class _EnrollmentPageState extends State<EnrollmentPage> {
-    // Ensures device is always ready when page is shown again
-    @override
-    void didChangeDependencies() {
-      super.didChangeDependencies();
-      _resetDeviceState();
-    }
+  // Ensures device is always ready when page is shown again
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resetDeviceState();
+  }
 
-    // Optionally, also reset when coming back from another page
-    @override
-    void didUpdateWidget(covariant EnrollmentPage oldWidget) {
-      super.didUpdateWidget(oldWidget);
-      _resetDeviceState();
-    }
+  // Optionally, also reset when coming back from another page
+  @override
+  void didUpdateWidget(covariant EnrollmentPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _resetDeviceState();
+  }
 
-    void _resetDeviceState() {
-      // Dispose and re-initialize the device
-      _device.dispose();
-      _leftCount = 0;
-      _rightCount = 0;
-      _isCapturing = false;
-      _canSave = false;
-      _leftTemplate = null;
-      _rightTemplate = null;
-      _leftFid = null;
-      _rightFid = null;
-      _statusText = 'Press RESET to start capture (3x left, 3x right).';
-      // Optionally, re-initialize device if needed
-      // unawaited(_ensureDeviceReady());
-      setState(() {});
-    }
+  void _resetDeviceState() {
+    // Reset state but don't dispose device as it's shared with main app
+    _leftCount = 0;
+    _rightCount = 0;
+    _isCapturing = false;
+    _canSave = false;
+    _leftTemplate = null;
+    _rightTemplate = null;
+    _leftFid = null;
+    _rightFid = null;
+    _statusText = 'NOT REGISTERED';
+    setState(() {});
+  }
+  
   static const String _apiBaseUrl =
       'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
   static const String _thumbDetailsApiEndpoint = 'update/employee/thumbDetails';
@@ -156,8 +145,8 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   int _rightCount = 0;
   bool _isCapturing = false;
   bool _canSave = false;
-  String _statusText = 'Press RESET to start capture (3x left, 3x right).';
-  String _displayEmployeeName = 'UNKNOWN USER';
+  String _statusText = 'NOT REGISTERED';
+  String _displayEmployeeName = 'NOT REGISTERED';
   String _displayEmployeeId = 'N/A';
   String _todayIn = '-';
   String _todayOut = '-';
@@ -165,22 +154,24 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   Uint8List? _rightTemplate;
   int? _leftFid;
   int? _rightFid;
+  final TextEditingController _employeeIdController = TextEditingController();
+  final TextEditingController _employeeNameController = TextEditingController();
+  File? _profileImageFile;
+  String? _profileImageUrl;
 
   @override
   void initState() {
     super.initState();
-    _displayEmployeeName = widget.employeeName?.trim().isNotEmpty == true
-        ? widget.employeeName!.trim()
-        : 'UNKNOWN USER';
-    _displayEmployeeId = widget.employeeId?.trim().isNotEmpty == true
-        ? widget.employeeId!.trim()
-        : 'N/A';
-    unawaited(_loadTodayLog());
+    // Don't auto-fill employee info - let user input their own
+    _displayEmployeeName = 'NOT REGISTERED';
+    _displayEmployeeId = 'N/A';
   }
 
   @override
   void dispose() {
-    _device.dispose();
+    // Don't dispose device as it's shared with main app
+    _employeeIdController.dispose();
+    _employeeNameController.dispose();
     super.dispose();
   }
 
@@ -211,8 +202,8 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
 
   Future<void> _loadTodayLog() async {
     final siteId = widget.siteId;
-    final employeeId = widget.employeeId;
-    if (siteId == null || employeeId == null || siteId.isEmpty || employeeId.isEmpty) return;
+    final employeeId = _employeeIdController.text.trim();
+    if (siteId == null || employeeId.isEmpty) return;
     final row = await LocalDb.getLatestTimelogForEmployee(siteId: siteId, employeeId: employeeId);
     if (!mounted || row == null) return;
     final inMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning', 'time_in_morning']);
@@ -288,11 +279,35 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
 
   Future<void> _startSixScans() async {
-    final employeeId = widget.employeeId;
-    if (employeeId == null || employeeId.isEmpty) {
-      setState(() => _statusText = 'Employee is missing. Open from dashboard after scanning a user.');
+    final employeeId = _employeeIdController.text.trim();
+    final employeeName = _employeeNameController.text.trim();
+    
+    if (employeeId.isEmpty) {
+      setState(() => _statusText = 'Please enter Employee ID first.');
       return;
     }
+    
+    if (employeeName.isEmpty) {
+      setState(() => _statusText = 'Please enter Employee Name first.');
+      return;
+    }
+    
+    // Check if employee ID already exists
+    if (widget.siteId != null) {
+      try {
+        final existingEmployees = await LocalDb.getEmployeesBySiteAndEmployeeId(
+          siteId: widget.siteId!,
+          employeeId: employeeId,
+        );
+        if (existingEmployees.isNotEmpty) {
+          setState(() => _statusText = 'Employee ID already exists. Please use a different ID.');
+          return;
+        }
+      } catch (e) {
+        debugPrint('Error checking employee ID uniqueness: $e');
+      }
+    }
+    
     if (_isCapturing) return;
 
     setState(() {
@@ -401,8 +416,9 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       return;
     }
     final siteId = widget.siteId;
-    final employeeId = widget.employeeId;
-    if (siteId == null || employeeId == null || siteId.isEmpty || employeeId.isEmpty) {
+    final employeeId = _employeeIdController.text.trim();
+    final employeeName = _employeeNameController.text.trim();
+    if (siteId == null || siteId.isEmpty || employeeId.isEmpty) {
       setState(() => _statusText = 'Missing site/employee info.');
       return;
     }
@@ -428,14 +444,14 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       await LocalDb.upsertEmployee(
         fid: _leftFid!,
         employeeId: employeeId,
-        employeeName: widget.employeeName ?? employeeId,
+        employeeName: employeeName.isNotEmpty ? employeeName : employeeId,
         template: _leftTemplate!,
         siteId: siteId,
       );
       await LocalDb.upsertEmployee(
         fid: _rightFid!,
         employeeId: employeeId,
-        employeeName: widget.employeeName ?? employeeId,
+        employeeName: employeeName.isNotEmpty ? employeeName : employeeId,
         template: _rightTemplate!,
         siteId: siteId,
       );
@@ -452,6 +468,24 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
             ? 'Enrollment saved successfully.'
             : 'Saved locally, but HRIS update failed.';
       });
+      
+      // Show success loading screen
+      if (posted && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => SuccessLoadingPage(
+              message: 'Employee enrolled successfully!\n$employeeId - $employeeName',
+              duration: const Duration(seconds: 2),
+              onComplete: () {
+                // Return to homepage after success screen
+                if (mounted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
+              },
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -461,394 +495,357 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     }
   }
 
-  // ─── Time Panel ───────────────────────────────────────────────────────────
+  Future<void> _pickProfilePicture() async {
+    final ImagePicker picker = ImagePicker();
+    try {
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null && mounted) {
+        final bytes = await image.readAsBytes();
+        setState(() {
+          _profileImageFile = File(image.path);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+    }
+  }
 
-  Widget _buildTimePanel(double w, double h) {
-    final now = DateTime.now();
-    final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
-    final minute = now.minute.toString().padLeft(2, '0');
-    final period = now.hour >= 12 ? 'PM' : 'AM';
-    return Container(
-      padding: EdgeInsets.all(
-        h * 0.045,
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final w = size.width;
+    final h = size.height;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(w * 0.02),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(w * 0.04),
+            child: Container(
+              decoration: const BoxDecoration(
+                image: DecorationImage(
+                  image: AssetImage('assets/images/Main BG.png'),
+                  fit: BoxFit.cover,
+                ),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: w * 0.018,
+                  vertical: h * 0.02,
+                ),
+                child: Column(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _EnrollmentProfileCard(
+                            width: w, 
+                            height: h,
+                            profileImageFile: _profileImageFile,
+                            onImagePicked: (File file) {
+                              if (mounted) {
+                                setState(() {
+                                  _profileImageFile = file;
+                                });
+                              }
+                            },
+                          ),
+                          SizedBox(width: w * 0.018),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _EnrollmentTimePanel(width: w, height: h),
+                                SizedBox(height: h * 0.016),
+                                _TodayLogCard(width: w, height: h),
+                                SizedBox(height: h * 0.016),
+                                _EmployeeInputFields(
+                                  width: w, 
+                                  height: h,
+                                  employeeIdController: _employeeIdController,
+                                  employeeNameController: _employeeNameController,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: h * 0.02),
+                    Expanded(
+                      flex: 3,
+                      child: Row(
+                        children: [
+                          _EnrollmentGuideCard(width: w, height: h),
+                          SizedBox(width: w * 0.012),
+                          _ScannerImageCard(width: w, height: h),
+                          SizedBox(width: w * 0.012),
+                          _FingerprintPreviewCard(width: w, height: h),
+                          SizedBox(width: w * 0.012),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _StatusCard(
+                                  width: w,
+                                  height: h,
+                                  title: 'LEFT THUMB STATUS',
+                                  activeCount: _leftCount,
+                                ),
+                                SizedBox(height: h * 0.018),
+                                _StatusCard(
+                                  width: w,
+                                  height: h,
+                                  title: 'RIGHT THUMB STATUS',
+                                  activeCount: _rightCount,
+                                ),
+                                const Spacer(),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _ActionButton(
+                                        width: w,
+                                        label: _isCapturing ? 'SCANNING...' : 'RESET',
+                                        color: const Color(0xFF244D86),
+                                        onTap: _isCapturing ? null : _startSixScans,
+                                      ),
+                                    ),
+                                    SizedBox(width: w * 0.012),
+                                    Expanded(
+                                      child: _ActionButton(
+                                        width: w,
+                                        label: 'SAVE',
+                                        color: const Color(0xFF44D980),
+                                        onTap: (_isCapturing || !_canSave) ? null : _saveEnrollment,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
+    );
+  }
+}
+
+class _EnrollmentProfileCard extends StatelessWidget {
+  const _EnrollmentProfileCard({
+    required this.width, 
+    required this.height,
+    required this.profileImageFile,
+    required this.onImagePicked,
+  });
+
+  final double width;
+  final double height;
+  final File? profileImageFile;
+  final Function(File) onImagePicked;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(width * 0.03);
+
+    return SizedBox(
+      width: width * 0.58,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${hour.toString().padLeft(2, '0')}:$minute $period',
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.035,
-                  color: Colors.white,
-                  letterSpacing: 4,
-                  height: 1,
-                ),
-              ),
-              SizedBox(height: h * 0.002),
-              Text(
-                _formatDate(now),
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.015,
-                  color: Colors.white.withOpacity(0.9),
-                  letterSpacing: 3,
-                  height: 1.1,
-                ),
-              ),
-              SizedBox(height: h * 0.002),
-              Text(
-                _formatDay(now),
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.013,
-                  color: Colors.white.withOpacity(0.7),
-                  letterSpacing: 4,
-                ),
-              ),
-            ],
+          _EmployeePhotoCard(
+            width: width, 
+            radius: radius,
+            profileImageFile: profileImageFile,
+            onImagePicked: onImagePicked,
           ),
-        ],
-      ),
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    const months = [
-      'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-      'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
-
-  String _formatDay(DateTime date) {
-    const days = [
-      'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY',
-      'FRIDAY', 'SATURDAY', 'SUNDAY',
-    ];
-    return days[date.weekday - 1];
-  }
-
-  // ─── Today Log Card ───────────────────────────────────────────────────────
-
-  Widget _buildTodayLogCard(double w, double h) {
-    final now = DateTime.now();
-    final todayDate = _formatDate(now);
-    final todayIn = _todayIn;
-    final todayOut = _todayOut;
-    return Align(
-      alignment: Alignment.center,
-      child: SizedBox(
-        width: w * 0.90,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(w * 0.028),
-            color: const Color(0xFF0B2742).withOpacity(0.70),
-          ),
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: h * 0.010),
-                child: Text(
-                  'TODAYS LOG',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: w * 0.010,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    letterSpacing: 3,
-                  ),
-                ),
-              ),
-              Container(
-                color: const Color(0xFF081A2E).withOpacity(0.5),
-                padding: EdgeInsets.symmetric(
-                  horizontal: w * 0.014,
-                  vertical: h * 0.010,
-                ),
-                child: Row(
-                  children: [
-                    _logCell(w, 'Date', bold: true),
-                    _logCell(w, 'IN', bold: true),
-                    _logCell(w, 'OUT', bold: true),
-                  ],
-                ),
-              ),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: w * 0.014,
-                  vertical: h * 0.014,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.4),
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(w * 0.028),
-                    bottomRight: Radius.circular(w * 0.028),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    _logCell(w, todayDate, small: true),
-                    _logCell(w, todayIn, small: true),
-                    _logCell(w, todayOut, small: true),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _logCell(double w, String text,
-      {bool bold = false, bool small = false}) {
-    return Expanded(
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontFamily: 'Poppins',
-          fontSize: w * 0.010,
-          fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-          color: Colors.white,
-          letterSpacing: small ? 1.5 : 2,
-        ),
-      ),
-    );
-  }
-
-  // ─── Top Pill ─────────────────────────────────────────────────────────────
-
-  Widget _buildTopPill(double w, {required String label, bool active = false}) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: w * 0.01, vertical: w * 0.01),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(w * 0.018),
-        color: const Color(0xFF0E1F33).withOpacity(0.5),
-      ),
-      child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'CEORUSE',
-            fontSize: w * 0.012,
-            color: Colors.white,
-            letterSpacing: 0.9,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ─── Profile Card ─────────────────────────────────────────────────────────
-
-  Widget _buildProfileCard(double w, double h, BuildContext context) {
-    final cardRadius = BorderRadius.circular(w * 0.023);
-    final expandedPanelColor = const Color(0xFF092238).withOpacity(0.5);
-    return ClipRRect(
-      borderRadius: cardRadius,
-      child: Container(
-        width: w * 4,
-        height: double.infinity,
-        color: Colors.transparent,
-        child: Row(
-          children: [
-            Container(
-              width: w * 0.18,
+          SizedBox(width: width * 0.012),
+          Expanded(
+            child: Container(
+              height: double.infinity,
+              padding: EdgeInsets.all(width * 0.022),
               decoration: BoxDecoration(
-                color: const Color(0xFF092238).withOpacity(0.7),
-                borderRadius: BorderRadius.only(
-                  topLeft: cardRadius.topLeft,
-                  bottomLeft: cardRadius.bottomLeft,
-                  topRight: cardRadius.topRight,
-                ),
+                color: const Color(0xFF0A2240).withValues(alpha: 0.74),
+                borderRadius: radius,
               ),
-              alignment: Alignment.center,
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: w * 0.11,
-                    height: w * 0.11,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.85),
-                        width: 3,
-                      ),
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF3FA9F5), Color(0xFF1B75BB)],
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.person,
+                  Row(
+                    children: const [
+                      Expanded(child: _TopPill(label: 'PORTAL')),
+                      SizedBox(width: 12),
+                      Expanded(child: _TopPill(label: 'LOGIN')),
+                    ],
+                  ),
+                  SizedBox(height: height * 0.02),
+                  Text(
+                    'NOT REGISTERED',
+                    style: TextStyle(
+                      fontFamily: 'TRTCENZODEMO',
+                      fontSize: width * 0.018,
                       color: Colors.white,
-                      size: 40,
+                      letterSpacing: 1.5,
                     ),
                   ),
-                  SizedBox(height: h * 0.012),
+                  SizedBox(height: height * 0.014),
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: width * 0.014,
+                      vertical: height * 0.006,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4A90FF),
+                      borderRadius: BorderRadius.circular(width * 0.014),
+                    ),
+                    child: Text(
+                      'N/A',
+                      style: TextStyle(
+                        fontFamily: 'CEORUSE',
+                        fontSize: width * 0.009,
+                        color: Colors.white,
+                        letterSpacing: 1.6,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: height * 0.016),
                   Text(
-                    'PROFILE',
+                    'NEW USER',
                     style: TextStyle(
-                      fontFamily: 'CEORUSE',
-                      fontSize: w * 0.012,
-                      color: Colors.white.withOpacity(0.8),
-                      letterSpacing: 2,
+                      fontFamily: 'Poppins',
+                      fontStyle: FontStyle.italic,
+                      fontSize: width * 0.012,
+                      color: Colors.white.withValues(alpha: 0.85),
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  SizedBox(height: height * 0.012),
+                  Text(
+                    'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: width * 0.012,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      letterSpacing: 1.8,
+                      height: 1.35,
                     ),
                   ),
                 ],
               ),
             ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      w * 0.010,
-                      h * 0.016,
-                      w * 0.005,
-                      h * 0.024,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              if (Navigator.of(context).canPop()) {
-                                Navigator.of(context).pop();
-                              }
-                            },
-                            child: _buildTopPill(w, label: 'PORTAL'),
-                          ),
-                        ),
-                        SizedBox(width: w * 0.005),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              if (Navigator.of(context).canPop()) {
-                                Navigator.of(context).pop();
-                              }
-                            },
-                            child: _buildTopPill(w, label: 'LOGIN', active: true),
-                          ),
-                        ),
-                      ],
-                    ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmployeePhotoCard extends StatefulWidget {
+  const _EmployeePhotoCard({
+    required this.width,
+    required this.radius,
+    required this.profileImageFile,
+    required this.onImagePicked,
+  });
+
+  final double width;
+  final BorderRadius radius;
+  final File? profileImageFile;
+  final Function(File) onImagePicked;
+
+  @override
+  State<_EmployeePhotoCard> createState() => _EmployeePhotoCardState();
+}
+
+class _EmployeePhotoCardState extends State<_EmployeePhotoCard> {
+  Future<void> _pickProfilePicture() async {
+    final ImagePicker picker = ImagePicker();
+    try {
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null && mounted) {
+        final bytes = await image.readAsBytes();
+        setState(() {
+          widget.onImagePicked(File(image.path));
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _pickProfilePicture,
+      child: Container(
+        width: widget.width * 0.2,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: widget.radius,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (widget.profileImageFile != null)
+              Image.file(
+                widget.profileImageFile!,
+                fit: BoxFit.cover,
+              )
+            else
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFF8F8F8), Color(0xFFE7E0D8)],
                   ),
-                  Expanded(
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Positioned(
-                          top: -(w * 0.02),
-                          left: 0.1,
-                          child: ClipPath(
-                            clipper: const _TopLeftCurvedNotchClipper(),
-                            child: Container(
-                              width: w * 0.039,
-                              height: w * 0.020,
-                              color: expandedPanelColor,
-                            ),
-                          ),
-                        ),
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: expandedPanelColor,
-                              borderRadius: BorderRadius.only(
-                                topRight: Radius.circular(w * 0.03),
-                                bottomRight: Radius.circular(w * 0.03),
-                              ),
-                            ),
-                            child: Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                w * 0.022,
-                                h * 0.016,
-                                w * 0.022,
-                                h * 0.024,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _displayEmployeeName.toUpperCase(),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontFamily: 'TRTCENZODEMO',
-                                      fontSize: w * 0.027,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.white,
-                                      letterSpacing: 1.3,
-                                    ),
-                                  ),
-                                  SizedBox(height: h * 0.012),
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: w * 0.013,
-                                      vertical: h * 0.004,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF1D7CFF),
-                                      borderRadius:
-                                          BorderRadius.circular(w * 0.013),
-                                    ),
-                                    child: Text(
-                                      _displayEmployeeId,
-                                      style: TextStyle(
-                                        fontFamily: 'CEORUSE',
-                                        fontSize: w * 0.013,
-                                        color: Colors.white,
-                                        letterSpacing: 1.5,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(height: h * 0.012),
-                                  Text(
-                                    _statusText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontStyle: FontStyle.italic,
-                                      fontSize: w * 0.015,
-                                      color: Colors.white.withOpacity(0.8),
-                                      letterSpacing: 1.4,
-                                    ),
-                                  ),
-                                  SizedBox(height: h * 0.006),
-                                  Text(
-                                    'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: w * 0.013,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                      letterSpacing: 1.7,
-                                      height: 1.25,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.camera_alt_outlined,
+                      size: widget.width * 0.04,
+                      color: const Color(0xFF9E9E9E),
                     ),
-                  ),
-                ],
+                    SizedBox(height: widget.width * 0.01),
+                    Text(
+                      'Add Photo',
+                      style: TextStyle(
+                        fontSize: widget.width * 0.025,
+                        color: const Color(0xFF9E9E9E),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.edit,
+                  color: Colors.white,
+                  size: 16,
+                ),
               ),
             ),
           ],
@@ -856,50 +853,150 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       ),
     );
   }
+}
 
-  // ─── Bottom Row ───────────────────────────────────────────────────────────
+class _EnrollmentTimePanel extends StatelessWidget {
+  const _EnrollmentTimePanel({required this.width, required this.height});
 
-  Widget _buildBottomRow(double w, double h) {
-  return Expanded(
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildEnrollmentGuide(w, h),
-        SizedBox(width: w * 0.010),
+  final double width;
+  final double height;
 
-        // ← Wrap scanner + fingerprint in a dark container
-        Container(
-          padding: EdgeInsets.all(w * 0.010),
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Align(
+        alignment: Alignment.topRight,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '03:36 PM',
+              style: TextStyle(
+                fontFamily: 'CEORUSE',
+                fontSize: width * 0.04,
+                color: Colors.white,
+                letterSpacing: 4,
+                height: 1,
+              ),
+            ),
+            SizedBox(height: height * 0.008),
+            Text(
+              'MARCH 10, 2026',
+              style: TextStyle(
+                fontFamily: 'CEORUSE',
+                fontSize: width * 0.013,
+                color: Colors.white,
+                letterSpacing: 3,
+              ),
+            ),
+            SizedBox(height: height * 0.002),
+            Text(
+              'TUESDAY',
+              style: TextStyle(
+                fontFamily: 'CEORUSE',
+                fontSize: width * 0.013,
+                color: Colors.white.withValues(alpha: 0.85),
+                letterSpacing: 3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayLogCard extends StatelessWidget {
+  const _TodayLogCard({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: width * 0.38,
+        child: Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF0B2742).withOpacity(0.70),
-            borderRadius: BorderRadius.circular(w * 0.022),
+            borderRadius: BorderRadius.circular(width * 0.028),
+            color: const Color(0xFF0B2742).withValues(alpha: 0.92),
           ),
-          child: Row(
+          child: Column(
             children: [
-              _buildScannerCard(w, h),
-              SizedBox(width: w * 0.010),
-              _buildFingerprintPreview(w, h),
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: height * 0.014),
+                child: Text(
+                  'TODAYS LOG',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: width * 0.012,
+                    color: Colors.white,
+                    letterSpacing: 3,
+                  ),
+                ),
+              ),
+              Container(
+                color: const Color(0xFF081A2E),
+                padding: EdgeInsets.symmetric(
+                  horizontal: width * 0.014,
+                  vertical: height * 0.016,
+                ),
+                child: Row(
+                  children: [
+                    _TableHeaderCell(width: width, label: 'Date'),
+                    _TableHeaderCell(width: width, label: 'IN'),
+                    _TableHeaderCell(width: width, label: 'OUT'),
+                  ],
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: width * 0.014,
+                  vertical: height * 0.018,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF5D7FAF).withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(width * 0.028),
+                    bottomRight: Radius.circular(width * 0.028),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    _TableValueCell(width: width, label: 'March 10, 2026'),
+                    _TableValueCell(width: width, label: '8:00AM'),
+                    _TableValueCell(width: width, label: '6:38PM'),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-
-        SizedBox(width: w * 0.010),
-        _buildStatusPanel(w, h),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
-  Widget _buildEnrollmentGuide(double w, double h) {
+class _EnrollmentGuideCard extends StatelessWidget {
+  const _EnrollmentGuideCard({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: w * 0.20,
+      width: width * 0.20,
       padding: EdgeInsets.symmetric(
-        horizontal: w * 0.020,
-        vertical: h * 0.020,
+        horizontal: width * 0.02,
+        vertical: height * 0.03,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.70),
-        borderRadius: BorderRadius.circular(w * 0.022),
+        color: const Color(0xFF233C66).withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(width * 0.028),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -908,47 +1005,95 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
             'Enrollment Guide',
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.012,
-              fontWeight: FontWeight.bold,
+              fontSize: width * 0.014,
+              fontWeight: FontWeight.w700,
               color: Colors.white,
             ),
           ),
-          SizedBox(height: h * 0.024),
+          SizedBox(height: height * 0.028),
           Text(
             'Open Settings →\nBiometrics → Add\nFingerprint, then place\nyour finger on the sensor\nand lift it repeatedly until\nthe scan is complete. Your\nfingerprint will then be\nregistered.',
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.011,
+              fontSize: width * 0.011,
               color: Colors.white,
-              height: 1.6,
-              letterSpacing: 0.5,
+              height: 1.55,
+              letterSpacing: 0.8,
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _buildScannerCard(double w, double h) {
-  return SizedBox(
-    width: w * 0.20,
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(w * 0.022),
-      child: Image.asset(
-        'assets/images/finger-biometric-image.png', // 👈 replace with your image path
-        fit: BoxFit.cover,
-      ),
-    ),
-  );
 }
 
-  Widget _buildFingerprintPreview(double w, double h) {
+class _ScannerImageCard extends StatelessWidget {
+  const _ScannerImageCard({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: w * 0.16,
-      padding: EdgeInsets.all(w * 0.008),
+      width: width * 0.20,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(width * 0.028),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF2C3E52), Color(0xFF111820)],
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 20,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned(
+            left: -width * 0.02,
+            bottom: -height * 0.03,
+            child: Icon(
+              Icons.touch_app,
+              size: width * 0.16,
+              color: const Color(0x80F0C8A0),
+            ),
+          ),
+          Center(
+            child: Image.asset(
+              'assets/images/Finger Print Icon.png',
+              width: width * 0.11,
+              height: width * 0.11,
+              color: const Color(0xFF72E6F8),
+            ),
+          ),
+          const _ScannerCorner(alignment: Alignment.topRight),
+          const _ScannerCorner(alignment: Alignment.bottomRight),
+        ],
+      ),
+    );
+  }
+}
+
+class _FingerprintPreviewCard extends StatelessWidget {
+  const _FingerprintPreviewCard({required this.width, required this.height});
+
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width * 0.16,
+      padding: EdgeInsets.all(width * 0.008),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(w * 0.022),
+        borderRadius: BorderRadius.circular(width * 0.026),
       ),
       child: Center(
         child: Image.asset(
@@ -958,57 +1103,65 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       ),
     );
   }
+}
 
-  Widget _buildStatusPanel(double w, double h) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Left thumb status
-          _buildThumbStatus(w, h, title: 'LEFT THUMB STATUS', activeCount: _leftCount),
-          SizedBox(height: h * 0.018),
-          // Right thumb status
-          _buildThumbStatus(w, h, title: 'RIGHT THUMB STATUS', activeCount: _rightCount),
-          const Spacer(),
-          // Reset / Save buttons
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionButton(
-                  w,
-                  h,
-                  label: _isCapturing ? 'SCANNING...' : 'RESET',
-                  color: const Color(0xFF244D86),
-                  onTap: _isCapturing ? null : _startSixScans,
-                ),
+class _ScannerCorner extends StatelessWidget {
+  const _ScannerCorner({required this.alignment});
+
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Transform.rotate(
+          angle: alignment == Alignment.topRight ? 0.18 : -0.18,
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              border: Border(
+                top: const BorderSide(color: Colors.white70, width: 3),
+                right: const BorderSide(color: Colors.white70, width: 3),
+                bottom: alignment == Alignment.bottomRight
+                    ? const BorderSide(color: Colors.white70, width: 3)
+                    : BorderSide.none,
+                left: BorderSide.none,
               ),
-              SizedBox(width: w * 0.012),
-              Expanded(
-                child: _buildActionButton(
-                  w,
-                  h,
-                  label: 'SAVE',
-                  color: const Color(0xFF44D980),
-                  onTap: (_isCapturing || !_canSave) ? null : _saveEnrollment,
-                ),
-              ),
-            ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
+}
 
-  Widget _buildThumbStatus(double w, double h,
-      {required String title, required int activeCount}) {
+class _StatusCard extends StatelessWidget {
+  const _StatusCard({
+    required this.width,
+    required this.height,
+    required this.title,
+    required this.activeCount,
+  });
+
+  final double width;
+  final double height;
+  final String title;
+  final int activeCount;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.symmetric(
-        horizontal: w * 0.016,
-        vertical: h * 0.026,
+        horizontal: width * 0.016,
+        vertical: height * 0.027,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.70),
-        borderRadius: BorderRadius.circular(w * 0.022),
+        color: const Color(0xFF123867).withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(width * 0.028),
       ),
       child: Column(
         children: [
@@ -1016,26 +1169,26 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
             title,
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: w * 0.013,
-              fontWeight: FontWeight.bold,
+              fontSize: width * 0.013,
+              fontWeight: FontWeight.w700,
               color: Colors.white,
               letterSpacing: 2,
             ),
           ),
-          SizedBox(height: h * 0.016),
+          SizedBox(height: height * 0.018),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(3, (i) {
-              final isActive = i < activeCount;
+            children: List.generate(3, (index) {
+              final isActive = index < activeCount;
               return Container(
-                width: w * 0.020,
-                height: w * 0.020,
-                margin: EdgeInsets.symmetric(horizontal: w * 0.006),
+                width: width * 0.02,
+                height: width * 0.02,
+                margin: EdgeInsets.symmetric(horizontal: width * 0.006),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: isActive
                       ? const Color(0xFF39BF54)
-                      : Colors.grey.withOpacity(0.55),
+                      : const Color(0xFFE9E5DB),
                 ),
               );
             }),
@@ -1044,23 +1197,37 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       ),
     );
   }
+}
 
-  Widget _buildActionButton(double w, double h,
-      {required String label, required Color color, VoidCallback? onTap}) {
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.width,
+    required this.label,
+    required this.color,
+    this.onTap,
+  });
+
+  final double width;
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: w * 0.032,
+        height: width * 0.030,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: onTap == null ? color.withOpacity(0.45) : color,
-          borderRadius: BorderRadius.circular(w * 0.022),
+          borderRadius: BorderRadius.circular(width * 0.03),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontFamily: 'CEORUSE',
-            fontSize: w * 0.013,
+            fontSize: width * 0.012,
             color: Colors.white,
             letterSpacing: 2,
           ),
@@ -1068,119 +1235,180 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       ),
     );
   }
+}
 
-  // ─── Particle FX (copied from dashboard) ───
-  Widget _particle(
-    double w,
-    double h,
-    double fracLeft,
-    double fracTop,
-    double sizePx,
-    double phase,
-  ) {
-    return Positioned(
-      left: w * fracLeft - sizePx / 2,
-      top: h * fracTop - sizePx / 2,
-      width: sizePx,
-      height: sizePx,
-      child: _DashboardRisingFadeParticle(
-        size: sizePx,
-        phase: phase,
-        assetPath: 'assets/icons/square-particles-fx.svg',
-      ),
-    );
-  }
+class _TopPill extends StatelessWidget {
+  const _TopPill({required this.label});
 
-  // ─── Build ────────────────────────────────────────────────────────────────
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final w = size.width;
-    final h = size.height;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Container(
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/Main BG.png'),
-            fit: BoxFit.cover,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF173765).withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'CEORUSE',
+            fontSize: 10,
+            color: Colors.white,
+            letterSpacing: 2,
           ),
         ),
-        child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.all(w * 0.020),
-            child: Stack(
-              children: [
-                // Particle FX layer
-                Positioned.fill(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final cw = constraints.maxWidth;
-                      final ch = constraints.maxHeight;
-                      final ps = (cw * 0.06).clamp(32.0, 56.0);
-                      return Stack(
-                        children: [
-                          _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
-                          _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
-                          _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
-                          _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
-                          _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
-                          _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
-                          _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
-                          _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
-                          _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
-                          _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
-                          _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
-                          _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
-                          _particle(cw, ch, 0.15, 0.85, ps * 0.7, 0.12),
-                          _particle(cw, ch, 0.95, 0.12, ps * 0.8, 0.55),
-                          _particle(cw, ch, 0.33, 0.11, ps * 0.6, 0.77),
-                          _particle(cw, ch, 0.60, 0.88, ps * 1.0, 0.41),
-                          _particle(cw, ch, 0.81, 0.22, ps * 0.5, 0.63),
-                          _particle(cw, ch, 0.44, 0.59, ps * 0.9, 0.29),
-                          _particle(cw, ch, 0.21, 0.66, ps * 0.8, 0.84),
-                          _particle(cw, ch, 0.57, 0.33, ps * 0.7, 0.18),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                // Main content
-                Positioned.fill(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              flex: 2,
-                              child: _buildProfileCard(w, h, context),
-                            ),
-                            SizedBox(width: w * 0.01),
-                            Expanded(
-                              flex: 1,
-                              child: Column(
-                                children: [
-                                  _buildTimePanel(w, h),
-                                  SizedBox(height: h * 0.01),
-                                  _buildTodayLogCard(w, h),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: h * 0.03),
-                      _buildBottomRow(w, h),
-                    ],
-                  ),
-                ),
-              ],
+      ),
+    );
+  }
+}
+
+class _TableHeaderCell extends StatelessWidget {
+  const _TableHeaderCell({required this.width, required this.label});
+
+  final double width;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          fontSize: width * 0.012,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+          letterSpacing: 2,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmployeeInputFields extends StatelessWidget {
+  const _EmployeeInputFields({
+    required this.width, 
+    required this.height,
+    required this.employeeIdController,
+    required this.employeeNameController,
+  });
+
+  final double width;
+  final double height;
+  final TextEditingController employeeIdController;
+  final TextEditingController employeeNameController;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(width * 0.02),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B2742).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(width * 0.028),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'EMPLOYEE INFORMATION',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: width * 0.012,
+              color: Colors.white,
+              letterSpacing: 3,
             ),
           ),
+          SizedBox(height: height * 0.016),
+          TextField(
+            controller: employeeIdController,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: width * 0.011,
+              color: Colors.white,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Employee ID',
+              labelStyle: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: width * 0.010,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E7DDD)),
+              ),
+              filled: true,
+              fillColor: const Color(0xFF162233),
+            ),
+          ),
+          SizedBox(height: height * 0.012),
+          TextField(
+            controller: employeeNameController,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: width * 0.011,
+              color: Colors.white,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Employee Name',
+              labelStyle: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: width * 0.010,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E5A7A)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(width * 0.02),
+                borderSide: const BorderSide(color: Color(0xFF3E7DDD)),
+              ),
+              filled: true,
+              fillColor: const Color(0xFF162233),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TableValueCell extends StatelessWidget {
+  const _TableValueCell({required this.width, required this.label});
+
+  final double width;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          fontSize: width * 0.008,
+          color: Colors.white,
+          letterSpacing: 1.4,
         ),
       ),
     );

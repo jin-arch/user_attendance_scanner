@@ -13,6 +13,7 @@ import '../zkfp/zkteco_usb.dart';
 import 'dashboard_page.dart';
 import 'enrollment_page.dart';
 import 'loading_page.dart';
+import 'navigation_drawer.dart' as custom;
 
 class _SiteOption {
   const _SiteOption({required this.id, required this.name});
@@ -159,21 +160,19 @@ class _HomePageState extends State<HomePage> {
       };
     }
 
-    // Desktop (Windows) does not reliably emit attach/detach callbacks.
-    // Keep controller state aligned with the actual device connection.
-    if (ZKTecoUSB.isWindowsPlatform) {
-      _deviceHealthTimer?.cancel();
-      _deviceHealthTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-        final actualConnected = _device.isConnected;
-        final uiConnected = _controller.biometricConnected.value;
-        if (uiConnected != actualConnected) {
-          _controller.setConnected(actualConnected);
-          if (!actualConnected) {
-            _stopScanLoop();
-          }
+    // Keep controller state aligned with the actual device connection for all platforms
+    _deviceHealthTimer?.cancel();
+    _deviceHealthTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      final actualConnected = _device.isConnected;
+      final uiConnected = _controller.biometricConnected.value;
+      if (uiConnected != actualConnected) {
+        _controller.setConnected(actualConnected);
+        if (!actualConnected) {
+          _controller.setStatus('Disconnected - Biometric device not found');
+          _stopScanLoop();
         }
-      });
-    }
+      }
+    });
   }
 
   Future<void> _loadDeviceSiteMap() async {
@@ -1778,6 +1777,25 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(
+              Icons.menu,
+              color: Colors.white,
+              size: 28,
+            ),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
+        title: const SizedBox.shrink(),
+        centerTitle: true,
+      ),
+      drawer: custom.NavigationDrawer(
+        selectedSiteId: _selectedSiteId,
+      ),
       body: Container(
         width: screenW,
         height: screenH,
@@ -1791,14 +1809,15 @@ class _HomePageState extends State<HomePage> {
           child: (_selectedSiteId == null)
               ? const SizedBox.shrink()
               : Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: screenW * 0.015,
-                    vertical: screenH * 0.015,
+                  padding: EdgeInsets.only(
+                    left: screenW * 0.015,
+                    right: screenW * 0.015,
+                    bottom: screenH * 0.015,
                   ),
                   child: SingleChildScrollView(
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
-                        minHeight: screenH - (screenH * 0.03),
+                        minHeight: screenH - (screenH * 0.03) - kToolbarHeight,
                       ),
                       child: IntrinsicHeight(
                         child: Column(
@@ -1807,46 +1826,7 @@ class _HomePageState extends State<HomePage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                Obx(
-                                  () => _controller.biometricConnected.value
-                                      ? GestureDetector(
-                                          onTap: _showAddUserDialog,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 14,
-                                              vertical: 8,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: const Color(0x223E7DDD),
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(
-                                                color: const Color(0xFF3E7DDD),
-                                              ),
-                                            ),
-                                            child: const Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.person_add_outlined,
-                                                  color: Colors.white,
-                                                  size: 18,
-                                                ),
-                                                SizedBox(width: 8),
-                                                Text(
-                                                  'ADD USER',
-                                                  style: TextStyle(
-                                                    fontFamily: 'CEORUSE',
-                                                    fontSize: 11,
-                                                    color: Colors.white,
-                                                    letterSpacing: 2,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        )
-                                      : const SizedBox.shrink(),
-                                ),
+                                // ADD USER button moved to navigation drawer
                               ],
                             ),
                             SizedBox(height: screenH * 0.018),
@@ -2285,495 +2265,16 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _showAddUserDialog() async {
     if (!mounted) return;
-    if (!_device.isConnected) {
-      _controller.setStatus('Biometric not connected. Connect scanner first.');
-      return;
-    }
-    _stopScanLoop();
-
-    final empIdCtrl = TextEditingController();
-    final empNameCtrl = TextEditingController();
-    int captureCount = 0;
-    bool isCapturing = false;
-    bool isComplete = false;
-    String statusMsg = 'Enter employee details, then press CAPTURE.';
-    bool detectedExisting = false;
-    String detectedExistingName = '';
-    int detectRequestId = 0;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dlgCtx) {
-        return StatefulBuilder(
-          builder: (_, setDlg) {
-            Future<void> detectEmployeeById() async {
-              final siteId = _selectedSiteId;
-              final input = empIdCtrl.text.trim();
-              final requestId = ++detectRequestId;
-
-              if (siteId == null || input.isEmpty) {
-                if (!mounted || requestId != detectRequestId) return;
-                setDlg(() {
-                  detectedExisting = false;
-                  detectedExistingName = '';
-                  if (!isCapturing && !isComplete) {
-                    statusMsg = 'Enter employee details, then press CAPTURE.';
-                  }
-                });
-                return;
-              }
-
-              final normalizedInput = _normalizeEmployeeId(input);
-              final rows = await LocalDb.getEmployeesBySite(siteId);
-              Map<String, dynamic>? matched;
-              for (final row in rows) {
-                final rowEmpId = (row['employee_id'] ?? '').toString();
-                if (_normalizeEmployeeId(rowEmpId) == normalizedInput) {
-                  matched = row;
-                  break;
-                }
-              }
-
-              if (!mounted || requestId != detectRequestId) return;
-              if (matched != null) {
-                final name = (matched['employee_name'] ?? '').toString().trim();
-                setDlg(() {
-                  detectedExisting = true;
-                  detectedExistingName = name.isNotEmpty
-                      ? name
-                      : (matched!['employee_id'] ?? input).toString();
-                  if (!isCapturing && !isComplete) {
-                    empNameCtrl.text = detectedExistingName;
-                    statusMsg =
-                        'Existing employee detected. Capture will replace fingerprint.';
-                  }
-                });
-              } else {
-                setDlg(() {
-                  detectedExisting = false;
-                  detectedExistingName = '';
-                  if (!isCapturing && !isComplete) {
-                    statusMsg = 'New employee. Press CAPTURE to enroll.';
-                  }
-                });
-              }
-            }
-
-            Future<void> doCapture() async {
-              final empId = empIdCtrl.text.trim();
-              if (empId.isEmpty) {
-                setDlg(() => statusMsg = 'Employee ID is required.');
-                return;
-              }
-
-              final digits = empId.replaceAll(RegExp(r'\D'), '');
-              final fid =
-                  int.tryParse(
-                    digits.length > 8
-                        ? digits.substring(digits.length - 8)
-                        : digits,
-                  ) ??
-                  (empId.hashCode.abs() % 999997 + 1);
-              final siteId = _selectedSiteId;
-
-              Future<void> finalizeEnrollment(
-                Uint8List mergedTemplate,
-                int enrolledFid,
-              ) async {
-                var replacedCount = 0;
-                if (siteId != null) {
-                  final normalizedEmpId = _normalizeEmployeeId(empId);
-                  final allRows = await LocalDb.getEmployeesBySite(siteId);
-                  final existingRows = allRows.where((row) {
-                    final rowFid = row['fid'] as int?;
-                    final rowEmpId = (row['employee_id'] ?? '').toString();
-                    final normalizedRowEmpId = _normalizeEmployeeId(rowEmpId);
-                    if (rowFid != null && rowFid == enrolledFid) return true;
-                    return normalizedEmpId.isNotEmpty &&
-                        normalizedRowEmpId == normalizedEmpId;
-                  }).toList();
-                  replacedCount = existingRows.length;
-
-                  for (final row in existingRows) {
-                    final oldFid = row['fid'] as int?;
-                    if (oldFid == null) continue;
-
-                    try {
-                      await _device.removeFingerprint(oldFid.toString());
-                    } catch (_) {}
-                    _employeeDb.remove(oldFid);
-                    _employeeDbByFid.remove(oldFid.toString());
-                  }
-                  for (final row in existingRows) {
-                    final rowEmpId = (row['employee_id'] ?? '').toString();
-                    final oldFid = row['fid'] as int?;
-                    if (rowEmpId.isNotEmpty) {
-                      await LocalDb.deleteEmployeesBySiteAndEmployeeId(
-                        siteId: siteId,
-                        employeeId: rowEmpId,
-                      );
-                    } else if (oldFid != null) {
-                      await LocalDb.deleteEmployeesBySiteAndEmployeeId(
-                        siteId: siteId,
-                        employeeId: empId,
-                      );
-                    }
-                  }
-                }
-
-                await _device.registerFingerprint(enrolledFid, mergedTemplate);
-                final entry = _EmployeeEntry(
-                  id: empId,
-                  name: empNameCtrl.text.trim().isNotEmpty
-                      ? empNameCtrl.text.trim()
-                      : empId,
-                );
-                _employeeDb[enrolledFid] = entry;
-                _employeeDbByFid[enrolledFid.toString()] = entry;
-
-                if (siteId != null) {
-                  await LocalDb.upsertEmployee(
-                    fid: enrolledFid,
-                    employeeId: empId,
-                    employeeName: empNameCtrl.text.trim().isNotEmpty
-                        ? empNameCtrl.text.trim()
-                        : empId,
-                    template: mergedTemplate,
-                    siteId: siteId,
-                  );
-                }
-
-                final saved = await _postEnrollment(
-                  employeeId: empId,
-                  employeeName: empNameCtrl.text.trim(),
-                  template: mergedTemplate,
-                  fingerId: enrolledFid,
-                );
-
-                setDlg(() {
-                  isComplete = true;
-                  isCapturing = false;
-                  statusMsg = saved
-                      ? (replacedCount > 0
-                            ? 'Fingerprint updated for existing employee.'
-                            : 'Enrollment complete — employee registered.')
-                      : (replacedCount > 0
-                            ? 'Fingerprint updated locally, but server update failed.'
-                            : 'Saved on scanner, but server update failed.');
-                });
-              }
-
-              setDlg(() {
-                isCapturing = true;
-                statusMsg = 'Place finger on scanner (${captureCount + 1}/3)…';
-              });
-
-              if (ZKTecoUSB.isAndroidPlatform) {
-                final completer =
-                    Completer<
-                      ({
-                        bool success,
-                        String message,
-                        String? fid,
-                        Uint8List? template,
-                      })
-                    >();
-                final prevProgress = _device.onEnrollProgress;
-                final prevResult = _device.onEnrollResult;
-
-                _device.onEnrollProgress = (current, total, message) {
-                  if (!mounted) return;
-                  setDlg(() {
-                    captureCount = current;
-                    statusMsg = message;
-                  });
-                };
-
-                _device.onEnrollResult =
-                    (success, message, resultFid, template) {
-                      if (!completer.isCompleted) {
-                        completer.complete((
-                          success: success,
-                          message: message,
-                          fid: resultFid,
-                          template: template,
-                        ));
-                      }
-                    };
-
-                final started = await _device.startEnrollmentAndroid(
-                  fid.toString(),
-                );
-                if (!started) {
-                  _device.onEnrollProgress = prevProgress;
-                  _device.onEnrollResult = prevResult;
-                  setDlg(() {
-                    isCapturing = false;
-                    statusMsg = 'Unable to start Android enrollment.';
-                  });
-                  return;
-                }
-
-                try {
-                  final result = await completer.future.timeout(
-                    const Duration(seconds: 35),
-                  );
-                  if (!result.success || result.template == null) {
-                    setDlg(() {
-                      isCapturing = false;
-                      statusMsg = result.message;
-                    });
-                    return;
-                  }
-
-                  captureCount = 3;
-                  final enrolledFid = _parseFingerId(result.fid) ?? fid;
-                  await finalizeEnrollment(result.template!, enrolledFid);
-                } catch (_) {
-                  setDlg(() {
-                    isCapturing = false;
-                    statusMsg = 'Enrollment timed out. Please try again.';
-                  });
-                } finally {
-                  _device.onEnrollProgress = prevProgress;
-                  _device.onEnrollResult = prevResult;
-                }
-                return;
-              }
-
-              if (captureCount == 0) _device.startEnrollment();
-              final res = await _device.captureForEnrollment();
-
-              if (res.error != null) {
-                setDlg(() {
-                  isCapturing = false;
-                  statusMsg = res.error!;
-                });
-                return;
-              }
-
-              captureCount = res.count;
-
-              if (res.mergedTemplate != null) {
-                await finalizeEnrollment(res.mergedTemplate!, fid);
-              } else {
-                setDlg(() {
-                  isCapturing = false;
-                  statusMsg =
-                      'Capture $captureCount/3 done. Lift and press CAPTURE again.';
-                });
-              }
-            }
-
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 520),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 28,
-                  vertical: 26,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E2A3B),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: const Color(0xFF3E5A7A),
-                    width: 1.2,
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'ADD EMPLOYEE',
-                      style: TextStyle(
-                        fontFamily: 'CEORUSE',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 3,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Enroll a new employee fingerprint',
-                      style: TextStyle(fontSize: 13, color: Color(0xFF7A9BBD)),
-                    ),
-                    const SizedBox(height: 20),
-                    _enrollTextField(
-                      controller: empIdCtrl,
-                      label: 'Employee ID',
-                      icon: Icons.badge_outlined,
-                      enabled: !isCapturing && !isComplete,
-                      onChanged: (_) {
-                        unawaited(detectEmployeeById());
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    _enrollTextField(
-                      controller: empNameCtrl,
-                      label: 'Employee Name (optional)',
-                      icon: Icons.person_outline,
-                      enabled: !isCapturing && !isComplete,
-                    ),
-                    const SizedBox(height: 18),
-                    if (detectedExisting) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0x1A4CAF50),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFF4CAF50)),
-                        ),
-                        child: Text(
-                          'Detected: $detectedExistingName\nThis capture will replace the current fingerprint.',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            height: 1.3,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    // Capture progress dots
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(3, (i) {
-                        final done = i < captureCount;
-                        return Container(
-                          width: 14,
-                          height: 14,
-                          margin: const EdgeInsets.symmetric(horizontal: 6),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: done
-                                ? const Color(0xFF4CAF50)
-                                : const Color(0xFF2A3A4A),
-                            border: Border.all(
-                              color: done
-                                  ? const Color(0xFF4CAF50)
-                                  : const Color(0xFF5A7A9A),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                    const SizedBox(height: 12),
-                    // Status area
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF162233),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          if (isCapturing)
-                            const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Color(0xFFFFB74D),
-                                ),
-                              ),
-                            )
-                          else
-                            Icon(
-                              isComplete
-                                  ? Icons.check_circle_outline
-                                  : Icons.info_outline,
-                              size: 14,
-                              color: isComplete
-                                  ? const Color(0xFF4CAF50)
-                                  : const Color(0xFF7A9BBD),
-                            ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              statusMsg,
-                              style: const TextStyle(
-                                fontFamily: 'CEORUSE',
-                                fontSize: 11,
-                                color: Colors.white70,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    // Action buttons
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 44,
-                            child: OutlinedButton(
-                              onPressed: isCapturing
-                                  ? null
-                                  : () => Navigator.of(dlgCtx).pop(),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(
-                                  color: Color(0xFF3E5A7A),
-                                ),
-                                foregroundColor: const Color(0xFF7A9BBD),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: Text(isComplete ? 'DONE' : 'CANCEL'),
-                            ),
-                          ),
-                        ),
-                        if (!isComplete) ...[
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: SizedBox(
-                              height: 44,
-                              child: ElevatedButton(
-                                onPressed: isCapturing ? null : doCapture,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF3E7DDD),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                child: Text(
-                                  captureCount == 0 ? 'START' : 'CAPTURE',
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+    
+    // Navigate to enrollment page for manual registration
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EnrollmentPage(
+          siteId: _selectedSiteId,
+          // Don't pass employeeId/employeeName - let user input their own
+        ),
+      ),
     );
-
-    empIdCtrl.dispose();
-    empNameCtrl.dispose();
-    if (mounted && _device.isConnected) _startScanLoop();
   }
 
   Future<bool> _postEnrollment({

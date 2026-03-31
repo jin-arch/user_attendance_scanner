@@ -438,6 +438,17 @@ class LocalDb {
     }
   }
 
+  /// Get all timelogs for a site from cached API data
+  static Future<List<Map<String, dynamic>>> getAllTimelogsForSite(String siteId) async {
+    final database = await db;
+    return database.query(
+      'cached_site_timelogs',
+      where: 'site_id = ?',
+      whereArgs: [siteId],
+      orderBy: 'timelog_date DESC, timelog_time DESC',
+    );
+  }
+
   /// Close the database (call on app exit if needed).
   static Future<void> close() async {
     await _db?.close();
