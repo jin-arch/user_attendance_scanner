@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-
 /// Full-screen loading UI: dark blue rounded container, particles,
 /// centered fingerprint, progress % top-left, "DOWNLOADING RESOURCES..." bottom-right.
 /// Pops when [loadFuture] completes and progress reaches 100%, then calls [onComplete].
@@ -146,16 +145,15 @@ class _LoadingPageState extends State<LoadingPage>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final w = size.width;
-    final h = size.height;
+    final viewportW = size.width;
+    final viewportH = size.height;
     final padding = EdgeInsets.symmetric(
-      horizontal: w * 0.04,
-      vertical: h * 0.04,
+      horizontal: viewportW * 0.02,
+      vertical: viewportH * 0.02,
     );
-    final borderRadius = BorderRadius.circular(w * 0.04);
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.transparent,
       body: Container(
         decoration: const BoxDecoration(
           image: DecorationImage(
@@ -166,101 +164,103 @@ class _LoadingPageState extends State<LoadingPage>
         child: SafeArea(
           child: Padding(
             padding: padding,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 400),
-              builder: (context, value, child) => Opacity(
-                opacity: value,
-                child: child,
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: borderRadius,
-                  border: Border.all(
-                    color: const Color(0xFF4A90B8).withValues(alpha: 0.5),
-                    width: 1.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 12,
-                      spreadRadius: 0,
-                    ),
-                  ],
+            child: Center(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 400),
+                builder: (context, value, child) => Opacity(
+                  opacity: value,
+                  child: child,
                 ),
-                child: ClipRRect(
-                  borderRadius: borderRadius,
-                  child: Stack(
-                    children: [
-                    // Gradient background
-                    Positioned.fill(
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xFF1A3A52),
-                              Color(0xFF234A6B),
-                              Color(0xFF1A3A52),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final maxW = constraints.maxWidth;
+                    final maxH = constraints.maxHeight;
+                    final cardWByHeight = maxH * (16 / 9);
+                    final cardW = cardWByHeight < maxW ? cardWByHeight : maxW;
+                    final cardH = cardW * (9 / 16);
+                    // Match the visual corner radius from the card artwork so
+                    // overlays don't bleed into corners and look "sharp".
+                    final radius = BorderRadius.circular(
+                      (cardW * 0.08).clamp(36.0, 92.0),
+                    );
+
+                    return SizedBox(
+                      width: cardW,
+                      height: cardH,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: radius,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: radius,
+                          clipBehavior: Clip.antiAlias,
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Image.asset(
+                                  'assets/images/cardmodified123.png',
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: LayoutBuilder(
+                                  builder: (context, cardConstraints) {
+                                    final cw = cardConstraints.maxWidth;
+                                    final ch = cardConstraints.maxHeight;
+                                    final ps = (cw * 0.045).clamp(20.0, 52.0);
+
+                                    return Stack(
+                                      children: [
+                                        _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                                        _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                                        _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                                        _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                                        _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                                        _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                                        _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                                        _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                                        _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                                        _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                                        _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                                        _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                                        Center(
+                                          child: Padding(
+                                            padding: EdgeInsets.only(bottom: ch * 0.05),
+                                            child: Image.asset(
+                                              _fingerprintAsset,
+                                              width: cw * 0.24,
+                                              height: ch * 0.36,
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          left: cw * 0.1,
+                                          top: ch * 0.02,
+                                          child: _ProgressText(
+                                            progress: _progress,
+                                            fontSize: (cw * 0.055).clamp(28.0, 56.0),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          right: cw * 0.038,
+                                          bottom: ch * 0.04,
+                                          child: _DownloadingLabel(
+                                            fontSize: (cw * 0.022).clamp(12.0, 26.0),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
                             ],
-                            stops: [0.0, 0.5, 1.0],
                           ),
                         ),
                       ),
-                    ),
-                    // Particles
-                    Positioned.fill(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final cw = constraints.maxWidth;
-                          final ch = constraints.maxHeight;
-                          final ps = (cw * 0.06).clamp(32.0, 56.0);
-                          return Stack(
-                            children: [
-                              _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
-                              _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
-                              _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
-                              _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
-                              _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
-                              _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
-                              _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
-                              _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
-                              _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
-                              _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
-                              _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
-                              _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    // Fingerprint — center, slightly above middle
-                    Center(
-                      child: Padding(
-                        padding: EdgeInsets.only(bottom: h * 0.08),
-                        child: Image.asset(
-                          _fingerprintAsset,
-                          width: w * 0.26,
-                          height: h * 0.30,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                    // Progress % — top-left
-                    Positioned(
-                      left: w * 0.04,
-                      top: h * 0.04,
-                      child: _ProgressText(progress: _progress),
-                    ),
-                      // "DOWNLOADING RESOURCES..." — bottom-right
-                      Positioned(
-                        right: w * 0.04,
-                        bottom: h * 0.04,
-                        child: const _DownloadingLabel(),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -293,9 +293,10 @@ class _LoadingPageState extends State<LoadingPage>
 }
 
 class _ProgressText extends StatelessWidget {
-  const _ProgressText({required this.progress});
+  const _ProgressText({required this.progress, this.fontSize = 32});
 
   final int progress;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -303,25 +304,27 @@ class _ProgressText extends StatelessWidget {
       '$progress%',
       style: const TextStyle(
         fontFamily: 'CEORUSE',
-        fontSize: 32,
+        fontSize: 40,
         fontWeight: FontWeight.bold,
         color: Colors.white,
         letterSpacing: 2,
-      ),
+      ).copyWith(fontSize: fontSize),
     );
   }
 }
 
 class _DownloadingLabel extends StatelessWidget {
-  const _DownloadingLabel();
+  const _DownloadingLabel({this.fontSize = 50});
+
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
     return Text(
-      'DOWNLOADING RESOURCES...',
+      'DOWNLOADING\nRESOURCES...',
       style: TextStyle(
         fontFamily: 'CEORUSE',
-        fontSize: 14,
+        fontSize: 55,
         fontWeight: FontWeight.bold,
         color: Colors.white.withValues(alpha: 0.95),
         letterSpacing: 2,
