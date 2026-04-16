@@ -183,6 +183,8 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     _usernameController.addListener(_onFormChanged);
     _prefillEmployeeDetails();
     _loadEmployeePhoto();
+    _clearScanState();
+    _device.clearCachedCapture();
     _initDevice();
   }
 
@@ -294,10 +296,12 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
           setState(() => _lastFingerprintImage = imageData);
         }
       };
-      
+
+      _device.clearCachedCapture();
+      _clearScanState();
       setState(() => _deviceInitialized = true);
       debugPrint('Device initialized successfully - starting scan loop...');
-      
+
       // Start polling for fingerprints
       _startScanLoop();
     } catch (e) {
@@ -404,12 +408,14 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
   
   void _resetFingerprints() {
+    _device.clearCachedCapture();
     setState(() {
       _leftThumbScans = 0;
       _rightThumbScans = 0;
       _leftThumbScansList.clear();
       _rightThumbScansList.clear();
       _lastFingerprintImage = null;
+      _lastScanTime = null;
       _showForm = true; // Switch to enter details form
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1063,6 +1069,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
   
   Widget _buildEnrollmentForm(double w, double h) {
+    final readOnly = widget.isEditMode;
     return Container(
       width: w * 0.20,
       padding: EdgeInsets.symmetric(
@@ -1086,15 +1093,21 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
             ),
           ),
           SizedBox(height: h * 0.020),
-          _buildTextField(w, h, 'Employee ID', _idController),
+          _buildTextField(w, h, 'Employee ID', _idController, readOnly: readOnly),
           SizedBox(height: h * 0.016),
-          _buildTextField(w, h, 'Username', _usernameController),
+          _buildTextField(w, h, 'Username', _usernameController, readOnly: readOnly),
         ],
       ),
     );
   }
   
-  Widget _buildTextField(double w, double h, String label, TextEditingController controller) {
+  Widget _buildTextField(
+    double w,
+    double h,
+    String label,
+    TextEditingController controller, {
+    bool readOnly = false,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1116,6 +1129,9 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
           ),
           child: TextField(
             controller: controller,
+            readOnly: readOnly,
+            enableInteractiveSelection: !readOnly,
+            showCursor: !readOnly,
             style: TextStyle(
               fontFamily: 'Poppins',
               fontSize: w * 0.011,
@@ -1185,14 +1201,39 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
           // Reset / Save buttons
           Row(
             children: [
-              Expanded(child: _buildActionButton(w, h, label: 'RESET', color: const Color(0xFF244D86), onTap: _resetFingerprints)),
+              Expanded(
+                child: _buildActionButton(
+                  w,
+                  h,
+                  label: 'RESET',
+                  color: const Color(0xFF244D86),
+                  onTap: _resetFingerprints,
+                ),
+              ),
               SizedBox(width: w * 0.012),
-              Expanded(child: _buildActionButton(w, h, label: 'SAVE', color: const Color(0xFF44D980), onTap: _saveEnrollment)),
+              Expanded(
+                child: _buildActionButton(
+                  w,
+                  h,
+                  label: 'SAVE',
+                  color: const Color(0xFF44D980),
+                  onTap: _saveEnrollment,
+                ),
+              ),
             ],
           ),
         ],
       ),
     );
+  }
+
+  void _clearScanState() {
+    _leftThumbScans = 0;
+    _rightThumbScans = 0;
+    _leftThumbScansList.clear();
+    _rightThumbScansList.clear();
+    _lastFingerprintImage = null;
+    _lastScanTime = null;
   }
   
   Widget _buildThumbStatus(double w, double h,

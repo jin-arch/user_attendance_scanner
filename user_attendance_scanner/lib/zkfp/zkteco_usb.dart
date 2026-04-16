@@ -138,6 +138,11 @@ class ZKTecoUSB {
   Uint8List? get lastCapturedImage => _lastCapturedImage;
   Uint8List? get lastTemplate => _lastTemplate;
 
+  void clearCachedCapture() {
+    _lastCapturedImage = null;
+    _lastTemplate = null;
+  }
+
   // ==================== SDK Operations ====================
 
   /// Initialize the SDK
