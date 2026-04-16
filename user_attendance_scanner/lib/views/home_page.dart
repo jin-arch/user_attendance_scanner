@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
@@ -509,19 +510,25 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
     // Step 3 — NOW show the loading screen while connecting + syncing data
     if (!mounted) return;
-    final syncFuture = _connectAndSync();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LoadingPage(
-          loadFuture: syncFuture,
-          onComplete: () {
-            // Already on home page, just start scanning
-            _startScanLoop();
-          },
+    final progress = ValueNotifier<double>(0.0);
+    final syncFuture = _connectAndSync(progress: progress);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LoadingPage(
+            loadFuture: syncFuture,
+            onComplete: () {
+              // Already on home page, just start scanning
+              _startScanLoop();
+            },
+            progressListenable: progress,
+          ),
+          fullscreenDialog: true,
         ),
-        fullscreenDialog: true,
-      ),
-    );
+      );
+    } finally {
+      progress.dispose();
+    }
     if (mounted) _startScanLoop();
   }
 
@@ -719,9 +726,18 @@ class _HomePageState extends State<HomePage> with RouteAware {
     super.dispose();
   }
 
+  void _setLoadingProgress(ValueNotifier<double>? progress, double value) {
+    if (progress == null) return;
+    final clamped = value.clamp(0.0, 1.0).toDouble();
+    if (clamped > progress.value) {
+      progress.value = clamped;
+    }
+  }
+
   /// Pure async connect + sync — NO dialogs, NO Navigator calls.
   /// Safe to run as the loadFuture inside LoadingPage.
-  Future<void> _connectAndSync() async {
+  Future<void> _connectAndSync({ValueNotifier<double>? progress}) async {
+    _setLoadingProgress(progress, 0.05);
     _controller.startSearching('Searching for device...');
     try {
       if (ZKTecoUSB.isAndroidPlatform) {
@@ -742,8 +758,9 @@ class _HomePageState extends State<HomePage> with RouteAware {
               ? 'SDK init failed. Plug in the scanner and retry.'
               : 'SDK init failed.',
         );
-        return;
-      }
+          return;
+        }
+      _setLoadingProgress(progress, 0.2);
 
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
@@ -753,6 +770,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
         await _device.terminateSdk();
         return;
       }
+      _setLoadingProgress(progress, 0.3);
 
       _controller.setStatus('Found $count device(s). Connecting...');
 
@@ -762,6 +780,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
         await _device.terminateSdk();
         return;
       }
+      _setLoadingProgress(progress, 0.4);
 
       final serial = await _device.getSerialNumber();
 
@@ -778,12 +797,18 @@ class _HomePageState extends State<HomePage> with RouteAware {
         true,
         status: 'Connected: ${serial ?? "Unknown"}$siteText',
       );
+      _setLoadingProgress(progress, 0.45);
 
       // Sync API -> SQLite, then always load/register from SQLite.
-      await _loadAndRegisterTemplates();
+      await _loadAndRegisterTemplates(progress: progress);
+      _setLoadingProgress(progress, 0.85);
       await _fetchAndCacheSiteTimeLogs();
+      _setLoadingProgress(progress, 0.9);
       await _syncPendingHrisQueue();
+      _setLoadingProgress(progress, 0.96);
       _startLiveDbSync();
+      _setLoadingProgress(progress, 0.98);
+      _setLoadingProgress(progress, 1.0);
     } catch (e) {
       _controller.stopSearching('Error: $e');
     }
@@ -823,19 +848,27 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
     // Step 3 — ONLY NOW show the loading screen (connect + sync)
     if (!mounted) return;
-    final syncFuture = _connectAndSync();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LoadingPage(loadFuture: syncFuture),
-        fullscreenDialog: true,
-      ),
-    );
+    final progress = ValueNotifier<double>(0.0);
+    final syncFuture = _connectAndSync(progress: progress);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LoadingPage(
+            loadFuture: syncFuture,
+            progressListenable: progress,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+    } finally {
+      progress.dispose();
+    }
     if (mounted) _startScanLoop();
   }
 
   // ==================== Template Loading & Scan Loop ====================
 
-  Future<void> _loadAndRegisterTemplates() async {
+  Future<void> _loadAndRegisterTemplates({ValueNotifier<double>? progress}) async {
     if (!mounted) return;
     final siteId = _selectedSiteId;
     if (siteId == null) {
@@ -845,7 +878,9 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
     // Removed status text about syncing fingerprint data to local database.
     await _syncEmployeesFromApiToLocalDb(siteId);
+    _setLoadingProgress(progress, 0.7);
     await _loadFromLocalDb(siteId);
+    _setLoadingProgress(progress, 0.82);
   }
 
   Future<void> _syncEmployeesFromApiToLocalDb(String siteId) async {

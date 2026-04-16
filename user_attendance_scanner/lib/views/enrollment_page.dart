@@ -824,7 +824,11 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
                             onTap: () {
                               Navigator.of(context).pushReplacement(
                                 MaterialPageRoute(
-                                  builder: (_) => const DashboardPage(),
+                                  builder: (_) => DashboardPage(
+                                    employeeId: _displayId.isNotEmpty ? _displayId : widget.employeeId,
+                                    employeeName: _displayName.isNotEmpty ? _displayName : widget.employeeName,
+                                    siteId: widget.siteId,
+                                  ),
                                 ),
                               );
                             },

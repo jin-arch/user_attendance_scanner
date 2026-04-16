@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -11,10 +12,12 @@ class LoadingPage extends StatefulWidget {
     super.key,
     this.loadFuture,
     this.onComplete,
+    this.progressListenable,
   });
 
   final Future<void>? loadFuture;
   final VoidCallback? onComplete;
+  final ValueListenable<double>? progressListenable;
 
   @override
   State<LoadingPage> createState() => _LoadingPageState();
@@ -25,7 +28,10 @@ class _LoadingPageState extends State<LoadingPage>
   int _progress = 0;
   late AnimationController _progressController;
   bool _workComplete = false;
-  bool _animationComplete = false;
+  bool _isFinishing = false;
+  Timer? _fallbackTimer;
+  VoidCallback? _progressListener;
+  double _lastProgress = 0.0;
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
   static const String _fingerprintAsset =
@@ -36,23 +42,27 @@ class _LoadingPageState extends State<LoadingPage>
     super.initState();
     _progressController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 220),
     )..addListener(() {
         if (!mounted) return;
-        final value = _progressController.value;
         setState(() {
-          _progress = (value * 100).round().clamp(0, 100);
+          _progress = (_progressController.value * 100).round().clamp(0, 100);
         });
-        // Check if animation reached 80%
-        if (value >= 0.8 && !_animationComplete) {
-          _animationComplete = true;
-          _progressController.stop();
-          _checkComplete();
-        }
       });
     
-    // Start animation - will pause at 80%
-    _progressController.forward();
+    if (widget.progressListenable != null) {
+      _progressListener = () {
+        final value = widget.progressListenable!.value;
+        final clamped = value.clamp(0.0, 1.0).toDouble();
+        if (clamped <= _lastProgress) return;
+        _lastProgress = clamped;
+        _animateTo(clamped, duration: const Duration(milliseconds: 260));
+      };
+      widget.progressListenable!.addListener(_progressListener!);
+      _progressListener!();
+    } else {
+      _startFallbackProgress();
+    }
     
     unawaited(_run());
   }
@@ -73,43 +83,62 @@ class _LoadingPageState extends State<LoadingPage>
     if (!mounted) return;
     
     _workComplete = true;
-    _checkComplete();
+    await _completeProgress();
   }
-  
-  void _checkComplete() async {
-    // Only complete when BOTH work is done AND animation reached 80%
-    if (_workComplete && _animationComplete && mounted) {
-      // Animate remaining 20% quickly
-      final remaining = 1.0 - _progressController.value;
-      if (remaining > 0) {
-        await _progressController.animateTo(1.0,
-            duration: Duration(milliseconds: (remaining * 400).round()),
-            curve: Curves.easeOut);
+
+  void _startFallbackProgress() {
+    _fallbackTimer?.cancel();
+    _fallbackTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
+      if (_workComplete || !mounted) return;
+      final next = (_progressController.value + 0.008)
+          .clamp(0.0, 0.95)
+          .toDouble();
+      if (next > _progressController.value) {
+        _progressController.value = next;
       }
-      _finishAndPop();
-    }
+    });
   }
-  
-  void _finishAndPop() async {
-    // Wait for animation to reach 100%
-    while (_progressController.value < 1.0 && mounted) {
-      await Future.delayed(const Duration(milliseconds: 30));
+
+  void _detachProgressListener() {
+    final listener = _progressListener;
+    if (listener != null && widget.progressListenable != null) {
+      widget.progressListenable!.removeListener(listener);
     }
-    // Small pause at 100%
+    _progressListener = null;
+  }
+
+  Future<void> _completeProgress() async {
+    if (_isFinishing) return;
+    _isFinishing = true;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+    _detachProgressListener();
+    if (!mounted) return;
+
+    await _animateTo(1.0, duration: const Duration(milliseconds: 260));
     await Future<void>.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
-    
-    // Pop the loading page
+
     Navigator.of(context).pop();
-    
-    // Call onComplete to navigate to home
-    if (widget.onComplete != null) {
-      widget.onComplete!();
-    }
+    widget.onComplete?.call();
+  }
+
+  Future<void> _animateTo(
+    double target, {
+    Duration duration = const Duration(milliseconds: 220),
+  }) {
+    final clamped = target.clamp(0.0, 1.0).toDouble();
+    return _progressController.animateTo(
+      clamped,
+      duration: duration,
+      curve: Curves.easeOut,
+    );
   }
 
   @override
   void dispose() {
+    _detachProgressListener();
+    _fallbackTimer?.cancel();
     _progressController.dispose();
     super.dispose();
   }
