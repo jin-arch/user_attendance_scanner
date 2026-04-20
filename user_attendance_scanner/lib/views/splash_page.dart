@@ -5,7 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import '../app_routes.dart';
+import '../routes/app_routes.dart';
 import '../services/local_db.dart';
 
 class SplashPage extends StatefulWidget {

@@ -7,7 +7,7 @@ import '../site_model.dart';
 import '../employee_model.dart';
 import '../attendance_model.dart';
 import '../scan_result_model.dart';
-import '../app_routes.dart';
+import '../routes/app_routes.dart';
 import '../site_repository.dart';
 import '../employee_repository.dart';
 import '../attendance_repository.dart';

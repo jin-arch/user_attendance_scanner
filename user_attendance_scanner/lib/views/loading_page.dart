@@ -1,12 +1,14 @@
-import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:get/get.dart';
+
+import '../animations/rising_fade_particle.dart';
+import '../controllers/loading_page_controller.dart';
 
 /// Full-screen loading UI: dark blue rounded container, particles,
 /// centered fingerprint, progress % top-left, "DOWNLOADING RESOURCES..." bottom-right.
 /// Pops when [loadFuture] completes and progress reaches 100%, then calls [onComplete].
-class LoadingPage extends StatefulWidget {
+class LoadingPage extends StatelessWidget {
   const LoadingPage({
     super.key,
     this.loadFuture,
@@ -18,255 +20,155 @@ class LoadingPage extends StatefulWidget {
   final VoidCallback? onComplete;
   final ValueListenable<double>? progressListenable;
 
-  @override
-  State<LoadingPage> createState() => _LoadingPageState();
-}
-
-class _LoadingPageState extends State<LoadingPage>
-    with SingleTickerProviderStateMixin {
-  int _progress = 0;
-  late AnimationController _progressController;
-  bool _workComplete = false;
-  bool _isFinishing = false;
-  Timer? _fallbackTimer;
-  VoidCallback? _progressListener;
-  double _lastProgress = 0.0;
-
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
   static const String _fingerprintAsset =
       'assets/images/HIRSLogo-default.png';
 
   @override
-  void initState() {
-    super.initState();
-    _progressController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    )..addListener(() {
-        if (!mounted) return;
-        setState(() {
-          _progress = (_progressController.value * 100).round().clamp(0, 100);
-        });
-      });
-    
-    if (widget.progressListenable != null) {
-      _progressListener = () {
-        final value = widget.progressListenable!.value;
-        final clamped = value.clamp(0.0, 1.0).toDouble();
-        if (clamped <= _lastProgress) return;
-        _lastProgress = clamped;
-        _animateTo(clamped, duration: const Duration(milliseconds: 260));
-      };
-      widget.progressListenable!.addListener(_progressListener!);
-      _progressListener!();
-    } else {
-      _startFallbackProgress();
-    }
-    
-    unawaited(_run());
-  }
-
-  Future<void> _run() async {
-    try {
-      // If loadFuture provided, wait for it
-      if (widget.loadFuture != null) {
-        await widget.loadFuture;
-      } else {
-        // For null loadFuture, wait for minimum time
-        await Future.delayed(const Duration(milliseconds: 1200));
-      }
-    } catch (e) {
-      debugPrint('LoadingPage loadFuture error: $e');
-    }
-    
-    if (!mounted) return;
-    
-    _workComplete = true;
-    await _completeProgress();
-  }
-
-  void _startFallbackProgress() {
-    _fallbackTimer?.cancel();
-    _fallbackTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-      if (_workComplete || !mounted) return;
-      final next = (_progressController.value + 0.008)
-          .clamp(0.0, 0.95)
-          .toDouble();
-      if (next > _progressController.value) {
-        _progressController.value = next;
-      }
-    });
-  }
-
-  void _detachProgressListener() {
-    final listener = _progressListener;
-    if (listener != null && widget.progressListenable != null) {
-      widget.progressListenable!.removeListener(listener);
-    }
-    _progressListener = null;
-  }
-
-  Future<void> _completeProgress() async {
-    if (_isFinishing) return;
-    _isFinishing = true;
-    _fallbackTimer?.cancel();
-    _fallbackTimer = null;
-    _detachProgressListener();
-    if (!mounted) return;
-
-    await _animateTo(1.0, duration: const Duration(milliseconds: 260));
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    if (!mounted) return;
-
-    Navigator.of(context).pop();
-    widget.onComplete?.call();
-  }
-
-  Future<void> _animateTo(
-    double target, {
-    Duration duration = const Duration(milliseconds: 220),
-  }) {
-    final clamped = target.clamp(0.0, 1.0).toDouble();
-    return _progressController.animateTo(
-      clamped,
-      duration: duration,
-      curve: Curves.easeOut,
-    );
-  }
-
-  @override
-  void dispose() {
-    _detachProgressListener();
-    _fallbackTimer?.cancel();
-    _progressController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final viewportW = size.width;
-    final viewportH = size.height;
-    final padding = EdgeInsets.symmetric(
-      horizontal: viewportW * 0.02,
-      vertical: viewportH * 0.02,
-    );
+    return GetBuilder<LoadingPageController>(
+      init: LoadingPageController(
+        loadFuture: loadFuture,
+        progressListenable: progressListenable,
+        onFinish: () {
+          Navigator.of(context).pop();
+          onComplete?.call();
+        },
+      ),
+      builder: (controller) {
+        final size = MediaQuery.sizeOf(context);
+        final viewportW = size.width;
+        final viewportH = size.height;
+        final padding = EdgeInsets.symmetric(
+          horizontal: viewportW * 0.02,
+          vertical: viewportH * 0.02,
+        );
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/Main BG.png'),
-            fit: BoxFit.cover,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: padding,
-            child: Center(
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0, end: 1),
-                duration: const Duration(milliseconds: 400),
-                builder: (context, value, child) => Opacity(
-                  opacity: value,
-                  child: child,
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final maxW = constraints.maxWidth;
-                    final maxH = constraints.maxHeight;
-                    final cardWByHeight = maxH * (16 / 9);
-                    final cardW = cardWByHeight < maxW ? cardWByHeight : maxW;
-                    final cardH = cardW * (9 / 16);
-                    // Match the visual corner radius from the card artwork so
-                    // overlays don't bleed into corners and look "sharp".
-                    final radius = BorderRadius.circular(
-                      (cardW * 0.08).clamp(36.0, 92.0),
-                    );
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Container(
+            decoration: const BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage('assets/images/Main BG.png'),
+                fit: BoxFit.cover,
+              ),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: padding,
+                child: Center(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 400),
+                    builder: (context, value, child) => Opacity(
+                      opacity: value,
+                      child: child,
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final maxW = constraints.maxWidth;
+                        final maxH = constraints.maxHeight;
+                        final edgeInset = (viewportW * 0.02).clamp(12.0, 24.0).toDouble();
+                        final availableW = (maxW - (edgeInset * 2)).clamp(0.0, maxW).toDouble();
+                        final cardWByHeight = maxH * (16 / 9);
+                        final cardW = cardWByHeight < availableW ? cardWByHeight : availableW;
+                        final cardH = cardW * (9 / 16);
 
-                    return SizedBox(
-                      width: cardW,
-                      height: cardH,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: radius,
-                        ),
-                        child: ClipRRect(
-                          borderRadius: radius,
-                          clipBehavior: Clip.antiAlias,
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Image.asset(
-                                  'assets/images/cardmodified123.png',
-                                  fit: BoxFit.cover,
+                        // Asymmetric radius matching HomePage card style:
+                        // large top-left, small on the other three corners.
+                        final radius = BorderRadius.only(
+                          topLeft: Radius.circular(
+                            (cardW * 0.08).clamp(36.0, 92.0),
+                          ),
+                          topRight: Radius.circular(
+                            (cardW * 0.015).clamp(8.0, 20.0),
+                          ),
+                          bottomLeft: Radius.circular(
+                            (cardW * 0.015).clamp(8.0, 20.0),
+                          ),
+                          bottomRight: Radius.circular(
+                            (cardW * 0.015).clamp(8.0, 20.0),
+                          ),
+                        );
+
+                        return SizedBox(
+                          width: cardW,
+                          height: cardH,
+                          child: ClipPath(
+                            clipper: _AsymmetricCardClipper(radius: radius),
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: Image.asset(
+                                    'assets/images/cardmodified123.png',
+                                    fit: BoxFit.cover,
+                                  ),
                                 ),
-                              ),
-                              Positioned.fill(
-                                child: LayoutBuilder(
-                                  builder: (context, cardConstraints) {
-                                    final cw = cardConstraints.maxWidth;
-                                    final ch = cardConstraints.maxHeight;
-                                    final ps = (cw * 0.045).clamp(20.0, 52.0);
+                                Positioned.fill(
+                                  child: LayoutBuilder(
+                                    builder: (context, cardConstraints) {
+                                      final cw = cardConstraints.maxWidth;
+                                      final ch = cardConstraints.maxHeight;
+                                      final ps = (cw * 0.045).clamp(20.0, 52.0);
 
-                                    return Stack(
-                                      children: [
-                                        _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
-                                        _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
-                                        _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
-                                        _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
-                                        _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
-                                        _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
-                                        _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
-                                        _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
-                                        _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
-                                        _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
-                                        _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
-                                        _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
-                                        Center(
-                                          child: Padding(
-                                            padding: EdgeInsets.only(bottom: ch * 0.05),
-                                            child: Image.asset(
-                                              _fingerprintAsset,
-                                              width: cw * 0.24,
-                                              height: ch * 0.36,
-                                              fit: BoxFit.contain,
+                                      return Stack(
+                                        children: [
+                                          _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                                          _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                                          _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                                          _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                                          _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                                          _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                                          _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                                          _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                                          _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                                          _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                                          _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                                          _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                                          Center(
+                                            child: Padding(
+                                              padding: EdgeInsets.only(bottom: ch * 0.15),
+                                              child: Image.asset(
+                                                _fingerprintAsset,
+                                                width: cw * 0.24,
+                                                height: ch * 0.36,
+                                                fit: BoxFit.contain,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                        Positioned(
-                                          left: cw * 0.1,
-                                          top: ch * 0.02,
-                                          child: _ProgressText(
-                                            progress: _progress,
-                                            fontSize: (cw * 0.055).clamp(28.0, 56.0),
+                                          Positioned(
+                                            left: cw * 0.07,
+                                            top: ch * 0.015,
+                                            child: _ProgressText(
+                                              progress: controller.progress,
+                                              fontSize: (cw * 0.055).clamp(28.0, 56.0),
+                                            ),
                                           ),
-                                        ),
-                                        Positioned(
-                                          right: cw * 0.038,
-                                          bottom: ch * 0.04,
-                                          child: _DownloadingLabel(
-                                            fontSize: (cw * 0.022).clamp(12.0, 26.0),
+                                          Positioned(
+                                            right: cw * 0.028,
+                                            bottom: ch * 0.03,
+                                            child: _DownloadingLabel(
+                                              fontSize: (cw * 0.022).clamp(12.0, 26.0),
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    );
-                                  },
+                                        ],
+                                      );
+                                    },
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ),
-                    );
-                  },
+                        );
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -283,7 +185,7 @@ class _LoadingPageState extends State<LoadingPage>
       top: h * fracTop - sizePx / 2,
       width: sizePx,
       height: sizePx,
-      child: _RisingFadeParticle(
+      child: RisingFadeParticle(
         size: sizePx,
         phase: phase,
         assetPath: _particleAsset,
@@ -293,7 +195,7 @@ class _LoadingPageState extends State<LoadingPage>
 }
 
 class _ProgressText extends StatelessWidget {
-  const _ProgressText({required this.progress, this.fontSize = 32});
+  const _ProgressText({required this.progress, this.fontSize = 25});
 
   final int progress;
   final double fontSize;
@@ -304,7 +206,7 @@ class _ProgressText extends StatelessWidget {
       '$progress%',
       style: const TextStyle(
         fontFamily: 'CEORUSE',
-        fontSize: 40,
+        fontSize: 35,
         fontWeight: FontWeight.bold,
         color: Colors.white,
         letterSpacing: 2,
@@ -324,7 +226,7 @@ class _DownloadingLabel extends StatelessWidget {
       'DOWNLOADING\nRESOURCES...',
       style: TextStyle(
         fontFamily: 'CEORUSE',
-        fontSize: 55,
+        fontSize: 50,
         fontWeight: FontWeight.bold,
         color: Colors.white.withValues(alpha: 0.95),
         letterSpacing: 2,
@@ -333,83 +235,20 @@ class _DownloadingLabel extends StatelessWidget {
   }
 }
 
-class _RisingFadeParticle extends StatefulWidget {
-  const _RisingFadeParticle({
-    required this.size,
-    required this.assetPath,
-    this.phase = 0.0,
-  });
+class _AsymmetricCardClipper extends CustomClipper<Path> {
+  const _AsymmetricCardClipper({required this.radius});
 
-  final double size;
-  final String assetPath;
-  final double phase;
+  final BorderRadius radius;
 
   @override
-  State<_RisingFadeParticle> createState() => _RisingFadeParticleState();
-}
-
-class _RisingFadeParticleState extends State<_RisingFadeParticle>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-  Animation<double>? _opacity;
-  Animation<double>? _translateY;
-  Animation<double>? _scale;
-
-  static const double _riseDistance = 48.0;
-  static const Duration _duration = Duration(milliseconds: 2600);
-
-  @override
-  void initState() {
-    super.initState();
-    final c = AnimationController(vsync: this, duration: _duration);
-    final curve = CurvedAnimation(parent: c, curve: Curves.easeOut);
-    _controller = c;
-    _opacity = Tween<double>(begin: 0.7, end: 0.0).animate(curve);
-    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
-    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
-    c.value = widget.phase;
-    c.repeat();
+  Path getClip(Size size) {
+    final resolved = radius.resolve(TextDirection.ltr);
+    final rrect = resolved.toRRect(Offset.zero & size);
+    return Path()..addRRect(rrect);
   }
 
   @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = _controller;
-    final opacity = _opacity;
-    final translateY = _translateY;
-    final scale = _scale;
-    if (c == null || opacity == null || translateY == null || scale == null) {
-      return const SizedBox.shrink();
-    }
-    return AnimatedBuilder(
-      animation: c,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, translateY.value),
-          child: Opacity(
-            opacity: opacity.value,
-            child: Transform.scale(
-              scale: scale.value,
-              alignment: Alignment.center,
-              child: SvgPicture.asset(
-                widget.assetPath,
-                width: widget.size,
-                height: widget.size,
-                fit: BoxFit.contain,
-                colorFilter: const ColorFilter.mode(
-                  Color(0xFF5FCFFF),
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
+  bool shouldReclip(covariant _AsymmetricCardClipper oldClipper) {
+    return oldClipper.radius != radius;
   }
 }

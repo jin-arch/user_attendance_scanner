@@ -7,8 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import 'app_binding.dart';
-import 'app_routes.dart';
-import 'route_observer.dart';
+import 'routes/app_routes.dart';
+import 'routes/route_observer.dart';
 import 'views/dashboard_mvp_page.dart';
 import 'views/home_mvp_page.dart';
 import 'views/splash_page.dart';

@@ -1,4 +1,5 @@
 import 'package:get/get.dart';
+import 'controllers/dashboard_page_controller.dart';
 import 'controllers/home_page_controller.dart';
 import 'legacy_home_page_controller.dart';
 import 'site_repository.dart';
@@ -35,6 +36,9 @@ class AppBinding extends Bindings {
 
     // Legacy controller still used by the current Views.
     Get.lazyPut<LegacyHomePageController>(() => LegacyHomePageController(), fenix: true);
+
+    // Dashboard business logic/state helper for the legacy dashboard view.
+    Get.lazyPut<DashboardPageController>(() => DashboardPageController(), fenix: true);
 
     // Bridge is optional, but kept for gradual migration.
     Get.lazyPut<HomePageBridge>(() => HomePageBridge(), fenix: true);

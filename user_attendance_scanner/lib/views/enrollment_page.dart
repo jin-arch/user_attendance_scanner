@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
+import '../widgets/top_left_curved_notch_clipper.dart';
 
 class _DashboardRisingFadeParticle extends StatefulWidget {
   const _DashboardRisingFadeParticle({
@@ -87,22 +88,6 @@ class _DashboardRisingFadeParticleState extends State<_DashboardRisingFadePartic
       },
     );
   }
-}
-
-class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
-  const _TopLeftCurvedNotchClipper();
-
-  @override
-  Path getClip(Size size) {
-    return Path()
-      ..moveTo(0, size.height)
-      ..lineTo(size.width, size.height)
-      ..quadraticBezierTo(size.width * 0.10, size.height * 0.92, 0, 0)
-      ..close();
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class EnrollmentPage extends StatefulWidget {
@@ -852,7 +837,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
                           top: -(w * 0.02),
                           left: 0.1,
                           child: ClipPath(
-                            clipper: const _TopLeftCurvedNotchClipper(),
+                            clipper: const TopLeftCurvedNotchClipper(),
                             child: Container(
                               width: w * 0.039,
                               height: w * 0.020,

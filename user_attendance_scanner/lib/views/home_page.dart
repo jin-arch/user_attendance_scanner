@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_db.dart';
 import '../legacy_home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
-import '../route_observer.dart';
+import '../routes/route_observer.dart';
 import 'loading_page.dart';
 import 'success_loading_page.dart';
 import 'dashboard_page.dart';

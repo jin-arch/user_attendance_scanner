@@ -1,19 +1,17 @@
 // ignore_for_file: avoid_print
-
-import 'dart:async';
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
-
+import '../animations/dashboard_rising_fade_particle.dart';
+import '../constants/date_time_formats.dart';
+import '../controllers/dashboard_page_controller.dart';
 import '../legacy_home_page_controller.dart';
-import '../route_observer.dart';
-import '../services/local_db.dart';
+import '../routes/route_observer.dart';
+import '../widgets/top_left_curved_notch_clipper.dart';
 import '../zkfp/zkteco_usb.dart';
 import 'enrollment_page.dart';
 
-class DashboardPage extends StatefulWidget {
+class DashboardPage extends StatelessWidget {
   final String? resultType; // 'timeInSuccess', 'timeOutSuccess', 'alreadyTimedIn', etc.
   final String? timeIn; // Actual time in value to display
   final String? timeOut; // Actual time out value to display
@@ -41,36 +39,58 @@ class DashboardPage extends StatefulWidget {
   final VoidCallback? onEnrollNowTap;
 
   @override
-  State<DashboardPage> createState() => _DashboardPageState();
+  Widget build(BuildContext context) {
+    return _DashboardPageContent(
+      employeeId: employeeId,
+      employeeName: employeeName,
+      attendanceType: attendanceType,
+      matchedAt: matchedAt,
+      siteId: siteId,
+      onPortalTap: onPortalTap,
+      onEnrollNowTap: onEnrollNowTap,
+      resultType: resultType,
+      timeIn: timeIn,
+      timeOut: timeOut,
+    );
+  }
 }
 
-class _DashboardPageState extends State<DashboardPage> with RouteAware {
+class _DashboardPageContent extends StatefulWidget {
+  const _DashboardPageContent({
+    this.employeeId,
+    this.employeeName,
+    this.attendanceType,
+    this.matchedAt,
+    this.siteId,
+    this.onPortalTap,
+    this.onEnrollNowTap,
+    this.resultType,
+    this.timeIn,
+    this.timeOut,
+  });
+
+  final String? employeeId;
+  final String? employeeName;
+  final String? attendanceType;
+  final DateTime? matchedAt;
+  final String? siteId;
+  final VoidCallback? onPortalTap;
+  final VoidCallback? onEnrollNowTap;
+  final String? resultType;
+  final String? timeIn;
+  final String? timeOut;
+
+  @override
+  State<_DashboardPageContent> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   // Device and scanning
   final ZKTecoUSB _device = ZKTecoUSB();
   late final LegacyHomePageController _controller;
-  Timer? _scanTimer;
-  bool _ownsTemplateCallback = false;
-  bool _isProcessingTemplate = false;
-  DateTime? _lastTemplateHandledAt;
+  late final DashboardPageController _dashboardController;
   bool _routeSubscribed = false;
-  bool _isActiveRoute = true;
-  void Function(Uint8List template, int size)? _templateHandler;
   
-  // Employee database for fingerprint matching
-  final Map<int, _EmployeeEntry> _employeeDb = {};
-  final Map<String, _EmployeeEntry> _employeeDbByFid = {};
-  
-  List<_DashboardRow> _rows = const [];
-  bool _loadingRows = true;
-  DateTime _now = DateTime.now();
-  Timer? _clockTimer;
-  Timer? _afkTimer;
-  DateTime? _lastActivityTime;
-  static const int _afkTimeoutSeconds = 60; // 1 minute AFK timeout
-  
-  bool _alreadyTimedIn = false;
-  Uint8List? _profilePhoto;
-
   bool get _isPortalMode => widget.onPortalTap != null;
 
   // Dashboard is display + actions (Portal + Enroll Now). Fingerprint scanning/identify
@@ -88,20 +108,10 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
 
   Future<void> _loadProfilePhoto() async {
-    final employeeId = widget.employeeId?.trim();
-    if (employeeId == null || employeeId.isEmpty) {
-      if (_profilePhoto != null && mounted) {
-        setState(() => _profilePhoto = null);
-      }
-      return;
-    }
-    final siteId = widget.siteId ?? 'default';
-    final photo = await LocalDb.getEmployeePhoto(
-      employeeId: employeeId,
-      siteId: siteId,
+    await _dashboardController.loadProfilePhoto(
+      employeeId: widget.employeeId,
+      siteId: widget.siteId,
     );
-    if (!mounted) return;
-    setState(() => _profilePhoto = photo);
   }
 
   @override
@@ -110,43 +120,47 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
     
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
+    _dashboardController = Get.find<DashboardPageController>();
     
-    // Only set up device callbacks and scanning if this Dashboard instance is
-    // intended to be a scanning surface (standalone, not result display).
-    if (_enableScanning) {
-      if (ZKTecoUSB.isAndroidPlatform) {
-        _ownsTemplateCallback = true;
-        _templateHandler = (template, size) {
-          _handleAndroidTemplate(template);
-        };
-        _device.onTemplateExtracted = _templateHandler;
-      }
-    }
+    _dashboardController.setRouteActive(true);
+    _dashboardController.attachAndroidTemplateCallback(
+      device: _device,
+      onTemplateReady: _onTemplateReady,
+      setScanning: _controller.setScanning,
+      isMounted: () => mounted,
+    );
     
     // Defer loading to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _loadRows();
         if (_enableScanning) {
-          _loadEmployeeDatabase();
+          _dashboardController.loadEmployeeDatabase(
+            siteId: widget.siteId,
+            device: _device,
+          );
         }
         _loadProfilePhoto();
       }
     });
-    
-    _lastActivityTime = DateTime.now();
-    _startAfkTimer();
-    _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
+
+    _dashboardController.startSession(onAfkTimeout: () {
+      if (mounted) {
+        _returnToScanner();
+      }
     });
     
     // Start scanning if device is connected (deferred) - only when scanning is enabled
     if (_enableScanning && _device.isConnected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          // Reset scanning state to ensure scan loop can start fresh
-          _controller.setScanning(false);
-          _startScanLoop();
+          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+          _dashboardController.startScanLoop(
+            device: _device,
+            isScanning: () => _controller.isScanning.value,
+            setScanning: _controller.setScanning,
+            onTemplateReady: _onTemplateReady,
+          );
         }
       });
     }
@@ -158,7 +172,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
 
   @override
-  void didUpdateWidget(covariant DashboardPage oldWidget) {
+  void didUpdateWidget(covariant _DashboardPageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     final changed = oldWidget.employeeId != widget.employeeId ||
         oldWidget.siteId != widget.siteId ||
@@ -184,7 +198,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       if (route is PageRoute) {
         routeObserver.subscribe(this, route);
         _routeSubscribed = true;
-        _isActiveRoute = route.isCurrent;
+        _dashboardController.setRouteActive(route.isCurrent);
       }
     }
     // Reload data when page becomes visible (deferred to avoid setState during build)
@@ -192,8 +206,13 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       if (mounted) {
         _loadRows();
         _loadProfilePhoto();
-        if (_enableScanning && _device.isConnected && _isActiveRoute) {
-          _startScanLoop();
+        if (_enableScanning && _device.isConnected) {
+          _dashboardController.startScanLoop(
+            device: _device,
+            isScanning: () => _controller.isScanning.value,
+            setScanning: _controller.setScanning,
+            onTemplateReady: _onTemplateReady,
+          );
         }
       }
     });
@@ -201,162 +220,45 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
 
   @override
   void didPushNext() {
-    _isActiveRoute = false;
-    _stopScanLoop();
-    if (_ownsTemplateCallback && ZKTecoUSB.isAndroidPlatform) {
-      if (_device.onTemplateExtracted == _templateHandler) {
-        _device.onTemplateExtracted = null;
-      }
-    }
+    _dashboardController.setRouteActive(false);
+    _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+    _dashboardController.clearAndroidTemplateCallback(device: _device);
   }
 
   @override
   void didPopNext() {
-    _isActiveRoute = true;
-    if (_ownsTemplateCallback && ZKTecoUSB.isAndroidPlatform) {
-      _templateHandler ??= (template, size) {
-        _handleAndroidTemplate(template);
-      };
-      _device.onTemplateExtracted = _templateHandler;
-    }
+    _dashboardController.setRouteActive(true);
+    _dashboardController.attachAndroidTemplateCallback(
+      device: _device,
+      onTemplateReady: _onTemplateReady,
+      setScanning: _controller.setScanning,
+      isMounted: () => mounted,
+    );
     if (_enableScanning && _device.isConnected) {
-      _controller.setScanning(false);
-      _startScanLoop();
+      _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+      _dashboardController.startScanLoop(
+        device: _device,
+        isScanning: () => _controller.isScanning.value,
+        setScanning: _controller.setScanning,
+        onTemplateReady: _onTemplateReady,
+      );
     }
   }
 
   @override
   void dispose() {
-    // Only stop scan loop if scanning was enabled for this instance.
     if (_enableScanning) {
-      _stopScanLoop();
+      _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
     }
-
-    // Only clear callback if this page owned it.
-    if (_ownsTemplateCallback && ZKTecoUSB.isAndroidPlatform) {
-      if (_device.onTemplateExtracted == _templateHandler) {
-        _device.onTemplateExtracted = null;
-      }
-    }
+    _dashboardController.clearAndroidTemplateCallback(device: _device);
     if (_routeSubscribed) {
       routeObserver.unsubscribe(this);
     }
-    _afkTimer?.cancel();
-    _clockTimer?.cancel();
+    _dashboardController.stopSession();
     super.dispose();
   }
-  
+
   // ==================== Fingerprint Scanning ====================
-  
-  void _handleAndroidTemplate(Uint8List template) {
-    if (!mounted) return;
-    if (!ZKTecoUSB.isAndroidPlatform) return;
-    if (!_isActiveRoute) return;
-    if (!_device.isConnected) return;
-    
-    final now = DateTime.now();
-    final lastAt = _lastTemplateHandledAt;
-    if (lastAt != null && now.difference(lastAt).inMilliseconds < 800) return;
-    if (_isProcessingTemplate) return;
-    
-    _lastTemplateHandledAt = now;
-    _isProcessingTemplate = true;
-    
-    Future(() async {
-      try {
-        await _onTemplateReady(template);
-      } finally {
-        if (mounted && _device.isConnected && _isActiveRoute) {
-          _controller.setScanning(true);
-        }
-        _isProcessingTemplate = false;
-      }
-    });
-  }
-  
-  Future<void> _loadEmployeeDatabase() async {
-    try {
-      final siteId = widget.siteId;
-      if (siteId == null) return;
-      print('[DASHBOARD_SCAN] Loading employees for site: $siteId');
-      final rows = await LocalDb.getEmployeesBySite(siteId);
-      print('[DASHBOARD_SCAN] Found ${rows.length} employee rows from DB');
-      _employeeDb.clear();
-      _employeeDbByFid.clear();
-      
-      for (final row in rows) {
-        // Correct column names from DB: fid, employee_id, employee_name, finger_template
-        final fid = row['fid'] as int?;
-        final empId = row['employee_id']?.toString() ?? '';
-        final empName = row['employee_name']?.toString() ?? '';
-        final templateBytes = row['finger_template'] as Uint8List?;
-        
-        print('[DASHBOARD_SCAN] Employee row: fid=$fid, empId=$empId, name=$empName, hasTemplate=${templateBytes != null}');
-        
-        if (fid != null && empId.isNotEmpty && templateBytes != null) {
-          try {
-            await _device.registerFingerprint(fid, templateBytes);
-            final entry = _EmployeeEntry(id: empId, name: empName);
-            _employeeDb[fid] = entry;
-            _employeeDbByFid[fid.toString()] = entry;
-            print('[DASHBOARD_SCAN] Registered fingerprint for fid=$fid');
-          } catch (e) {
-            print('[DASHBOARD_SCAN] Error registering fingerprint for fid=$fid: $e');
-          }
-        }
-      }
-      print('[DASHBOARD_SCAN] Loaded ${_employeeDb.length} employees');
-    } catch (e) {
-      print('[DASHBOARD_SCAN] Error loading employees: $e');
-    }
-  }
-  
-  void _startScanLoop() {
-    if (!_isActiveRoute) return;
-    if (_controller.isScanning.value || !_device.isConnected) return;
-    
-    // Use addPostFrameCallback to avoid setState during build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _controller.setScanning(true);
-    });
-    
-    if (ZKTecoUSB.isAndroidPlatform) {
-      // Android is event-driven via onTemplateExtracted callback
-      return;
-    }
-    
-    // Windows: poll the sensor every 250ms
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      _captureAndMatch();
-    });
-  }
-  
-  void _stopScanLoop() {
-    _scanTimer?.cancel();
-    _scanTimer = null;
-    // Use addPostFrameCallback to avoid setState during build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _controller.setScanning(false);
-    });
-  }
-  
-  Future<void> _captureAndMatch() async {
-    if (!_controller.isScanning.value || !_device.isConnected) {
-      _scanTimer?.cancel();
-      _scanTimer = null;
-      // Use addPostFrameCallback to avoid setState during build
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _controller.setScanning(false);
-      });
-      return;
-    }
-    final result = _device.acquireFingerprintOnce();
-    if (result.template != null) {
-      _scanTimer?.cancel();
-      _scanTimer = null;
-      _onTemplateReady(result.template!);
-    }
-  }
   
   Future<void> _onTemplateReady(Uint8List template) async {
     print('[DASHBOARD_SCAN] _onTemplateReady called');
@@ -364,41 +266,20 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       print('[DASHBOARD_SCAN] Early return: mounted=$mounted, isConnected=${_device.isConnected}');
       return;
     }
-    
-    // Use addPostFrameCallback to avoid setState during build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _controller.setScanning(false);
-    });
-    
-    String? fid;
-    if (ZKTecoUSB.isAndroidPlatform) {
-      print('[DASHBOARD_SCAN] Calling identifyFingerprint...');
-      final res = await _device.identifyFingerprint();
-      print('[DASHBOARD_SCAN] identifyFingerprint result: found=${res.found}, fid=${res.fid}');
-      if (res.found) fid = res.fid;
-    } else {
-      final res = _device.identifyTemplate(template);
-      if (res.fingerId != null) fid = res.fingerId.toString();
-    }
-    
-    print('[DASHBOARD_SCAN] Employee DB size: ${_employeeDb.length}, ByFid size: ${_employeeDbByFid.length}');
-    print('[DASHBOARD_SCAN] Looking for fid: "$fid"');
-    
-    final fingerId = fid != null ? int.tryParse(fid.trim()) : null;
-    _EmployeeEntry? employee =
-        (fid != null ? _employeeDbByFid[fid.trim()] : null) ??
-        (fingerId != null ? _employeeDb[fingerId] : null) ??
-        (fingerId != null ? _employeeDbByFid[fingerId.toString()] : null);
-    
-    print('[DASHBOARD_SCAN] Employee found: ${employee != null}, id=${employee?.id}, name=${employee?.name}');
+
+    _controller.setScanning(false);
+    final employee = await _dashboardController.resolveEmployeeFromTemplate(
+      device: _device,
+      template: template,
+    );
     
     if (employee == null) {
       print('[DASHBOARD_SCAN] Employee not found - showing fingerprint not recognized');
       // Show fingerprint not recognized error
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _isActiveRoute = false;
-          _stopScanLoop();
+          _dashboardController.setRouteActive(false);
+          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => DashboardPage(
@@ -427,8 +308,8 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          _isActiveRoute = false;
-          _stopScanLoop();
+          _dashboardController.setRouteActive(false);
+          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => DashboardPage(
@@ -438,8 +319,8 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
                 matchedAt: now,
                 siteId: widget.siteId,
                 resultType: resultTypeStr,
-                timeIn: attendanceType == 'TIME OUT' ? null : _formatTimeOnly(now),
-                timeOut: attendanceType == 'TIME OUT' ? _formatTimeOnly(now) : null,
+                timeIn: attendanceType == 'TIME OUT' ? null : DateTimeFormats.timeOnly(now),
+                timeOut: attendanceType == 'TIME OUT' ? DateTimeFormats.timeOnly(now) : null,
               ),
             ),
           );
@@ -466,8 +347,8 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          _isActiveRoute = false;
-          _stopScanLoop();
+          _dashboardController.setRouteActive(false);
+          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => DashboardPage(
@@ -486,247 +367,9 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
   
   Future<String?> _recordAttendance(String employeeId) async {
-    final siteId = widget.siteId?.toString();
-    print('[RECORD] ========================================');
-    print('[RECORD] siteId=$siteId employeeId=$employeeId');
-    print('[RECORD] ========================================');
-    if (siteId == null || siteId.isEmpty) return 'NO SITE';
-    
-    try {
-      print('[DASHBOARD_RECORD] Calling _buildPendingTimeLog...');
-      final pending = await _buildPendingTimeLog(
-        employeeId: employeeId,
-        siteId: siteId,
-        now: DateTime.now(),
-      );
-      
-      print('[DASHBOARD_RECORD] _buildPendingTimeLog returned code: ${pending.code}');
-      print(
-        '[DASHBOARD_RECORD] pending fields: date=${pending.timeLogDate} code=${pending.code} '
-        'inAM=${pending.timeInMorning} outAM=${pending.timeOutMorning} '
-        'inPM=${pending.timeInAfternoon} outPM=${pending.timeOutAfternoon}',
-      );
-      
-      print('[DASHBOARD_RECORD] Saving timelog with siteId=$siteId, employeeId=$employeeId');
-      await LocalDb.saveTimelog(
-        siteId: siteId,
-        employeeId: employeeId,
-        timelogData: {
-          'timelogID': pending.timeLogId,
-          'timelog': pending.timeLogDate,
-          'timeLogDate': pending.timeLogDate,
-          'timeInMorning': pending.timeInMorning,
-          'timeOutMorning': pending.timeOutMorning,
-          'timeInAfternoon': pending.timeInAfternoon,
-          'timeOutAfternoon': pending.timeOutAfternoon,
-          'remarks': pending.remarks,
-          'schedule': pending.schedule,
-          'code': pending.code,
-        },
-      );
-      
-      // Add a small delay to ensure database write completes
-      await Future.delayed(Duration(milliseconds: 500));
-      
-      print('[DASHBOARD_RECORD] SUCCESS: code=${pending.code}');
-      return pending.code.startsWith('IN') ? 'TIME IN' : 'TIME OUT';
-    } catch (e) {
-      final errorMsg = e.toString();
-      print('[DASHBOARD_RECORD] Caught exception: $errorMsg');
-      if (errorMsg.contains('ALREADY_OUT_TODAY')) {
-        return 'ALREADY OUT - Come back tomorrow';
-      } else if (errorMsg.contains('ALREADY_IN')) {
-        print('[DASHBOARD_RECORD] Returning: ALREADY IN');
-        return 'ALREADY IN';
-      }
-      print('[DASHBOARD_RECORD] Returning: TIME IN UNSUCCESSFUL');
-      return 'TIME IN UNSUCCESSFUL';
-    }
-  }
-  
-  String _formatDateOnly(DateTime date) {
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-  
-  String _formatTimeOnly(DateTime date) {
-    final h = date.hour.toString().padLeft(2, '0');
-    final m = date.minute.toString().padLeft(2, '0');
-    final s = date.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
-  String _getDayName(DateTime date) {
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    return days[date.weekday - 1];
-  }
-  
-  Future<_PendingTimeLog> _buildPendingTimeLog({
-    required String employeeId,
-    required String siteId,
-    required DateTime now,
-  }) async {
-    final date = _formatDateOnly(now);
-    final time = _formatTimeOnly(now);
-    
-    print('[TIMELOG] ===== START employeeId=$employeeId siteId=$siteId date=$date =====');
-    
-    // Dump all records for debugging
-    await LocalDb.debugDumpAllTimelogs();
-    
-    final cached = await LocalDb.getLatestTimelogForEmployee(
-      siteId: siteId,
+    return _dashboardController.recordAttendance(
       employeeId: employeeId,
-    );
-    
-    print('[TIMELOG] cached from DB: ${cached != null ? "FOUND" : "NULL"}');
-    if (cached != null) {
-      print('[TIMELOG] cached keys: ${cached.keys}');
-      print('[TIMELOG] cached full data: $cached');
-      print('[TIMELOG] timeInMorning value: "${cached['timeInMorning']}"');
-    }
-    
-    // Check if cached data is from today
-    final cachedDate = cached?['timeLogDate']?.toString() ?? cached?['timelog']?.toString() ?? '';
-    final isToday = cachedDate == date;
-    print('[TIMELOG] cachedDate=$cachedDate, today=$date, isToday=$isToday');
-    
-    // Only use cached data if it's from today
-    final todayCache = isToday ? cached : null;
-    
-    // FALLBACK: If we have a recent record with timeInMorning, check it regardless of date
-    // This is a temporary fix to handle the 3-scan issue
-    if (cached != null && !isToday) {
-      final recentTimeIn = cached['timeInMorning']?.toString();
-      if (recentTimeIn != null && recentTimeIn.isNotEmpty && recentTimeIn != '00:00:00') {
-        print('[TIMELOG] FALLBACK: Found recent timeInMorning, checking if within 5 minutes');
-        final recentDate = cached['timeLogDate']?.toString() ?? cached['timelog']?.toString() ?? '';
-        if (recentDate.isNotEmpty) {
-          try {
-            final recentDateTime = DateTime.tryParse('${recentDate}T$recentTimeIn');
-            if (recentDateTime != null) {
-              final diffMinutes = now.difference(recentDateTime).inMinutes;
-              print('[TIMELOG] FALLBACK: diffMinutes=$diffMinutes');
-              if (diffMinutes < 30) { // Within 30 minutes, treat as already timed in
-                print('[TIMELOG] FALLBACK: THROWING ALREADY_IN (recent scan within 30 min)');
-                throw Exception('ALREADY_IN');
-              }
-            }
-          } catch (e) {
-            print('[TIMELOG] FALLBACK: Error parsing recent time: $e');
-          }
-        }
-      }
-    }
-    
-    final timeLogId = (todayCache?['timelogID'] ?? todayCache?['remark'] ?? '').toString();
-    final remarks = (todayCache?['remarks'] ?? todayCache?['remark'] ?? '').toString();
-    final schedule = (todayCache?['schedule'] ?? todayCache?['schedCode'] ?? '')
-        .toString();
-
-    print('[DASHBOARD_TIMELOG] Raw cached values (today only):');
-    print('  timeInMorning: ${todayCache?['timeInMorning']}');
-    print('  timeOutMorning: ${todayCache?['timeOutMorning']}');
-    print('  timeInAfternoon: ${todayCache?['timeInAfternoon']}');
-    print('  timeOutAfternoon: ${todayCache?['timeOutAfternoon']}');
-    
-    final rawInMorning = todayCache?['timeInMorning']?.toString() ?? '';
-    final rawOutMorning = todayCache?['timeOutMorning']?.toString() ?? '';
-    final rawInAfternoon = todayCache?['timeInAfternoon']?.toString() ?? '';
-    final rawOutAfternoon = todayCache?['timeOutAfternoon']?.toString() ?? '';
-    
-    print('[DASHBOARD_TIMELOG] Raw strings: inM="$rawInMorning", outM="$rawOutMorning", inA="$rawInAfternoon", outA="$rawOutAfternoon"');
-    print('[DASHBOARD_TIMELOG] _isBlank checks: inM=${_isBlank(rawInMorning)}, outM=${_isBlank(rawOutMorning)}, inA=${_isBlank(rawInAfternoon)}, outA=${_isBlank(rawOutAfternoon)}');
-
-    final existingInMorning = _isBlank(rawInMorning) ? null : rawInMorning;
-    final existingOutMorning = _isBlank(rawOutMorning) ? null : rawOutMorning;
-    final existingInAfternoon = _isBlank(rawInAfternoon) ? null : rawInAfternoon;
-    final existingOutAfternoon = _isBlank(rawOutAfternoon) ? null : rawOutAfternoon;
-
-    print('[DASHBOARD_TIMELOG] Parsed existing values: inM=$existingInMorning, outM=$existingOutMorning, inA=$existingInAfternoon, outA=$existingOutAfternoon');
-
-    // If there is any TIME OUT recorded today (AM or PM), the day is complete.
-    // The next TIME IN is only allowed on a new day.
-    if (existingOutMorning != null || existingOutAfternoon != null) {
-      print('[DASHBOARD_TIMELOG] THROWING ALREADY_OUT_TODAY');
-      throw Exception('ALREADY_OUT_TODAY');
-    }
-
-    // Cooldown applies only when we are about to do a TIME OUT.
-    DateTime? lastTimeInForCooldown;
-    if (existingInMorning != null && existingOutMorning == null) {
-      lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInMorning');
-    } else if (existingInAfternoon != null && existingOutAfternoon == null) {
-      lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInAfternoon');
-    }
-
-    if (lastTimeInForCooldown != null) {
-      final diffMinutes = now.difference(lastTimeInForCooldown).inMinutes;
-      print('[DASHBOARD_TIMELOG] Time since last time-in: $diffMinutes minutes');
-      if (diffMinutes < 5) {
-        print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (within 5 min cooldown)');
-        throw Exception('ALREADY_IN');
-      }
-    }
-
-    print('[DASHBOARD_TIMELOG] Decision path check: existingInMorning=$existingInMorning, existingOutMorning=$existingOutMorning');
-
-    if (existingInMorning == null) {
-      print('[DASHBOARD_TIMELOG] DECISION: Returning IN_AM');
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'IN_AM',
-        timeInMorning: time,
-        timeOutMorning: existingOutMorning,
-        timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-    if (existingOutMorning == null) {
-      print('[DASHBOARD_TIMELOG] Decision: Returning OUT_AM because existingOutMorning is null');
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'OUT_AM',
-        timeInMorning: existingInMorning,
-        timeOutMorning: time,
-        timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-    if (existingInAfternoon == null) {
-      print('[DASHBOARD_TIMELOG] Returning IN_PM');
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'IN_PM',
-        timeInMorning: existingInMorning,
-        timeOutMorning: existingOutMorning,
-        timeInAfternoon: time,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-
-    print('[DASHBOARD_TIMELOG] Returning OUT_PM');
-    return _PendingTimeLog(
-      timeLogId: timeLogId,
-      timeLogDate: date,
-      remarks: remarks,
-      schedule: schedule,
-      code: 'OUT_PM',
-      timeInMorning: existingInMorning,
-      timeOutMorning: existingOutMorning,
-      timeInAfternoon: existingInAfternoon,
-      timeOutAfternoon: time,
+      siteId: widget.siteId?.toString(),
     );
   }
   
@@ -874,8 +517,15 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
                         if (_enableScanning && _device.isConnected) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted) {
-                              _controller.setScanning(false);
-                              _startScanLoop();
+                              _dashboardController.stopScanLoop(
+                                setScanning: _controller.setScanning,
+                              );
+                              _dashboardController.startScanLoop(
+                                device: _device,
+                                isScanning: () => _controller.isScanning.value,
+                                setScanning: _controller.setScanning,
+                                onTemplateReady: _onTemplateReady,
+                              );
                             }
                           });
                         }
@@ -906,21 +556,6 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
     );
   }
   
-  void _startAfkTimer() {
-    _afkTimer?.cancel();
-    _afkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_lastActivityTime != null) {
-        final elapsed = DateTime.now().difference(_lastActivityTime!).inSeconds;
-        if (elapsed >= _afkTimeoutSeconds) {
-          _afkTimer?.cancel();
-          if (mounted) {
-            _returnToScanner();
-          }
-        }
-      }
-    });
-  }
-  
   void _returnToScanner() {
     // Show brief message before returning
     ScaffoldMessenger.of(context).showSnackBar(
@@ -941,236 +576,23 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
   
   void _resetAfkTimer() {
-    setState(() => _lastActivityTime = DateTime.now());
-  }
-  
-  Future<void> _checkAlreadyTimedIn() async {
-    // Disabled - no "already timed in" warning needed
-    setState(() {
-      _alreadyTimedIn = false;
-    });
+    _dashboardController.resetAfkTimer();
   }
 
   Future<void> _loadRows() async {
-    final siteId = widget.siteId;
-    // ...
-    final employeeId = widget.employeeId;
-    if (siteId == null ||
-        siteId.isEmpty ||
-        employeeId == null ||
-        employeeId.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _rows = const [];
-        _loadingRows = false;
-      });
-      return;
-    }
-
-    // Longer delay to ensure any pending save completes
-    await Future.delayed(const Duration(milliseconds: 1000));
-
-    try {
-      print('[DASHBOARD_LOAD] ===== LOADING HISTORY =====');
-      print('[DASHBOARD_LOAD] siteId="$siteId" employeeId="$employeeId"');
-      
-      // First dump all records to see what's in the database
-      await LocalDb.debugDumpAllTimelogs();
-      
-      final history = await LocalDb.getTimelogHistoryForEmployee(
-        siteId: siteId,
-        employeeId: employeeId,
-        limit: 10,
-      );
-      print('[DASHBOARD_LOAD] Loaded ${history.length} rows for employeeId="$employeeId" on siteId="$siteId"');
-      for (var row in history) {
-        print('[DASHBOARD_LOAD] Row raw: $row');
-      }
-      if (!mounted) return;
-      
-      final rows = history.map(_rowFromTimelog).toList();
-      
-      // Check if today's row exists and update/create as needed
-      final today = _formatDateOnly(DateTime.now());
-      final todayIndex = rows.indexWhere((r) => r.rawDate == today);
-      
-      if (todayIndex >= 0) {
-        // Today's row exists - update it with passed values if needed
-        final todayRow = rows[todayIndex];
-        final todayLog = todayRow.timeLogs.split('|');
-        String timeIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
-        String timeOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
-        
-        // Override with passed values if they exist
-        if (widget.timeIn != null) timeIn = widget.timeIn!;
-        if (widget.timeOut != null) timeOut = widget.timeOut!;
-        
-        final hasIn = timeIn != '-' && timeIn.isNotEmpty;
-        final hasOut = timeOut != '-' && timeOut.isNotEmpty;
-        final status = hasIn && hasOut ? 'COMPLETE' : (hasIn ? 'INCOMPLETE' : 'NO LOG');
-        
-        rows[todayIndex] = _DashboardRow(
-          rawDate: todayRow.rawDate,
-          date: todayRow.date,
-          day: todayRow.day,
-          shift: todayRow.shift,
-          timeLogs: '$timeIn | $timeOut',
-          status: status,
-          isComplete: status == 'COMPLETE',
-        );
-        print('[DASHBOARD_LOAD] Updated today row at index $todayIndex with status $status');
-      } else if (widget.timeIn != null || widget.timeOut != null) {
-        // No today's row but we have passed values - create one
-        final timeIn = widget.timeIn ?? '-';
-        final timeOut = widget.timeOut ?? '-';
-        final hasIn = timeIn != '-' && timeIn.isNotEmpty;
-        final hasOut = timeOut != '-' && timeOut.isNotEmpty;
-        final status = hasIn && hasOut ? 'COMPLETE' : (hasIn ? 'INCOMPLETE' : 'NO LOG');
-        
-        rows.insert(0, _DashboardRow(
-          rawDate: today,
-          date: _formatDate(DateTime.now()),
-          day: _getDayName(DateTime.now()).toUpperCase(),
-          shift: '-',
-          timeLogs: '$timeIn | $timeOut',
-          status: status,
-          isComplete: status == 'COMPLETE',
-        ));
-        print('[DASHBOARD_LOAD] Created today row with status $status');
-      }
-      
-      setState(() {
-        _rows = rows;
-        _loadingRows = false;
-      });
-      
-      // Disabled - no "already timed in" warning needed
-      await _checkAlreadyTimedIn();
-    } catch (e) {
-      print('[DASHBOARD_LOAD] Error: $e');
-      if (!mounted) return;
-      setState(() {
-        _rows = const [];
-        _loadingRows = false;
-      });
-    }
+    await _dashboardController.loadRows(
+      siteId: widget.siteId,
+      employeeId: widget.employeeId,
+      overrideTimeIn: widget.timeIn,
+      overrideTimeOut: widget.timeOut,
+    );
   }
 
-  String _pickFirst(Map<String, dynamic> row, List<String> keys) {
-    for (final key in keys) {
-      final value = row[key];
-      if (value == null) continue;
-      final text = value.toString().trim();
-      if (text.isNotEmpty && text.toLowerCase() != 'null') {
-        return text;
-      }
-    }
-    return '';
-  }
-
-  bool _isBlank(String value) {
-    final text = value.trim();
-    return text.isEmpty ||
-        text == '00:00:00' ||
-        text == '0' ||
-        text.toLowerCase() == 'null';
-  }
-
-  DateTime? _parseDate(String text) =>
-      text.isEmpty ? null : DateTime.tryParse(text);
-
-  String _dateKey(DateTime date) {
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-
-  String _rowDateKey(_DashboardRow row) {
+  String _rowDateKey(DashboardRowVm row) {
     final parsed = DateTime.tryParse(row.rawDate);
-    if (parsed != null) return _dateKey(parsed);
+    if (parsed != null) return DateTimeFormats.dateKey(parsed);
     if (row.rawDate.length >= 10) return row.rawDate.substring(0, 10);
     return row.rawDate;
-  }
-
-  String _formatDate(DateTime date) {
-    const months = [
-      'JANUARY',
-      'FEBRUARY',
-      'MARCH',
-      'APRIL',
-      'MAY',
-      'JUNE',
-      'JULY',
-      'AUGUST',
-      'SEPTEMBER',
-      'OCTOBER',
-      'NOVEMBER',
-      'DECEMBER',
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
-
-  String _formatDay(DateTime date) {
-    const days = [
-      'MONDAY',
-      'TUESDAY',
-      'WEDNESDAY',
-      'THURSDAY',
-      'FRIDAY',
-      'SATURDAY',
-      'SUNDAY',
-    ];
-    return days[date.weekday - 1];
-  }
-
-  _DashboardRow _rowFromTimelog(Map<String, dynamic> row) {
-    final dateText = _pickFirst(row, [
-      'timelog',
-      'timeLogDate',
-      'timelog_date',
-      'datecaptured',
-      'datelog',
-    ]);
-    final parsedDate = _parseDate(dateText);
-    final timeInMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning']);
-    final timeOutMorning = _pickFirst(row, [
-      'timeOutMorning',
-      'timeoutmorning',
-    ]);
-    final timeInAfternoon = _pickFirst(row, [
-      'timeInAfternoon',
-      'timeinafternoon',
-    ]);
-    final timeOutAfternoon = _pickFirst(row, [
-      'timeOutAfternoon',
-      'timeoutafternoon',
-    ]);
-    final firstIn = !_isBlank(timeInMorning)
-        ? timeInMorning
-        : (!_isBlank(timeInAfternoon) ? timeInAfternoon : '-');
-    final lastOut = !_isBlank(timeOutAfternoon)
-        ? timeOutAfternoon
-        : (!_isBlank(timeOutMorning) ? timeOutMorning : '-');
-    final hasIn = !_isBlank(timeInMorning) || !_isBlank(timeInAfternoon);
-    final hasOut = !_isBlank(timeOutMorning) || !_isBlank(timeOutAfternoon);
-    final status = hasIn && hasOut
-        ? 'COMPLETE'
-        : (hasIn ? 'INCOMPLETE' : 'NO LOG');
-
-    return _DashboardRow(
-      rawDate: dateText,
-      date: parsedDate != null
-          ? _formatDate(parsedDate)
-          : (dateText.isEmpty ? '-' : dateText),
-      day: parsedDate != null ? _formatDay(parsedDate) : '-',
-      shift: _pickFirst(row, ['schedule', 'schedCode']).isEmpty
-          ? '-'
-          : _pickFirst(row, ['schedule', 'schedCode']),
-      timeLogs: '$firstIn | $lastOut',
-      status: status,
-      isComplete: status == 'COMPLETE',
-    );
   }
 
   @override
@@ -1272,7 +694,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       top: h * fracTop - sizePx / 2,
       width: sizePx,
       height: sizePx,
-      child: _DashboardRisingFadeParticle(
+      child: DashboardRisingFadeParticle(
         size: sizePx,
         phase: phase,
         assetPath: 'assets/icons/square-particles-fx.svg',
@@ -1301,12 +723,15 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
 
   Widget _buildProfileCard(double w, double h) {
-    final cardRadius = BorderRadius.circular(w * 0.023);
-    final expandedPanelColor = const Color(0xFF092238).withValues(alpha: 0.50);
+    return Obx(() {
+      final cardRadius = BorderRadius.circular(w * 0.023);
+      final expandedPanelColor = const Color(0xFF092238).withValues(alpha: 0.50);
+      final profilePhoto = _dashboardController.profilePhoto.value;
+      final alreadyTimedIn = _dashboardController.alreadyTimedIn.value;
 
-    return ClipRRect(
-      borderRadius: cardRadius,
-      child: Container(
+      return ClipRRect(
+        borderRadius: cardRadius,
+        child: Container(
         width: w * 0.55,
         height: double.infinity,
         color: Colors.transparent,
@@ -1335,21 +760,21 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
                          color: Colors.white.withValues(alpha: 0.85),
                          width: 3,
                        ),
-                      gradient: _profilePhoto == null
+                      gradient: profilePhoto == null
                           ? const LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                               colors: [Color(0xFF3FA9F5), Color(0xFF1B75BB)],
                             )
                           : null,
-                      image: _profilePhoto != null
+                      image: profilePhoto != null
                           ? DecorationImage(
-                              image: MemoryImage(_profilePhoto!),
+                              image: MemoryImage(profilePhoto),
                               fit: BoxFit.cover,
                             )
                           : null,
                     ),
-                    child: _profilePhoto == null
+                    child: profilePhoto == null
                         ? Builder(
                             builder: (_) {
                               final initials =
@@ -1456,7 +881,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
                           top: -(w * 0.02),
                           left: 0.1,
                           child: ClipPath(
-                            clipper: const _TopLeftCurvedNotchClipper(),
+                            clipper: const TopLeftCurvedNotchClipper(),
                             child: Container(
                               width: w * 0.039,
                               height: w * 0.020,
@@ -1533,7 +958,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
                                       letterSpacing: 1.4,
                                     ),
                                   ),
-                                  if (_alreadyTimedIn) ...[
+                                  if (alreadyTimedIn) ...[
                                     SizedBox(height: h * 0.008),
                                     Container(
                                       padding: EdgeInsets.symmetric(
@@ -1583,8 +1008,8 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
             ),
           ],
         ),
-      ),
-    );
+      ));
+    });
   }
 
   Widget _buildTopPill(
@@ -1594,7 +1019,6 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
     VoidCallback? onTap,
   }) {
     final radius = BorderRadius.circular(w * 0.018);
-
     return Container(
       padding: EdgeInsets.symmetric(horizontal: w * 0.01, vertical: w * 0.01),
       decoration: BoxDecoration(
@@ -1618,91 +1042,93 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
 
   Widget _buildTimePanel(double w, double h) {
-    final now = _now;
-    final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
-    final minute = now.minute.toString().padLeft(2, '0');
-    final period = now.hour >= 12 ? 'PM' : 'AM';
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: w * 0.020, vertical: h * 0.050),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${hour.toString().padLeft(2, '0')}:$minute $period',
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.042,
-                  color: Colors.white,
-                  letterSpacing: 4,
-                  height: 1,
+    return Obx(() {
+      final now = _dashboardController.now.value;
+      final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
+      final minute = now.minute.toString().padLeft(2, '0');
+      final period = now.hour >= 12 ? 'PM' : 'AM';
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: w * 0.020, vertical: h * 0.050),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${hour.toString().padLeft(2, '0')}:$minute $period',
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: w * 0.042,
+                    color: Colors.white,
+                    letterSpacing: 4,
+                    height: 1,
+                  ),
                 ),
-              ),
-              SizedBox(height: h * 0.006),
-              Text(
-                _formatDate(now),
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.020,
-                  color: Colors.white.withValues(alpha: 0.9),
-                  letterSpacing: 3,
-                  height: 1.1,
+                SizedBox(height: h * 0.006),
+                Text(
+                  DateTimeFormats.dateLongUpper(now),
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: w * 0.020,
+                    color: Colors.white.withValues(alpha: 0.9),
+                    letterSpacing: 3,
+                    height: 1.1,
+                  ),
                 ),
-              ),
-              SizedBox(height: h * 0.002),
-              Text(
-                _formatDay(now),
-                style: TextStyle(
-                  fontFamily: 'CEORUSE',
-                  fontSize: w * 0.014,
-                  color: Colors.white.withValues(alpha: 0.7),
-                  letterSpacing: 4,
+                SizedBox(height: h * 0.002),
+                Text(
+                  DateTimeFormats.dayLongUpper(now),
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: w * 0.014,
+                    color: Colors.white.withValues(alpha: 0.7),
+                    letterSpacing: 4,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+              ],
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   Widget _buildTodayLogCard(double w, double h) {
-    final now = widget.matchedAt ?? DateTime.now();
-    final todayDate = _formatDate(now);
-    final todayKey = _dateKey(now);
-    final todayRow = _rows.firstWhere(
-      (row) => _rowDateKey(row) == todayKey,
-      orElse: () => _rows.isNotEmpty
-          ? _rows.first
-          : const _DashboardRow(
-              rawDate: '',
-              date: '-',
-              day: '-',
-              shift: '-',
-              timeLogs: '- | -',
-              status: 'NO LOG',
-              isComplete: false,
-            ),
-    );
-    
-    // Use passed timeIn/timeOut if available, otherwise from loaded rows
-    final passedTimeIn = widget.timeIn;
-    final passedTimeOut = widget.timeOut;
-    
-    final todayLog = todayRow.timeLogs.split('|');
-    final rowTimeIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
-    final rowTimeOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
-    
-    // Prioritize passed values over loaded values
-    final todayIn = passedTimeIn ?? (rowTimeIn != '-' ? rowTimeIn : '-');
-    final todayOut = passedTimeOut ?? (rowTimeOut != '-' ? rowTimeOut : '-');
-    return Align(
-      alignment: Alignment.centerRight,
-      child: SizedBox(
+    return Obx(() {
+      final now = widget.matchedAt ?? DateTime.now();
+      final todayDate = DateTimeFormats.dateLongUpper(now);
+      final todayKey = DateTimeFormats.dateKey(now);
+      final rows = _dashboardController.rows;
+      final todayRow = rows.firstWhere(
+        (row) => _rowDateKey(row) == todayKey,
+        orElse: () => rows.isNotEmpty
+            ? rows.first
+            : const DashboardRowVm(
+                rawDate: '',
+                date: '-',
+                day: '-',
+                shift: '-',
+                timeLogs: '- | -',
+                status: 'NO LOG',
+                isComplete: false,
+              ),
+      );
+
+      final passedTimeIn = widget.timeIn;
+      final passedTimeOut = widget.timeOut;
+
+      final todayLog = todayRow.timeLogs.split('|');
+      final rowTimeIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
+      final rowTimeOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
+
+      final todayIn = passedTimeIn ?? (rowTimeIn != '-' ? rowTimeIn : '-');
+      final todayOut = passedTimeOut ?? (rowTimeOut != '-' ? rowTimeOut : '-');
+      return Align(
+        alignment: Alignment.centerRight,
+        child: SizedBox(
         width: w * 0.38,
         child: Container(
           decoration: BoxDecoration(
@@ -1832,6 +1258,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
         ),
       ),
     );
+    });
   }
 
   Widget _buildBottomTable(double w, double h) {
@@ -1850,9 +1277,11 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
       letterSpacing: 1.4,
     );
 
-    final rows = _rows;
+    return Obx(() {
+      final rows = _dashboardController.rows;
+      final loadingRows = _dashboardController.isLoadingRows.value;
 
-    return Container(
+      return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(w * 0.028),
         color: const Color.fromRGBO(4, 17, 27, 1).withValues(alpha: 0.50),
@@ -1884,7 +1313,7 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
             ),
           ),
           Expanded(
-            child: _loadingRows
+            child: loadingRows
                 ? const Center(child: CircularProgressIndicator())
                 : rows.isEmpty
                 ? Center(
@@ -1948,9 +1377,10 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
         ],
       ),
     );
+    });
   }
 
-  Widget _buildStatusChip(double w, _DashboardRow row) {
+  Widget _buildStatusChip(double w, DashboardRowVm row) {
     final color = row.isComplete
         ? const Color(0xFF4CAF50)
         : const Color(0xFFFFC107);
@@ -1989,157 +1419,4 @@ class _DashboardPageState extends State<DashboardPage> with RouteAware {
   }
 }
 
-class _DashboardRow {
-  const _DashboardRow({
-    required this.rawDate,
-    required this.date,
-    required this.day,
-    required this.shift,
-    required this.timeLogs,
-    required this.status,
-    required this.isComplete,
-  });
 
-  final String rawDate;
-  final String date;
-  final String day;
-  final String shift;
-  final String timeLogs;
-  final String status;
-  final bool isComplete;
-}
-
-class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
-  const _TopLeftCurvedNotchClipper();
-
-  @override
-  Path getClip(Size size) {
-    return Path()
-      ..moveTo(0, size.height)
-      ..lineTo(size.width, size.height)
-      ..quadraticBezierTo(size.width * 0.10, size.height * 0.92, 0, 0)
-      ..close();
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
-class _DashboardRisingFadeParticle extends StatefulWidget {
-  const _DashboardRisingFadeParticle({
-    required this.size,
-    required this.assetPath,
-    this.phase = 0.0,
-  });
-
-  final double size;
-  final String assetPath;
-  final double phase;
-
-  @override
-  State<_DashboardRisingFadeParticle> createState() =>
-      _DashboardRisingFadeParticleState();
-}
-
-class _DashboardRisingFadeParticleState
-    extends State<_DashboardRisingFadeParticle>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-  Animation<double>? _opacity;
-  Animation<double>? _translateY;
-  Animation<double>? _scale;
-
-  static const double _riseDistance = 48.0;
-  static const Duration _duration = Duration(milliseconds: 2600);
-
-  @override
-  void initState() {
-    super.initState();
-    final controller = AnimationController(vsync: this, duration: _duration);
-    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
-    _controller = controller;
-    _opacity = Tween<double>(begin: 0.50, end: 0.0).animate(curve);
-    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
-    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
-    controller.value = widget.phase;
-    controller.repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    final opacity = _opacity;
-    final translateY = _translateY;
-    final scale = _scale;
-    if (controller == null ||
-        opacity == null ||
-        translateY == null ||
-        scale == null) {
-      return const SizedBox.shrink();
-    }
-
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, translateY.value),
-          child: Opacity(
-            opacity: opacity.value,
-            child: Transform.scale(
-              scale: scale.value,
-              alignment: Alignment.center,
-              child: SvgPicture.asset(
-                widget.assetPath,
-                width: widget.size,
-                height: widget.size,
-                fit: BoxFit.contain,
-                colorFilter: const ColorFilter.mode(
-                  Color(0xFF5FCFFF),
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// Helper classes for fingerprint scanning
-class _EmployeeEntry {
-  final String id;
-  final String name;
-  
-  const _EmployeeEntry({required this.id, required this.name});
-}
-
-class _PendingTimeLog {
-  final String timeLogId;
-  final String timeLogDate;
-  final String remarks;
-  final String schedule;
-  final String code;
-  final String? timeInMorning;
-  final String? timeOutMorning;
-  final String? timeInAfternoon;
-  final String? timeOutAfternoon;
-  
-  const _PendingTimeLog({
-    required this.timeLogId,
-    required this.timeLogDate,
-    required this.remarks,
-    required this.schedule,
-    required this.code,
-    this.timeInMorning,
-    this.timeOutMorning,
-    this.timeInAfternoon,
-    this.timeOutAfternoon,
-  });
-}
