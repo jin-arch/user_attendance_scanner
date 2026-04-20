@@ -535,7 +535,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.035,
+                  fontSize: w * 0.030,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
@@ -1140,6 +1140,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   Widget _buildScannerCard(double w, double h) {
     return SizedBox(
       width: w * 0.20,
+      height: 350,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(w * 0.022),
         child: Image.asset(
@@ -1151,22 +1152,24 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
 
   Widget _buildFingerprintPreview(double w, double h) {
-    return Container(
-      width: w * 0.16,
-      padding: EdgeInsets.all(w * 0.008),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(w * 0.022),
-      ),
-      child: Center(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(w * 0.022),
+      child: SizedBox(
+        width: w * 0.16,
+        height: 350,
         child: _lastFingerprintImage != null
             ? Image.memory(
                 _lastFingerprintImage!,
-                fit: BoxFit.contain,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
               )
-            : Image.asset(
-                'assets/images/Finger Print Icon.png',
-                fit: BoxFit.contain,
+            : Container(
+                color: Colors.white,
+                child: Image.asset(
+                  'assets/images/Finger Print Icon.png',
+                  fit: BoxFit.contain,
+                ),
               ),
       ),
     );
@@ -1285,7 +1288,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: w * 0.032,
+        height: w * 0.04,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: color,
@@ -1335,7 +1338,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     final h = size.height;
     return Scaffold(
       backgroundColor: Colors.black,
-      resizeToAvoidBottomInset: true,
+      resizeToAvoidBottomInset: false,
       body: Container(
         decoration: const BoxDecoration(
           image: DecorationImage(

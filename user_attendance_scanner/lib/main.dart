@@ -8,7 +8,7 @@ import 'package:get/get.dart';
 import 'package:user_attendance_scanner/routes/app_routes.dart';
 import 'package:user_attendance_scanner/routes/route_observer.dart';
 
-import 'app_binding.dart';
+import 'bindings/app_binding.dart';
 import 'views/dashboard_mvp_page.dart';
 import 'views/home_mvp_page.dart';
 import 'views/splash_page.dart';

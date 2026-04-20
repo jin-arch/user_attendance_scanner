@@ -9,7 +9,7 @@ import 'lib/site_model.dart';
 import 'lib/employee_model.dart';
 import 'lib/attendance_model.dart';
 import 'lib/legacy_home_page_controller.dart';
-import 'lib/app_binding.dart';
+import 'lib/bindings/app_binding.dart';
 
 // Import views
 import 'lib/views/home_page.dart';
