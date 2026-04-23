@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
-import 'employee_model.dart';
-import 'scan_result_model.dart';
+import '../models/employee_model.dart';
+import '../models/scan_result_model.dart';
 
 abstract class DeviceService {
   /// Check if device is connected

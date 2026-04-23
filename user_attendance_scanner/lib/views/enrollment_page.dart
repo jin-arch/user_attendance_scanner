@@ -8,7 +8,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
-import '../widgets/top_left_curved_notch_clipper.dart';
 
 class _DashboardRisingFadeParticle extends StatefulWidget {
   const _DashboardRisingFadeParticle({
@@ -88,6 +87,22 @@ class _DashboardRisingFadeParticleState extends State<_DashboardRisingFadePartic
       },
     );
   }
+}
+
+class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
+  const _TopLeftCurvedNotchClipper();
+
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(0, size.height)
+      ..lineTo(size.width, size.height)
+      ..quadraticBezierTo(size.width * 0.10, size.height * 0.92, 0, 0)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class EnrollmentPage extends StatefulWidget {
@@ -512,8 +527,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     }
   }
 
-  // ─── Time Panel ───────────────────────────────────────────────────────────
-
+  // Time Panel
   Widget _buildTimePanel(double w, double h) {
     final now = DateTime.now();
     final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
@@ -535,7 +549,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
                 '${hour.toString().padLeft(2, '0')}:$minute $period',
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
-                  fontSize: w * 0.030,
+                  fontSize: w * 0.035,
                   color: Colors.white,
                   letterSpacing: 4,
                   height: 1,
@@ -585,8 +599,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     return days[date.weekday - 1];
   }
 
-  // ─── Today Log Card ───────────────────────────────────────────────────────
-
+  // Today Log Card
   Widget _buildTodayLogCard(double w, double h) {
     final now = DateTime.now();
     final todayDate = _formatDate(now);
@@ -674,8 +687,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     );
   }
 
-  // ─── Top Pill ─────────────────────────────────────────────────────────────
-
+  // Top Pill
   Widget _buildTopPill(double w, {required String label, bool active = false}) {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: w * 0.01, vertical: w * 0.01),
@@ -697,8 +709,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     );
   }
 
-  // ─── Profile Card ─────────────────────────────────────────────────────────
-
+  // Profile Card
   Widget _buildProfileCard(double w, double h, BuildContext context) {
     final cardRadius = BorderRadius.circular(w * 0.023);
     final expandedPanelColor = const Color(0xFF092238).withOpacity(0.5);
@@ -837,7 +848,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
                           top: -(w * 0.02),
                           left: 0.1,
                           child: ClipPath(
-                            clipper: const TopLeftCurvedNotchClipper(),
+                            clipper: const _TopLeftCurvedNotchClipper(),
                             child: Container(
                               width: w * 0.039,
                               height: w * 0.020,
@@ -942,8 +953,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     );
   }
 
-  // ─── Bottom Row ───────────────────────────────────────────────────────────
-
+  // Bottom Row
   Widget _buildBottomRow(double w, double h) {
     return Expanded(
       child: Row(
@@ -952,7 +962,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
           _buildEnrollmentGuide(w, h),
           SizedBox(width: w * 0.010),
 
-          // ← Wrap scanner + fingerprint in a dark container
+          // Scanner + fingerprint container
           Container(
             padding: EdgeInsets.all(w * 0.010),
             decoration: BoxDecoration(
@@ -1140,11 +1150,10 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   Widget _buildScannerCard(double w, double h) {
     return SizedBox(
       width: w * 0.20,
-      height: 350,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(w * 0.022),
         child: Image.asset(
-          'assets/images/finger-biometric-image.png', // 👈 replace with your image path
+          'assets/images/finger-biometric-image.png',
           fit: BoxFit.cover,
         ),
       ),
@@ -1152,24 +1161,22 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
 
   Widget _buildFingerprintPreview(double w, double h) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(w * 0.022),
-      child: SizedBox(
-        width: w * 0.16,
-        height: 350,
+    return Container(
+      width: w * 0.16,
+      padding: EdgeInsets.all(w * 0.008),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(w * 0.022),
+      ),
+      child: Center(
         child: _lastFingerprintImage != null
             ? Image.memory(
                 _lastFingerprintImage!,
-                fit: BoxFit.cover,
-                width: double.infinity,
-                height: double.infinity,
+                fit: BoxFit.contain,
               )
-            : Container(
-                color: Colors.white,
-                child: Image.asset(
-                  'assets/images/Finger Print Icon.png',
-                  fit: BoxFit.contain,
-                ),
+            : Image.asset(
+                'assets/images/Finger Print Icon.png',
+                fit: BoxFit.contain,
               ),
       ),
     );
@@ -1288,7 +1295,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: w * 0.04,
+        height: w * 0.032,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: color,
@@ -1307,7 +1314,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     );
   }
 
-  // ─── Particle FX (copied from dashboard) ───
+  // Particle FX (copied from dashboard)
   Widget _particle(
     double w,
     double h,
@@ -1329,8 +1336,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     );
   }
 
-  // ─── Build ────────────────────────────────────────────────────────────────
-
+  // Build
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
@@ -1338,7 +1344,7 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     final h = size.height;
     return Scaffold(
       backgroundColor: Colors.black,
-      resizeToAvoidBottomInset: false,
+      resizeToAvoidBottomInset: true,
       body: Container(
         decoration: const BoxDecoration(
           image: DecorationImage(

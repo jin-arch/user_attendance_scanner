@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'site_model.dart';
+import '../models/site_model.dart';
 import 'site_repository.dart';
+import '../services/local_db.dart';
 
 class SiteRepositoryImpl implements SiteRepository {
   static const String _siteApiUrl = 'https://fastdevs-api.com/HRIS_BIOMETRICS/public/api/v1/site/all';

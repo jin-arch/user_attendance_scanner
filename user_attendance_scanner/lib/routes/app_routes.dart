@@ -3,6 +3,9 @@ abstract final class AppRoutes {
   static const splash = '/';
   static const home = '/home';
   static const dashboard = '/dashboard';
+  static const enrollment = '/enrollment';
+  static const logs = '/logs';
+  static const database = '/database';
 
   // Legacy UI routes
   static const legacyHome = '/legacy/home';

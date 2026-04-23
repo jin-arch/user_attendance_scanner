@@ -55,7 +55,7 @@ class NavigationDrawer extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'HIRS SYSTEM',
+                  'ATTENDANCE SYSTEM',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -66,7 +66,7 @@ class NavigationDrawer extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Human Resources Information System',
+                  'Biometric Attendance Management',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.8),
                     fontSize: 12,

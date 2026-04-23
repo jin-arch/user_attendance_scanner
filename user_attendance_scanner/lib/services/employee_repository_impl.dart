@@ -1,7 +1,7 @@
 import 'dart:typed_data';
-import 'employee_model.dart';
+import '../models/employee_model.dart';
 import 'employee_repository.dart';
-import 'services/local_db.dart';
+import '../services/local_db.dart';
 
 class EmployeeRepositoryImpl implements EmployeeRepository {
   @override

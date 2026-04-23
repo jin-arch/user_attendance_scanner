@@ -3,15 +3,15 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
-import '../site_model.dart';
-import '../employee_model.dart';
-import '../attendance_model.dart';
-import '../scan_result_model.dart';
+import '../models/site_model.dart';
+import '../models/employee_model.dart';
+import '../models/attendance_model.dart';
+import '../models/scan_result_model.dart';
 import '../routes/app_routes.dart';
-import '../site_repository.dart';
-import '../employee_repository.dart';
-import '../attendance_repository.dart';
-import '../device_service.dart';
+import '../services/site_repository.dart';
+import '../services/employee_repository.dart';
+import '../services/attendance_repository.dart';
+import '../services/device_service.dart';
 
 class HomePageController extends GetxController {
   // Dependencies (will be injected)
@@ -148,8 +148,6 @@ class HomePageController extends GetxController {
   Future<void> connectDevice() async {
     try {
       isSearching.value = true;
-      setStatus('Searching for device...');
-      
       final connected = await _deviceService.connect();
       isConnected.value = connected;
       

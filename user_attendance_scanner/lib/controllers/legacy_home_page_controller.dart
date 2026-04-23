@@ -12,6 +12,9 @@ class LegacyHomePageController extends GetxController {
 
   Timer? _clockTimer;
 
+  // Getter for backward compatibility
+  RxString get status => statusMessage;
+
   @override
   void onInit() {
     super.onInit();

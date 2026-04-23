@@ -9,12 +9,13 @@ import 'package:user_attendance_scanner/routes/app_routes.dart';
 import 'package:user_attendance_scanner/routes/route_observer.dart';
 
 import 'bindings/app_binding.dart';
-import 'views/dashboard_mvp_page.dart';
-import 'views/home_mvp_page.dart';
 import 'views/splash_page.dart';
 
 import 'views/home_page.dart';
 import 'views/dashboard_page.dart';
+import 'views/enrollment_page.dart';
+import 'views/logs_page.dart';
+import 'views/database_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,18 +61,23 @@ class MyApp extends StatelessWidget {
       builder: previewEnabled ? DevicePreview.appBuilder : null,
       navigatorObservers: [routeObserver],
       debugShowCheckedModeBanner: false,
-      title: 'HIRS - Human Resources Information System',
+      title: 'Attendance Scanner - Biometric System',
       initialBinding: AppBinding(),
-      initialRoute: AppRoutes.legacyHome,
+      initialRoute: AppRoutes.home,
       getPages: [
-        // Legacy UI (default)
-        GetPage(name: AppRoutes.legacyHome, page: () => const HomePage()),
-        GetPage(name: AppRoutes.legacyDashboard, page: () => const DashboardPage()),
+        // Refactored UI (using controllers and services)
+        GetPage(name: AppRoutes.home, page: () => HomePage()),
+        GetPage(name: AppRoutes.dashboard, page: () => DashboardPage()),
+        GetPage(name: AppRoutes.enrollment, page: () => const EnrollmentPage()),
+        GetPage(name: AppRoutes.logs, page: () => const LogsPage()),
+        GetPage(name: AppRoutes.database, page: () => const DatabasePage()),
 
-        // MVP UI (kept for migration)
+        // Legacy UI routes
+        GetPage(name: AppRoutes.legacyHome, page: () => HomePage()),
+        GetPage(name: AppRoutes.legacyDashboard, page: () => DashboardPage()),
+
+        // Splash page
         GetPage(name: AppRoutes.splash, page: () => const SplashPage()),
-        GetPage(name: AppRoutes.home, page: () => const HomeMvpPage()),
-        GetPage(name: AppRoutes.dashboard, page: () => const DashboardMvpPage()),
       ],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

@@ -1022,4 +1022,50 @@ class LocalDb {
     await _db?.close();
     _db = null;
   }
+
+  // Missing methods needed by HomePageService
+  static Future<void> cacheTimeLogs(String siteId, List<Map<String, dynamic>> logs) async {
+    final db = await _open();
+    final batch = db.batch();
+    
+    for (final log in logs) {
+      batch.insert('timelog_cache', {
+        ...log,
+        'site_id': siteId,
+        'cached_at': DateTime.now().toIso8601String(),
+      });
+    }
+    
+    await batch.commit(noResult: true);
+  }
+
+  static Future<List<Map<String, dynamic>>> getEmployeeLogsForDate(String employeeId, String siteId, DateTime date) async {
+    final db = await _open();
+    final startOfDay = DateTime(date.year, date.month, date.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+    
+    return await db.query(
+      'timelog_cache',
+      where: 'employee_id = ? AND site_id = ? AND timestamp >= ? AND timestamp < ?',
+      whereArgs: [employeeId, siteId, startOfDay.toIso8601String(), endOfDay.toIso8601String()],
+      orderBy: 'timestamp DESC',
+    );
+  }
+
+  static Future<void> insertTimeLog(Map<String, dynamic> timelog) async {
+    final db = await _open();
+    await db.insert('timelog_cache', {
+      ...timelog,
+      'cached_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  static Future<void> deleteEmployeePhoto(String employeeId, String siteId) async {
+    final db = await _open();
+    await db.delete(
+      'employee_photos',
+      where: 'employee_id = ? AND site_id = ?',
+      whereArgs: [employeeId, siteId],
+    );
+  }
 }

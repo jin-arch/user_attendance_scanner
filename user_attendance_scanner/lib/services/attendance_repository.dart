@@ -1,4 +1,5 @@
-import 'attendance_model.dart';
+import 'dart:async';
+import '../models/attendance_model.dart';
 
 abstract class AttendanceRepository {
   /// Save attendance record to local database

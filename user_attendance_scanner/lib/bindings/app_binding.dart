@@ -1,16 +1,16 @@
 import 'package:get/get.dart';
 import '../controllers/dashboard_page_controller.dart';
 import '../controllers/home_page_controller.dart';
-import '../legacy_home_page_controller.dart';
-import '../site_repository.dart';
-import '../employee_repository.dart';
-import '../attendance_repository.dart';
-import '../device_service.dart';
-import '../site_repository_impl.dart';
-import '../employee_repository_impl.dart';
-import '../attendance_repository_impl.dart';
-import '../device_service_impl.dart';
-import '../home_page_bridge.dart';
+import '../controllers/legacy_home_page_controller.dart';
+import '../services/site_repository.dart';
+import '../services/employee_repository.dart';
+import '../services/attendance_repository.dart';
+import '../services/device_service.dart';
+import '../services/site_repository_impl.dart';
+import '../services/employee_repository_impl.dart';
+import '../services/attendance_repository_impl.dart';
+import '../services/device_service_impl.dart';
+import '../controllers/home_page_bridge.dart';
 
 class AppBinding extends Bindings {
   @override

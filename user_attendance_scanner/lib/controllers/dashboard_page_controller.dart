@@ -34,6 +34,25 @@ class DashboardPageController extends GetxController {
     super.onClose();
   }
 
+  Future<void> refreshData() async {
+    // Refresh dashboard data
+    await loadDashboardRows();
+  }
+
+  Future<void> loadDashboardRows() async {
+    try {
+      isLoadingRows.value = true;
+      // Load dashboard rows from database or API
+      // This is a placeholder - implement actual data loading logic
+      await Future.delayed(const Duration(seconds: 1));
+      rows.clear();
+    } catch (e) {
+      print('Error loading dashboard rows: $e');
+    } finally {
+      isLoadingRows.value = false;
+    }
+  }
+
   void startSession({required void Function() onAfkTimeout}) {
     _lastActivityTime = DateTime.now();
 

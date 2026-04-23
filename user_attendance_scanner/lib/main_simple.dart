@@ -9,8 +9,7 @@ import 'package:get/get.dart';
 import 'bindings/app_binding.dart';
 import 'routes/app_routes.dart';
 import 'routes/route_observer.dart';
-import 'views/dashboard_mvp_page.dart';
-import 'views/home_mvp_page.dart';
+
 import 'views/splash_page.dart';
 
 import 'views/home_page.dart';
@@ -35,7 +34,7 @@ class MyApp extends StatelessWidget {
     return GetMaterialApp(
       navigatorObservers: [routeObserver],
       debugShowCheckedModeBanner: false,
-      title: 'HIRS - Human Resources Information System',
+      title: 'Attendance Scanner - Biometric System',
       initialBinding: AppBinding(),
       initialRoute: AppRoutes.legacyHome,
       getPages: [
@@ -45,8 +44,8 @@ class MyApp extends StatelessWidget {
 
         // MVP UI (kept for migration)
         GetPage(name: AppRoutes.splash, page: () => const SplashPage()),
-        GetPage(name: AppRoutes.home, page: () => const HomeMvpPage()),
-        GetPage(name: AppRoutes.dashboard, page: () => const DashboardMvpPage()),
+        GetPage(name: AppRoutes.home, page: () => const HomePage()),
+        GetPage(name: AppRoutes.dashboard, page: () => const DashboardPage()),
       ],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

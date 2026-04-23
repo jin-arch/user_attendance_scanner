@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'attendance_model.dart';
+import 'package:get/get.dart';
+import '../models/attendance_model.dart';
 import 'attendance_repository.dart';
-import 'services/local_db.dart';
+import '../services/local_db.dart';
 
 class AttendanceRepositoryImpl implements AttendanceRepository {
   @override

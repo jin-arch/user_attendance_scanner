@@ -1,9 +1,7 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
-
-import 'controllers/home_page_controller.dart';
+import 'home_page_controller.dart';
 
 /// Bridge controller that provides backward compatibility
 /// while introducing GetX architecture gradually

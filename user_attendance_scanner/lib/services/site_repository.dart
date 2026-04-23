@@ -1,4 +1,5 @@
-import 'site_model.dart';
+import 'dart:async';
+import '../models/site_model.dart';
 
 abstract class SiteRepository {
   /// Fetch all available sites from API

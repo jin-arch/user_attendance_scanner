@@ -5,7 +5,7 @@ import 'package:get/get.dart';
 import '../animations/dashboard_rising_fade_particle.dart';
 import '../constants/date_time_formats.dart';
 import '../controllers/dashboard_page_controller.dart';
-import '../legacy_home_page_controller.dart';
+import '../controllers/legacy_home_page_controller.dart';
 import '../routes/route_observer.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
 import '../zkfp/zkteco_usb.dart';
