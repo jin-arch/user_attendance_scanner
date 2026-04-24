@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../services/local_db.dart';
 import '../controllers/legacy_home_page_controller.dart';
 import '../zkfp/zkteco_usb.dart';
@@ -85,32 +83,36 @@ class _PendingTimeLog {
 
 enum _HomeUiMode { scanner, portal }
 
-class HomePage extends StatefulWidget {
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  Widget build(BuildContext context) {
+    return GetBuilder<_HomePageController>(
+      init: _HomePageController(),
+      global: false,
+      builder: (controller) {
+        controller.ensureInitialized(context);
+        return controller.build(context);
+      },
+    );
+  }
 }
 
-class _HomePageState extends State<HomePage> with RouteAware {
-  static const String _apiBaseUrl =
-      'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/';
-  static const String _siteApiUrl = '${_apiBaseUrl}get/site/all';
-  static const String _employeesApiUrl =
-      '${_apiBaseUrl}get/employee/perSite?siteID=';
-  static const String _timelogPerSiteApiUrl =
-      '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
-  static const String _timeInApiEndpoint = 'update/timeLog/timeIn';
-  static const String _timeOutApiEndpoint = 'update/timeLog/timeOut';
-  static const String _insertHrisLogsApiEndpoint =
-      'insert/hris/logs/transaction';
-  static const String _insertTimeLogApiEndpoint = 'insert/timeLog';
-  static const String _thumbDetailsApiEndpoint = 'update/employee/thumbDetails';
-  static const String _legacyAttendanceApiUrl =
-      '${_apiBaseUrl}post/attendance/add';
-  static const String _apiUsername = 'devuser';
-  static const String _apiPassword = '12456789!';
+class _HomePageController extends GetxController with RouteAware {
   static const String _deviceSitePrefsKey = 'device_site_map_v1';
+
+  BuildContext? _context;
+  bool _initialized = false;
+
+  BuildContext get context => _context!;
+  bool get mounted => !isClosed && _context != null;
+
+  void setState(VoidCallback fn) {
+    if (isClosed) return;
+    fn();
+    update();
+  }
 
   bool _isLoadingSites = false;
   String? _selectedSiteId;
@@ -142,9 +144,11 @@ class _HomePageState extends State<HomePage> with RouteAware {
   String? _matchedAttendanceType;
   DateTime? _matchedAt;
 
-  @override
-  void initState() {
-    super.initState();
+  void ensureInitialized(BuildContext context) {
+    _context = context;
+    _bindRoute();
+    if (_initialized) return;
+    _initialized = true;
     _isActiveRoute = true;
 
     // Controller is provided by AppBinding (MVP-style DI)
@@ -182,10 +186,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
     _autoConnectIfSiteSelected();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
+  void _bindRoute() {
     if (!_routeSubscribed) {
       final route = ModalRoute.of(context);
       if (route is PageRoute) {
@@ -370,96 +371,38 @@ class _HomePageState extends State<HomePage> with RouteAware {
   }
 
   Future<List<_SiteOption>> _fetchSites() async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
-    try {
-      final request = await client.getUrl(Uri.parse(_siteApiUrl));
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+    final list = await _controller.fetchSiteRows();
+    return list
+        .map((site) {
+          final name =
+              site['site_name'] ??
+              site['SITENAME'] ??
+              site['name'] ??
+              site['site'] ??
+              site['title'];
+          final id =
+              site['site_id'] ??
+              site['SITEID'] ??
+              site['id'] ??
+              site['siteid'] ??
+              site['site_code'] ??
+              site['code'];
 
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
+          if (name == null && id == null) {
+            return null;
+          }
 
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
+          final label = (name ?? id).toString().trim();
+          final value = (id ?? name).toString().trim();
 
-      final decoded = jsonDecode(body);
-      final list = _extractSiteRows(decoded);
+          if (label.isEmpty || value.isEmpty) {
+            return null;
+          }
 
-      return list
-          .map((site) {
-            final name =
-                site['site_name'] ??
-                site['SITENAME'] ??
-                site['name'] ??
-                site['site'] ??
-                site['title'];
-            final id =
-                site['site_id'] ??
-                site['SITEID'] ??
-                site['id'] ??
-                site['siteid'] ??
-                site['site_code'] ??
-                site['code'];
-
-            if (name == null && id == null) {
-              return null;
-            }
-
-            final label = (name ?? id).toString().trim();
-            final value = (id ?? name).toString().trim();
-
-            if (label.isEmpty || value.isEmpty) {
-              return null;
-            }
-
-            return _SiteOption(id: value, name: label);
-          })
-          .whereType<_SiteOption>()
-          .toList();
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  List<Map<String, dynamic>> _extractSiteRows(dynamic decoded) {
-    dynamic data = decoded;
-    if (decoded is Map<String, dynamic>) {
-      data =
-          decoded['data'] ??
-          decoded['sites'] ??
-          decoded['result'] ??
-          decoded['records'] ??
-          decoded['site'] ??
-          decoded['employees'] ??
-          decoded['timelogs'] ??
-          decoded['timelog'] ??
-          decoded['logs'];
-    }
-
-    if (data is List) {
-      return data
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-
-    return const [];
-  }
-
-  int _stableFingerprintId(String employeeId, String thumbKey) {
-    var hash = 0x811C9DC5;
-    final input = '$employeeId:$thumbKey';
-    for (final codeUnit in input.codeUnits) {
-      hash ^= codeUnit;
-      hash = (hash * 0x01000193) & 0x7fffffff;
-    }
-    return hash == 0 ? 1 : hash;
+          return _SiteOption(id: value, name: label);
+        })
+        .whereType<_SiteOption>()
+        .toList();
   }
 
   Future<void> _ensureSitesLoaded() async {
@@ -710,7 +653,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
   }
 
   @override
-  void dispose() {
+  void onClose() {
     routeObserver.unsubscribe(this);
     _routeSubscribed = false;
     _scanTimer?.cancel();
@@ -722,8 +665,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
       }
     }
     _device.dispose();
-    // Note: LegacyHomePageController doesn't need manual cleanup
-    super.dispose();
+    super.onClose();
   }
 
   void _setLoadingProgress(ValueNotifier<double>? progress, double value) {
@@ -830,7 +772,6 @@ class _HomePageState extends State<HomePage> with RouteAware {
   }
 
   
-  @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
@@ -1056,7 +997,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
                     // Fingerprint icon - top-right
                     Positioned(
-                      top: cardH * 0.005,
+                      top: cardH * 0.0001,
                       right: cardW * 0.01,
                       bottom: cardH * 0.20,
                       width: cardW * 0.30,
@@ -1271,169 +1212,17 @@ class _HomePageState extends State<HomePage> with RouteAware {
   }
 
   Future<void> _syncEmployeesFromApiToLocalDb(String siteId) async {
-    await LocalDb.pruneToSite(siteId);
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 30);
-    try {
-      final urlStr = '$_employeesApiUrl$siteId';
-      final request = await client.getUrl(Uri.parse(urlStr));
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
-
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-
-      final decoded = jsonDecode(body);
-      final rows = _extractSiteRows(decoded);
-
-      int totalEmps = 0;
-      int skippedEmps = 0;
-      int savedFingerprints = 0;
-      int skippedTemplates = 0;
-      final templatesToSave = <Map<String, dynamic>>[];
-      for (final row in rows) {
-        totalEmps++;
-        final empId =
-            (row['employee_id'] ?? row['emp_id'] ?? row['id'] ?? row['EMPID'])
-                ?.toString()
-                .trim();
-        final firstName = (row['FIRSTNAME'] ?? row['first_name'])
-            ?.toString()
-            .trim();
-        final middleName = (row['MIDDLENAME'] ?? row['middle_name'])
-            ?.toString()
-            .trim();
-        final lastName = (row['LASTNAME'] ?? row['last_name'])
-            ?.toString()
-            .trim();
-        final fullNameParts = [firstName, middleName, lastName]
-            .whereType<String>()
-            .where((part) => part.isNotEmpty && part.toLowerCase() != 'null')
-            .toList();
-        final empName =
-            (row['employee_name'] ?? row['full_name'] ?? row['name'])
-                ?.toString()
-                .trim();
-        final resolvedName = fullNameParts.isNotEmpty
-            ? fullNameParts.join(' ')
-            : ((empName != null &&
-                      empName.isNotEmpty &&
-                      empName.toLowerCase() != 'null')
-                  ? empName
-                  : null);
-
-        if (empId == null || empId.isEmpty) {
-          skippedEmps++;
-          continue;
-        }
-
-        final thumbTemplates = <String, String?>{
-          'left':
-              (row['LEFTFINGERTHUMB'] ??
-                      row['leftFingerThumb'] ??
-                      row['left_thumb'])
-                  ?.toString(),
-          'right':
-              (row['RIGHTFINGERTHUMB'] ??
-                      row['rightFingerThumb'] ??
-                      row['right_thumb'])
-                  ?.toString(),
-          'default':
-              (row['finger_template'] ?? row['template'] ?? row['fingerprint'])
-                  ?.toString(),
-        };
-
-        for (final entry in thumbTemplates.entries) {
-          final templateB64 = entry.value?.trim();
-          if (_isBlank(templateB64)) {
-            skippedTemplates++;
-            continue;
-          }
-
-          try {
-            final fid = _stableFingerprintId(empId, entry.key);
-            templatesToSave.add({
-              'fid': fid,
-              'employee_id': empId,
-              'employee_name': resolvedName,
-              'finger_template': base64Decode(templateB64!),
-            });
-            savedFingerprints++;
-          } catch (_) {
-            skippedTemplates++;
-          }
-        }
-      }
-
-      await LocalDb.mergeEmployeesFromApi(
-        siteId: siteId,
-        apiEmployees: templatesToSave,
-      );
-
-      final dbCount = await LocalDb.getEmployeeCountBySite(siteId);
-      debugPrint(
-        '[SYNC_DEBUG] site=$siteId employees=$totalEmps skippedEmployees=$skippedEmps '
-        'savedTemplates=$savedFingerprints skippedTemplates=$skippedTemplates dbCount=$dbCount',
-      );
-      _controller.setLastDbSync();
-    } catch (e) {
-      debugPrint('_syncEmployeesFromApiToLocalDb: $e');
-    } finally {
-      client.close(force: true);
-    }
+    await _controller.syncEmployeesFromApiToLocalDb(siteId);
   }
 
   Future<void> _fetchAndCacheSiteTimeLogs() async {
     final siteId = _selectedSiteId;
     if (siteId == null) return;
-
-    try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 20);
-      try {
-        final request = await client.getUrl(
-          Uri.parse('$_timelogPerSiteApiUrl$siteId'),
-        );
-        final basicToken = base64Encode(
-          utf8.encode('$_apiUsername:$_apiPassword'),
-        );
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Basic $basicToken',
-        );
-
-        final response = await request.close();
-        final body = await response.transform(utf8.decoder).join();
-        if (response.statusCode < 200 || response.statusCode > 299) {
-          throw Exception('HTTP ${response.statusCode}');
-        }
-
-        final decoded = jsonDecode(body);
-        final rows = _extractSiteRows(decoded);
-        await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
-      } finally {
-        client.close(force: true);
-      }
-    } catch (e) {
-      debugPrint('_fetchAndCacheSiteTimeLogs: $e');
-    }
+    await _controller.fetchAndCacheSiteTimeLogs(siteId);
   }
 
   Future<void> _syncPendingHrisQueue() async {
-    try {
-      await LocalDb.syncPendingHrisQueue();
-    } catch (e) {
-      debugPrint('_syncPendingHrisQueue: $e');
-    }
+    await _controller.syncPendingHrisQueue();
   }
 
   void _startLiveDbSync() {
@@ -1601,7 +1390,12 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
     if (employee != null) {
       debugPrint('[HOME_SCAN] Found employee: ${employee.name} (ID: ${employee.id})');
-      final attendanceType = await _recordAttendance(employee.id);
+      final siteId = _selectedSiteId;
+      if (siteId == null) return;
+      final attendanceType = await _controller.recordAttendance(
+        siteId: siteId,
+        employeeId: employee.id,
+      );
       if (!mounted) return;
       
       if (attendanceType == 'TIME IN' || attendanceType == 'TIME OUT' || attendanceType == 'QUEUED OFFLINE') {
@@ -1629,8 +1423,12 @@ class _HomePageState extends State<HomePage> with RouteAware {
                           matchedAt: now,
                           siteId: _selectedSiteId,
                           resultType: resultTypeStr,
-                          timeIn: attendanceType == 'TIME OUT' ? null : _formatTimeOnly(now),
-                          timeOut: attendanceType == 'TIME OUT' ? _formatTimeOnly(now) : null,
+                          timeIn: attendanceType == 'TIME OUT'
+                              ? null
+                              : _controller.formatTimeOnly(now),
+                          timeOut: attendanceType == 'TIME OUT'
+                              ? _controller.formatTimeOnly(now)
+                              : null,
                         ),
                       ),
                     )
@@ -1761,97 +1559,6 @@ class _HomePageState extends State<HomePage> with RouteAware {
     if (mounted) _startScanLoop();
   }
 
-  Future<String?> _recordAttendance(String employeeId) async {
-    final siteId = _selectedSiteId;
-    if (siteId == null) {
-      return 'NO SITE';
-    }
-
-    try {
-      final now = DateTime.now();
-      final today = now.toIso8601String().split('T')[0];
-      final timeStr = _formatTimeOnly(now);
-      
-      // Check if employee already has a timelog for today
-      final existingTimelog = await LocalDb.getLatestTimelogForEmployee(
-        siteId: siteId,
-        employeeId: employeeId,
-      );
-      
-      if (existingTimelog != null) {
-        final timelogDate = existingTimelog['timeLogDate']?.toString() ?? 
-                           existingTimelog['timelog_date']?.toString() ?? 
-                           existingTimelog['timelog']?.toString();
-        
-        if (timelogDate != null && timelogDate.startsWith(today)) {
-          // Employee already has a record for today
-          final timeInMorning = existingTimelog['timeInMorning']?.toString();
-          final timeOutMorning = existingTimelog['timeOutMorning']?.toString();
-          final timeInAfternoon = existingTimelog['timeInAfternoon']?.toString();
-          final timeOutAfternoon = existingTimelog['timeOutAfternoon']?.toString();
-          
-          // Check if already timed in today
-          if (!_isBlank(timeInMorning) && _isBlank(timeOutMorning)) {
-            debugPrint('[ATTENDANCE] Employee $employeeId already timed in today at $timeInMorning');
-            // Auto time-out logic - check if it's time to time out
-            final currentTime = now.hour * 60 + now.minute; // Current time in minutes
-            final timeInHour = int.tryParse(timeInMorning?.split(':')[0] ?? '0') ?? 0;
-            final timeInMinute = int.tryParse(timeInMorning?.split(':')[1] ?? '0') ?? 0;
-            final timeInMinutes = timeInHour * 60 + timeInMinute;
-            
-            // If 8+ hours have passed since time-in, auto time-out
-            if (currentTime - timeInMinutes >= 480) { // 8 hours = 480 minutes
-              debugPrint('[ATTENDANCE] Auto time-out for employee $employeeId after 8+ hours');
-              await LocalDb.saveTimelog(
-                siteId: siteId,
-                employeeId: employeeId,
-                timelogData: {
-                  'timelogID': existingTimelog['timelogID'] ?? 'tl_${now.millisecondsSinceEpoch}',
-                  'timelog': timeStr,
-                  'timeLogDate': today,
-                  'timeInMorning': timeInMorning,
-                  'timeOutMorning': timeStr,
-                  'remarks': 'AUTO TIMEOUT',
-                  'schedule': 'AUTO',
-                  'code': 'SUCCESS',
-                },
-              );
-              return 'TIME OUT';
-            }
-            return 'ALREADY IN';
-          }
-          
-          // Check if already timed out today
-          if (!_isBlank(timeOutMorning) || !_isBlank(timeOutAfternoon)) {
-            debugPrint('[ATTENDANCE] Employee $employeeId already timed out today');
-            return 'ALREADY OUT - Come back tomorrow';
-          }
-        }
-      }
-      
-      // Save new time-in record
-      await LocalDb.saveTimelog(
-        siteId: siteId,
-        employeeId: employeeId,
-        timelogData: {
-          'timelogID': 'tl_${now.millisecondsSinceEpoch}',
-          'timelog': timeStr,
-          'timeLogDate': today,
-          'timeInMorning': timeStr,
-          'remarks': 'SUCCESS',
-          'schedule': 'AUTO',
-          'code': 'SUCCESS',
-        },
-      );
-      
-      debugPrint('[ATTENDANCE] Employee $employeeId timed in successfully at $timeStr');
-      return 'TIME IN';
-    } catch (e) {
-      debugPrint('_recordAttendance error: $e');
-      return 'TIME IN UNSUCCESSFUL';
-    }
-  }
-
   void _displayResult(_ScanResult result) {
     if (!mounted) return;
     
@@ -1971,13 +1678,6 @@ class _HomePageState extends State<HomePage> with RouteAware {
     );
   }
 
-  String _formatTimeOnly(DateTime dateTime) {
-    final h = dateTime.hour.toString().padLeft(2, '0');
-    final m = dateTime.minute.toString().padLeft(2, '0');
-    final s = dateTime.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
   int? _parseFingerId(String? rawFid) {
     if (rawFid == null) return null;
     final normalized = rawFid.trim();
@@ -2033,15 +1733,6 @@ class _HomePageState extends State<HomePage> with RouteAware {
     }
   }
 
-  bool _isBlank(dynamic value) {
-    if (value == null) return true;
-    final text = value.toString().trim();
-    return text.isEmpty ||
-        text == 'null' ||
-        text == '00:00:00' ||
-        text == '0' ||
-        text.toUpperCase() == 'N/A';
-  }
 }
 
 class _CardRisingFadeParticle extends StatefulWidget {

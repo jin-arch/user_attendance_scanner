@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../services/local_db.dart';
@@ -9,14 +8,11 @@ class LogsController extends GetxController {
   final RxBool isLoading = false.obs;
   final RxString searchQuery = ''.obs;
   final RxString selectedFilter = 'All'.obs;
+  final RxString errorMessage = ''.obs;
   final TextEditingController searchController = TextEditingController();
   
   // Site ID for filtering
   final String? siteId;
-  
-  // Callbacks for UI updates
-  Function()? onLogsLoaded;
-  Function(String)? onError;
   
   LogsController({this.siteId});
   
@@ -44,22 +40,22 @@ class LogsController extends GetxController {
     
     if (siteId == null || siteId!.isEmpty) {
       debugPrint('[LOGS_CONTROLLER] No site ID provided');
-      onError?.call('No site ID provided');
+      errorMessage.value = 'No site selected';
       logs.clear();
       return;
     }
-    
+
+    errorMessage.value = '';
     isLoading.value = true;
     try {
       // Get properly formatted attendance logs from timelog_cache
       final logsData = await LocalDb.getAttendanceLogsForSite(siteId!);
       debugPrint('[LOGS_CONTROLLER] Loaded ${logsData.length} logs');
-      
+
       logs.assignAll(logsData);
-      onLogsLoaded?.call();
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Error loading logs: $e');
-      onError?.call('Error loading logs: $e');
+      errorMessage.value = 'Error loading logs: $e';
       logs.clear();
     } finally {
       isLoading.value = false;
@@ -72,23 +68,23 @@ class LogsController extends GetxController {
   
   // Filter and search logic
   List<Map<String, dynamic>> get filteredLogs {
-    var filtered = logs;
+    var filtered = logs.toList();
     
     // Apply type filter
     if (selectedFilter.value != 'All') {
-      filtered = RxList<Map<String, dynamic>>(filtered.where((log) {
+      filtered = filtered.where((log) {
         final type = (log['type'] ?? '').toString().toLowerCase();
         return type.contains(selectedFilter.value.toLowerCase());
-      }).toList());
+      }).toList();
     }
     
     // Apply search filter
     if (searchQuery.value.isNotEmpty) {
-      filtered = RxList<Map<String, dynamic>>(filtered.where((log) {
+      filtered = filtered.where((log) {
         final empId = (log['employee_id'] ?? '').toString().toLowerCase();
         final empName = (log['employee_name'] ?? '').toString().toLowerCase();
         return empId.contains(searchQuery.value) || empName.contains(searchQuery.value);
-      }).toList());
+      }).toList();
     }
     
     return filtered;

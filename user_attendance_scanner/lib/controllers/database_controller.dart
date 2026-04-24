@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../services/local_db.dart';
@@ -8,14 +7,11 @@ class DatabaseController extends GetxController {
   final RxList<Map<String, dynamic>> employees = <Map<String, dynamic>>[].obs;
   final RxBool isLoading = false.obs;
   final RxString searchQuery = ''.obs;
+  final RxString errorMessage = ''.obs;
   final TextEditingController searchController = TextEditingController();
   
   // Site ID for filtering
   final String? siteId;
-  
-  // Callbacks for UI updates
-  Function()? onEmployeesLoaded;
-  Function(String)? onError;
   
   DatabaseController({this.siteId});
   
@@ -43,21 +39,21 @@ class DatabaseController extends GetxController {
     
     if (siteId == null || siteId!.isEmpty) {
       debugPrint('[DATABASE_CONTROLLER] No site ID provided');
-      onError?.call('No site ID provided');
+      errorMessage.value = 'No site selected';
       employees.clear();
       return;
     }
-    
+
+    errorMessage.value = '';
     isLoading.value = true;
     try {
       final employeesData = await LocalDb.getEmployeesBySite(siteId!);
       debugPrint('[DATABASE_CONTROLLER] Loaded ${employeesData.length} employees');
-      
+
       employees.assignAll(employeesData);
-      onEmployeesLoaded?.call();
     } catch (e) {
       debugPrint('[DATABASE_CONTROLLER] Error loading employees: $e');
-      onError?.call('Error loading employees: $e');
+      errorMessage.value = 'Error loading employees: $e';
       employees.clear();
     } finally {
       isLoading.value = false;
@@ -162,7 +158,7 @@ class DatabaseController extends GetxController {
       await loadEmployees();
       return true;
     } catch (e) {
-      onError?.call('Error deleting employee: $e');
+      errorMessage.value = 'Error deleting employee: $e';
       return false;
     }
   }
