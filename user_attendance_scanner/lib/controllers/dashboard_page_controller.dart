@@ -371,6 +371,8 @@ class DashboardPageController extends GetxController {
         );
         print('[DASHBOARD_LOAD] Updated today row at index $todayIndex with status $status');
       } else if (overrideTimeIn != null || overrideTimeOut != null) {
+        // Only create today row if it doesn't exist AND we have override times
+        // This prevents creating duplicate entries when scanning from homepage
         final timeIn = overrideTimeIn ?? '-';
         final timeOut = overrideTimeOut ?? '-';
         final hasIn = timeIn != '-' && timeIn.isNotEmpty;
@@ -648,11 +650,11 @@ class DashboardPageController extends GetxController {
 
   DashboardRowVm _rowFromTimelog(Map<String, dynamic> row) {
     final dateText = _pickFirst(row, [
-      'timelog',
       'timeLogDate',
       'timelog_date',
       'datecaptured',
       'datelog',
+      'timelog',
     ]);
     final parsedDate = _parseDate(dateText);
     final timeInMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning']);

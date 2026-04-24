@@ -204,16 +204,12 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     if (!mounted) return;
     final currentId = _idController.text.trim();
     if (currentId.isEmpty) {
-      if (_selfieImageBytes != null) {
-        _selfieImageBytes = null;
-      }
       _lastPhotoEmployeeId = null;
       setState(() {});
-      return;
-    }
-    if (currentId != _lastPhotoEmployeeId) {
-      _lastPhotoEmployeeId = currentId;
-      _loadEmployeePhotoForId(currentId);
+    } else {
+      if (currentId != _lastPhotoEmployeeId) {
+        _loadEmployeePhoto();
+      }
     }
     setState(() {});
   }
@@ -341,37 +337,66 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   }
 
   void _onFingerprintCaptured(Uint8List template) {
-    // Determine which thumb we're scanning
-    final isLeft = _leftThumbScans < _scansPerFinger;
-    final isRight = _rightThumbScans < _scansPerFinger;
+    // Determine which thumb we're currently scanning
+    final isLeftTurn = _leftThumbScans < _scansPerFinger;
+    final isRightTurn = _rightThumbScans < _scansPerFinger;
     
     // Debounce: prevent same finger from scanning too quickly
     final now = DateTime.now();
     if (_lastScanTime != null) {
       final diff = now.difference(_lastScanTime!).inMilliseconds;
       if (diff < _minTimeBetweenScansMs) {
-        debugPrint('Scan too fast (${diff}ms) - same finger detected, please use different finger');
+        debugPrint('Scan too fast (${diff}ms) - please wait before scanning again');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isLeft 
-              ? 'Left thumb already scanned. Please scan RIGHT thumb now.' 
-              : 'Right thumb already scanned. Please scan LEFT thumb now.'),
+          const SnackBar(
+            content: Text('Please wait before scanning again'),
             backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 2),
+            duration: Duration(seconds: 1),
           ),
         );
         return;
       }
     }
+    
+    // Validate finger consistency for left thumb scans
+    if (isLeftTurn && _leftThumbScans > 0) {
+      if (!_isSameFinger(_leftThumbScansList.last, template)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Different finger detected! Please use the SAME LEFT thumb for all 3 scans'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+    }
+    
+    // Validate finger consistency for right thumb scans
+    if (isRightTurn && _rightThumbScans > 0) {
+      if (!_isSameFinger(_rightThumbScansList.last, template)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Different finger detected! Please use the SAME RIGHT thumb for all 3 scans'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+    }
+    
     _lastScanTime = now;
     
     setState(() {
-      if (_leftThumbScans < _scansPerFinger) {
+      if (isLeftTurn) {
         _leftThumbScansList.add(template);
         _leftThumbScans++;
-      } else if (_rightThumbScans < _scansPerFinger) {
+        debugPrint('Left thumb scan ${_leftThumbScans}/$_scansPerFinger captured');
+      } else if (isRightTurn) {
         _rightThumbScansList.add(template);
         _rightThumbScans++;
+        debugPrint('Right thumb scan ${_rightThumbScans}/$_scansPerFinger captured');
       }
     });
     
@@ -379,17 +404,48 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
     final totalScans = _leftThumbScans + _rightThumbScans;
     final isComplete = totalScans >= (_scansPerFinger * 2);
     
+    String message;
+    Color color;
+    
+    if (isComplete) {
+      message = 'Both thumbs captured successfully! Enter employee details.';
+      color = Colors.green;
+    } else if (_leftThumbScans < _scansPerFinger) {
+      message = 'Left thumb scan ${_leftThumbScans}/$_scansPerFinger complete';
+      color = Colors.blue;
+    } else if (_rightThumbScans < _scansPerFinger) {
+      message = 'Right thumb scan ${_rightThumbScans}/$_scansPerFinger complete';
+      color = Colors.blue;
+    } else {
+      message = 'Scan $totalScans/${_scansPerFinger * 2} complete';
+      color = Colors.blue;
+    }
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(isComplete 
-          ? 'Both thumbs captured! Enter employee details.' 
-          : totalScans == 1 
-            ? 'Left thumb captured! Now scan RIGHT thumb.'
-            : 'Scan $totalScans/${_scansPerFinger * 2} complete'),
-        backgroundColor: isComplete ? Colors.green : Colors.blue,
+        content: Text(message),
+        backgroundColor: color,
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+  
+  // Simple fingerprint template comparison for consistency validation
+  bool _isSameFinger(Uint8List template1, Uint8List template2) {
+    if (template1.length != template2.length) return false;
+    
+    // Simple byte comparison with tolerance for minor variations
+    int differences = 0;
+    const maxDifferences = 50; // Allow some tolerance for scan variations
+    
+    for (int i = 0; i < template1.length; i++) {
+      if (template1[i] != template2[i]) {
+        differences++;
+        if (differences > maxDifferences) return false;
+      }
+    }
+    
+    return true;
   }
   
   Future<void> _takeSelfie() async {
@@ -460,6 +516,25 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       debugPrint('  Site: $siteId');
       debugPrint('  Left scans: ${_leftThumbScansList.length}');
       debugPrint('  Right scans: ${_rightThumbScansList.length}');
+      
+      // Check if employee already exists - only prevent replacement when NOT in edit mode
+      if (!widget.isEditMode) {
+        final existingEmployees = await LocalDb.getEmployeesBySite(siteId);
+        final existingEmployee = existingEmployees.firstWhere(
+          (emp) => emp['employee_id'].toString() == employeeId,
+          orElse: () => <String, dynamic>{},
+        );
+        
+        if (existingEmployee.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Employee with this ID already exists! Use a different ID.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
       
       // Save only 2 templates (1st scan from each finger)
       // fid 1 = left thumb, fid 2 = right thumb

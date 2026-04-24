@@ -34,7 +34,7 @@ class _LoadingPageState extends State<LoadingPage>
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
   static const String _fingerprintAsset =
-      'assets/images/Finger Print Icon.png';
+      'assets/images/HIRSLogo-default.png';
 
   @override
   void initState() {

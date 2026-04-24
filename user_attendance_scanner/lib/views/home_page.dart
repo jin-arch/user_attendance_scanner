@@ -941,6 +941,8 @@ class _HomePageState extends State<HomePage> with RouteAware {
     );
   }
 
+  
+                                                              
   Widget _buildMainCard(double screenW, double screenH) {
     final cardPadH = screenW * 0.03;
     final cardPadV = screenH * 0.1;
@@ -1791,6 +1793,31 @@ class _HomePageState extends State<HomePage> with RouteAware {
           // Check if already timed in today
           if (!_isBlank(timeInMorning) && _isBlank(timeOutMorning)) {
             debugPrint('[ATTENDANCE] Employee $employeeId already timed in today at $timeInMorning');
+            // Auto time-out logic - check if it's time to time out
+            final currentTime = now.hour * 60 + now.minute; // Current time in minutes
+            final timeInHour = int.tryParse(timeInMorning?.split(':')[0] ?? '0') ?? 0;
+            final timeInMinute = int.tryParse(timeInMorning?.split(':')[1] ?? '0') ?? 0;
+            final timeInMinutes = timeInHour * 60 + timeInMinute;
+            
+            // If 8+ hours have passed since time-in, auto time-out
+            if (currentTime - timeInMinutes >= 480) { // 8 hours = 480 minutes
+              debugPrint('[ATTENDANCE] Auto time-out for employee $employeeId after 8+ hours');
+              await LocalDb.saveTimelog(
+                siteId: siteId,
+                employeeId: employeeId,
+                timelogData: {
+                  'timelogID': existingTimelog['timelogID'] ?? 'tl_${now.millisecondsSinceEpoch}',
+                  'timelog': timeStr,
+                  'timeLogDate': today,
+                  'timeInMorning': timeInMorning,
+                  'timeOutMorning': timeStr,
+                  'remarks': 'AUTO TIMEOUT',
+                  'schedule': 'AUTO',
+                  'code': 'SUCCESS',
+                },
+              );
+              return 'TIME OUT';
+            }
             return 'ALREADY IN';
           }
           
