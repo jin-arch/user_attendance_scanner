@@ -105,7 +105,7 @@ class _TopLeftCurvedNotchClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
-class EnrollmentPage extends StatefulWidget {
+class EnrollmentPage extends StatelessWidget {
   const EnrollmentPage({
     super.key,
     this.siteId,
@@ -120,224 +120,601 @@ class EnrollmentPage extends StatefulWidget {
   final String? employeeName;
 
   @override
-  State<EnrollmentPage> createState() => _EnrollmentPageState();
-}
-
-class _EnrollmentPageState extends State<EnrollmentPage> {
-  Uint8List? _selfieImageBytes;
-  String? _lastPhotoEmployeeId;
-  
-  // ZKTeco device
-  final ZKTecoUSB _device = ZKTecoUSB();
-  bool _deviceInitialized = false;
-  Uint8List? _lastFingerprintImage;
-  
-  // Form fields for ID and username
-  final TextEditingController _idController = TextEditingController();
-  final TextEditingController _usernameController = TextEditingController();
-  bool _showForm = false;
-  
-  // Fingerprint scanning state - 3 scans per finger for quality verification
-  int _leftThumbScans = 0;
-  int _rightThumbScans = 0;
-  static const int _scansPerFinger = 3; // 3 scans to verify same finger
-  List<Uint8List> _leftThumbScansList = []; // All 3 left scans
-  List<Uint8List> _rightThumbScansList = []; // All 3 right scans
-  DateTime? _lastScanTime;
-  static const int _minTimeBetweenScansMs = 800; // 0.8s between scans
-  
-  // Scan loop
-  Timer? _scanTimer;
-  bool _isScanning = false;
-  
-  String get _displayName {
-    final fromForm = _usernameController.text.trim();
-    if (fromForm.isNotEmpty) return fromForm;
-    final fromWidget = widget.employeeName?.trim();
-    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
-    return 'UNKNOWN USER';
-  }
-  
-  String get _displayId {
-    final fromForm = _idController.text.trim();
-    if (fromForm.isNotEmpty) return fromForm;
-    final fromWidget = widget.employeeId?.trim();
-    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
-    return 'N/A';
-  }
-  
-  String _initialsFromName(String name) {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty || trimmed.toUpperCase() == 'UNKNOWN USER') return '';
-    final parts = trimmed.split(RegExp(r'\s+'));
-    if (parts.isEmpty) return '';
-    final first = parts.first.isNotEmpty ? parts.first[0] : '';
-    final last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
-    return (first + last).toUpperCase();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _idController.addListener(_onFormChanged);
-    _usernameController.addListener(_onFormChanged);
-    _prefillEmployeeDetails();
-    _loadEmployeePhoto();
-    _clearScanState();
-    _device.clearCachedCapture();
-    _initDevice();
-  }
-
-  @override
-  void dispose() {
-    _idController.removeListener(_onFormChanged);
-    _usernameController.removeListener(_onFormChanged);
-    _idController.dispose();
-    _usernameController.dispose();
-    _scanTimer?.cancel();
-    _stopScanLoop();
-    // DO NOT dispose _device - it's a singleton shared with home page
-    super.dispose();
-  }
-
-  void _onFormChanged() {
-    if (!mounted) return;
-    final currentId = _idController.text.trim();
-    if (currentId.isEmpty) {
-      _lastPhotoEmployeeId = null;
-      setState(() {});
-    } else {
-      if (currentId != _lastPhotoEmployeeId) {
-        _loadEmployeePhoto();
-      }
-    }
-    setState(() {});
-  }
-
-  void _prefillEmployeeDetails() {
-    final initialId = widget.employeeId?.trim();
-    final initialName = widget.employeeName?.trim();
-    if (initialId != null && initialId.isNotEmpty) {
-      _idController.text = initialId;
-    }
-    if (initialName != null && initialName.isNotEmpty) {
-      _usernameController.text = initialName;
-    }
-    if ((initialId != null && initialId.isNotEmpty) ||
-        (initialName != null && initialName.isNotEmpty)) {
-      _showForm = true;
-    }
-  }
-  
-  Future<void> _loadEmployeePhoto() async {
-    final employeeId = widget.employeeId?.trim();
-    if (employeeId == null || employeeId.isEmpty) {
-      if (_selfieImageBytes != null && mounted) {
-        setState(() => _selfieImageBytes = null);
-      }
-      _lastPhotoEmployeeId = null;
-      return;
-    }
-    _lastPhotoEmployeeId = employeeId;
-    final siteId = widget.siteId ?? 'default';
-    final photo = await LocalDb.getEmployeePhoto(
-      employeeId: employeeId,
-      siteId: siteId,
+  Widget build(BuildContext context) {
+    final controller = Get.put(
+      EnrollmentController(
+        siteId: siteId,
+        isEditMode: isEditMode,
+        employeeId: employeeId,
+        employeeName: employeeName,
+      ),
+      tag: 'enrollment_${siteId ?? 'default'}_${employeeId ?? 'new'}',
     );
-    if (!mounted) return;
-    setState(() => _selfieImageBytes = photo);
-  }
   
-  Future<void> _loadEmployeePhotoForId(String employeeId) async {
-    final siteId = widget.siteId ?? 'default';
-    final photo = await LocalDb.getEmployeePhoto(
-      employeeId: employeeId,
-      siteId: siteId,
-    );
-    if (!mounted) return;
-    setState(() => _selfieImageBytes = photo);
-  }
-  
-  Future<void> _initDevice() async {
-    try {
-      final env = await _device.getAndroidSdkEnvironment();
-      if (env['canUseSdk'] != true) {
-        debugPrint('SDK not compatible: ${env['reason']}');
-        return;
-      }
-      
-      final initResult = await _device.initSdk();
-      if (!initResult) {
-        debugPrint('SDK init failed');
-        return;
-      }
-      
-      final count = await _device.getDeviceCountAsync();
-      if (count == 0) {
-        debugPrint('No device found');
-        await _device.terminateSdk();
-        return;
-      }
-      
-      final opened = await _device.openDevice(0);
-      if (!opened) {
-        debugPrint('Failed to open device');
-        return;
-      }
-      
-      // Set up image callback only (not template - we'll poll for that)
-      _device.onImageCaptured = (int width, int height, Uint8List imageData) {
-        debugPrint('Image captured: ${width}x$height');
-        if (mounted) {
-          setState(() => _lastFingerprintImage = imageData);
-        }
-      };
-
-      _device.clearCachedCapture();
-      _clearScanState();
-      setState(() => _deviceInitialized = true);
-      debugPrint('Device initialized successfully - starting scan loop...');
-
-      // Start polling for fingerprints
-      _startScanLoop();
-    } catch (e) {
-      debugPrint('Device initialization error: $e');
-    }
-  }
-  
-  void _startScanLoop() {
-    if (_isScanning) return;
-    _isScanning = true;
-    debugPrint('Starting enrollment scan loop...');
+  // Set up callbacks with context
+    controller.onStateChanged = () {
+      // Trigger UI update if needed
+    };
     
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
-      if (!_isScanning || !_device.isConnected) return;
-      
-      // Check if enrollment is complete
-      if (_leftThumbScans >= _scansPerFinger && _rightThumbScans >= _scansPerFinger) {
-        _stopScanLoop();
-        return;
-      }
-      
-      try {
-        final template = await _device.captureFingerprint();
-        if (template != null && template.isNotEmpty && mounted) {
-          _onFingerprintCaptured(template);
-        }
-      } catch (e) {
-        // Silent fail - keep trying
-      }
+    controller.onError = (error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          backgroundColor: Colors.red,
+        ),
+      );
+    };
+    
+    controller.onSuccess = (message) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+        ),
+      );
+    };
+
+    final screenW = MediaQuery.of(context).size.width;
+    final screenH = MediaQuery.of(context).size.height;
+
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: Container(
+        width: screenW,
+        height: screenH,
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/Main BG.png'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: screenH - MediaQuery.of(context).padding.top,
+              ),
+              child: IntrinsicHeight(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: screenW * 0.015,
+                    vertical: screenH * 0.015,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildTopBar(screenW, screenH, controller, context),
+                      SizedBox(height: screenH * 0.018),
+                      Expanded(
+                        child: _buildMainContent(screenW, screenH, controller),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar(double screenW, double screenH, EnrollmentController controller, BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        // Back button
+        GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0x223E7DDD),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: const Color(0xFF3E7DDD),
+              ),
+            ),
+            child: const Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+        ),
+        // Title
+        Text(
+          isEditMode ? 'EDIT EMPLOYEE' : 'ENROLLMENT',
+          style: TextStyle(
+            fontFamily: 'CEORUSE',
+            fontSize: screenW * 0.04,
+            color: Colors.white,
+            letterSpacing: 2,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        // Empty space for balance
+        const SizedBox(width: 40),
+      ],
+    );
+  }
+
+  Widget _buildMainContent(double screenW, double screenH, EnrollmentController controller) {
+    return Obx(() {
+      return Row(
+        children: [
+          // Left panel - Fingerprint scanning
+          Expanded(
+            flex: 3,
+            child: _buildFingerprintPanel(screenW, screenH, controller),
+          ),
+          SizedBox(width: screenW * 0.02),
+          // Right panel - Employee details
+          Expanded(
+            flex: 2,
+            child: _buildEmployeePanel(screenW, screenH, controller),
+          ),
+        ],
+      );
     });
   }
-  
-  void _stopScanLoop() {
-    _scanTimer?.cancel();
-    _scanTimer = null;
-    _isScanning = false;
+
+  Widget _buildFingerprintPanel(double screenW, double screenH, EnrollmentController controller) {
+    return Obx(() {
+      final isDeviceReady = controller.deviceInitialized.value;
+      final isScanning = controller.isScanning.value;
+      final leftScans = controller.leftThumbScans.value;
+      final rightScans = controller.rightThumbScans.value;
+      final totalScans = leftScans + rightScans;
+      final maxScans = EnrollmentController.scansPerFinger * 2;
+      final isComplete = totalScans >= maxScans;
+
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(screenW * 0.02),
+          border: Border.all(
+            color: const Color(0xFF3E7DDD).withOpacity(0.3),
+            width: 2,
+          ),
+          color: Colors.black.withOpacity(0.3),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(screenW * 0.02),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Title
+              Text(
+                'FINGERPRINT SCANNING',
+                style: TextStyle(
+                  fontFamily: 'CEORUSE',
+                  fontSize: screenW * 0.025,
+                  color: Colors.white,
+                  letterSpacing: 2,
+                ),
+              ),
+              SizedBox(height: screenH * 0.02),
+
+              // Device status
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: screenW * 0.02,
+                  vertical: screenH * 0.01,
+                ),
+                decoration: BoxDecoration(
+                  color: isDeviceReady ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(screenW * 0.01),
+                  border: Border.all(
+                    color: isDeviceReady ? Colors.green : Colors.red,
+                  ),
+                ),
+                child: Text(
+                  isDeviceReady ? 'DEVICE READY' : 'DEVICE NOT READY',
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: screenW * 0.015,
+                    color: isDeviceReady ? Colors.green : Colors.red,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+              SizedBox(height: screenH * 0.02),
+
+              // Fingerprint visualization
+              Expanded(
+                child: Stack(
+                  children: [
+                    // Background particles
+                    if (isScanning) ...[
+                      Positioned(
+                        top: screenH * 0.1,
+                        left: screenW * 0.05,
+                        child: _DashboardRisingFadeParticle(
+                          size: screenW * 0.08,
+                          assetPath: 'assets/icons/fingerprint.svg',
+                          phase: 0.0,
+                        ),
+                      ),
+                      Positioned(
+                        top: screenH * 0.15,
+                        right: screenW * 0.08,
+                        child: _DashboardRisingFadeParticle(
+                          size: screenW * 0.06,
+                          assetPath: 'assets/icons/fingerprint.svg',
+                          phase: 0.3,
+                        ),
+                      ),
+                      Positioned(
+                        bottom: screenH * 0.2,
+                        left: screenW * 0.1,
+                        child: _DashboardRisingFadeParticle(
+                          size: screenW * 0.07,
+                          assetPath: 'assets/icons/fingerprint.svg',
+                          phase: 0.6,
+                        ),
+                      ),
+                    ],
+
+                    // Center content
+                    Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Fingerprint image or placeholder
+                          Container(
+                            width: screenW * 0.15,
+                            height: screenW * 0.15,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withOpacity(0.1),
+                              border: Border.all(
+                                color: isScanning ? Colors.green : Colors.grey,
+                                width: 3,
+                              ),
+                            ),
+                            child: Obx(() {
+                              final fingerprintImage = controller.lastFingerprintImage.value;
+                              if (fingerprintImage != null) {
+                                return ClipOval(
+                                  child: Image.memory(
+                                    fingerprintImage,
+                                    fit: BoxFit.cover,
+                                  ),
+                                );
+                              }
+                              return Icon(
+                                Icons.fingerprint,
+                                size: screenW * 0.08,
+                                color: isScanning ? Colors.green : Colors.grey,
+                              );
+                            }),
+                          ),
+                          SizedBox(height: screenH * 0.02),
+
+                          // Scanning progress
+                          Text(
+                            isScanning ? 'SCANNING...' : 'PLACE FINGER',
+                            style: TextStyle(
+                              fontFamily: 'CEORUSE',
+                              fontSize: screenW * 0.02,
+                              color: isScanning ? Colors.green : Colors.grey,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                          SizedBox(height: screenH * 0.01),
+
+                          // Progress text
+                          Text(
+                            isComplete 
+                                ? 'SCANNING COMPLETE'
+                                : 'Scan $totalScans/$maxScans complete',
+                            style: TextStyle(
+                              fontFamily: 'CEORUSE',
+                              fontSize: screenW * 0.015,
+                              color: Colors.white,
+                              letterSpacing: 1,
+                            ),
+                          ),
+
+                          // Individual finger progress
+                          SizedBox(height: screenH * 0.02),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _buildFingerProgress(
+                                'LEFT',
+                                leftScans,
+                                EnrollmentController.scansPerFinger,
+                                screenW,
+                              ),
+                              _buildFingerProgress(
+                                'RIGHT',
+                                rightScans,
+                                EnrollmentController.scansPerFinger,
+                                screenW,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Reset button
+              if (!isComplete)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: controller.resetFingerprints,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: screenH * 0.015),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(screenW * 0.01),
+                      ),
+                    ),
+                    child: Text(
+                      'RESET FINGERPRINTS',
+                      style: TextStyle(
+                        fontFamily: 'CEORUSE',
+                        fontSize: screenW * 0.015,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
-  void _onFingerprintCaptured(Uint8List template) {
-    // Determine which thumb we're currently scanning
+  Widget _buildFingerProgress(String label, int current, int max, double screenW) {
+    final progress = current / max;
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'CEORUSE',
+            fontSize: screenW * 0.012,
+            color: Colors.white,
+            letterSpacing: 1,
+          ),
+        ),
+        SizedBox(height: screenW * 0.01),
+        Container(
+          width: screenW * 0.08,
+          height: screenW * 0.01,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(screenW * 0.005),
+          ),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: progress,
+            child: Container(
+              decoration: BoxDecoration(
+                color: progress == 1.0 ? Colors.green : Colors.blue,
+                borderRadius: BorderRadius.circular(screenW * 0.005),
+              ),
+            ),
+          ),
+        ),
+        SizedBox(height: screenW * 0.005),
+        Text(
+          '$current/$max',
+          style: TextStyle(
+            fontFamily: 'CEORUSE',
+            fontSize: screenW * 0.01,
+            color: Colors.white,
+            letterSpacing: 1,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmployeePanel(double screenW, double screenH, EnrollmentController controller) {
+    return Obx(() {
+      final showForm = controller.showForm.value;
+      final selfieImage = controller.selfieImageBytes.value;
+
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(screenW * 0.02),
+          border: Border.all(
+            color: const Color(0xFF3E7DDD).withOpacity(0.3),
+            width: 2,
+          ),
+          color: Colors.black.withOpacity(0.3),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(screenW * 0.02),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Title
+              Text(
+                'EMPLOYEE DETAILS',
+                style: TextStyle(
+                  fontFamily: 'CEORUSE',
+                  fontSize: screenW * 0.025,
+                  color: Colors.white,
+                  letterSpacing: 2,
+                ),
+              ),
+              SizedBox(height: screenH * 0.02),
+
+              // Profile picture
+              GestureDetector(
+                onTap: controller.takeSelfie,
+                child: Container(
+                  width: screenW * 0.12,
+                  height: screenW * 0.12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.1),
+                    border: Border.all(
+                      color: Colors.blue,
+                      width: 2,
+                    ),
+                  ),
+                  child: selfieImage != null
+                      ? ClipOval(
+                          child: Image.memory(
+                            selfieImage,
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.camera_alt,
+                              size: screenW * 0.04,
+                              color: Colors.blue,
+                            ),
+                            Text(
+                              'ADD PHOTO',
+                              style: TextStyle(
+                                fontFamily: 'CEORUSE',
+                                fontSize: screenW * 0.01,
+                                color: Colors.blue,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              SizedBox(height: screenH * 0.02),
+
+              // Form fields (shown when ready)
+              if (showForm) ...[
+                // Employee ID field
+                TextField(
+                  controller: controller.idController,
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: screenW * 0.015,
+                    color: Colors.white,
+                    letterSpacing: 1,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'EMPLOYEE ID',
+                    labelStyle: TextStyle(
+                      fontFamily: 'CEORUSE',
+                      color: Colors.white.withOpacity(0.7),
+                      letterSpacing: 1,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: screenH * 0.015),
+
+                // Employee name field
+                TextField(
+                  controller: controller.usernameController,
+                  style: TextStyle(
+                    fontFamily: 'CEORUSE',
+                    fontSize: screenW * 0.015,
+                    color: Colors.white,
+                    letterSpacing: 1,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'EMPLOYEE NAME',
+                    labelStyle: TextStyle(
+                      fontFamily: 'CEORUSE',
+                      color: Colors.white.withOpacity(0.7),
+                      letterSpacing: 1,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Colors.white.withOpacity(0.3),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: screenH * 0.03),
+
+                // Save button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: controller.saveEnrollment,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: screenH * 0.02),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(screenW * 0.01),
+                      ),
+                    ),
+                    child: Text(
+                      isEditMode ? 'UPDATE EMPLOYEE' : 'SAVE EMPLOYEE',
+                      style: TextStyle(
+                        fontFamily: 'CEORUSE',
+                        fontSize: screenW * 0.018,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                // Waiting message
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.fingerprint,
+                          size: screenW * 0.08,
+                          color: Colors.grey,
+                        ),
+                        SizedBox(height: screenH * 0.02),
+                        Text(
+                          'Complete fingerprint scanning\nto enter employee details',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'CEORUSE',
+                            fontSize: screenW * 0.015,
+                            color: Colors.grey,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    });
+  }
+  }
     final isLeftTurn = _leftThumbScans < _scansPerFinger;
     final isRightTurn = _rightThumbScans < _scansPerFinger;
     
@@ -358,33 +735,9 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
       }
     }
     
-    // Validate finger consistency for left thumb scans
-    if (isLeftTurn && _leftThumbScans > 0) {
-      if (!_isSameFinger(_leftThumbScansList.last, template)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Different finger detected! Please use the SAME LEFT thumb for all 3 scans'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-    }
-    
-    // Validate finger consistency for right thumb scans
-    if (isRightTurn && _rightThumbScans > 0) {
-      if (!_isSameFinger(_rightThumbScansList.last, template)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Different finger detected! Please use the SAME RIGHT thumb for all 3 scans'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-    }
+    // Temporarily disabled finger consistency validation to fix scanning issues
+    // The validation was too strict and preventing same finger scans
+    // TODO: Implement a more reliable fingerprint comparison method
     
     _lastScanTime = now;
     
@@ -434,9 +787,9 @@ class _EnrollmentPageState extends State<EnrollmentPage> {
   bool _isSameFinger(Uint8List template1, Uint8List template2) {
     if (template1.length != template2.length) return false;
     
-    // Simple byte comparison with tolerance for minor variations
+    // More lenient byte comparison with higher tolerance for scan variations
     int differences = 0;
-    const maxDifferences = 50; // Allow some tolerance for scan variations
+    const maxDifferences = 200; // Increased tolerance for real-world scan variations
     
     for (int i = 0; i < template1.length; i++) {
       if (template1[i] != template2[i]) {

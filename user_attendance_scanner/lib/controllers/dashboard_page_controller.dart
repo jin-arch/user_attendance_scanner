@@ -340,7 +340,73 @@ class DashboardPageController extends GetxController {
         limit: 10,
       );
 
-      final mappedRows = history.map(_rowFromTimelog).toList();
+      // Group entries by date to prevent duplicates
+      final Map<String, List<Map<String, dynamic>>> groupedByDate = {};
+      for (final entry in history) {
+        final dateText = _pickFirst(entry, [
+          'timeLogDate',
+          'timelog_date', 
+          'datecaptured',
+          'datelog',
+          'timelog',
+        ]);
+        if (dateText != null && dateText.isNotEmpty) {
+          groupedByDate.putIfAbsent(dateText, () => []).add(entry);
+        }
+      }
+
+      // Consolidate entries for each date
+      final consolidatedRows = <Map<String, dynamic>>[];
+      for (final dateText in groupedByDate.keys) {
+        final entries = groupedByDate[dateText]!;
+        if (entries.length == 1) {
+          consolidatedRows.add(entries.first);
+        } else {
+          // Merge multiple entries for the same date
+          final merged = <String, dynamic>{};
+          String? bestTimeIn;
+          String? bestTimeOut;
+          
+          for (final entry in entries) {
+            // Merge all fields, prioritizing non-null values
+            for (final key in entry.keys) {
+              if (entry[key] != null && entry[key].toString().isNotEmpty) {
+                merged[key] = entry[key];
+              }
+            }
+            
+            // Find the earliest time-in and latest time-out
+            final timeIn = _pickFirst(entry, ['timeInMorning', 'timeinmorning']);
+            final timeOut = _pickFirst(entry, ['timeOutMorning', 'timeoutmorning']);
+            
+            if (timeIn != null && timeIn.isNotEmpty && timeIn != '-') {
+              if (bestTimeIn == null || timeIn.compareTo(bestTimeIn) < 0) {
+                bestTimeIn = timeIn;
+              }
+            }
+            if (timeOut != null && timeOut.isNotEmpty && timeOut != '-') {
+              if (bestTimeOut == null || timeOut.compareTo(bestTimeOut) > 0) {
+                bestTimeOut = timeOut;
+              }
+            }
+          }
+          
+          // Update merged entry with best times
+          if (bestTimeIn != null) {
+            merged['timeInMorning'] = bestTimeIn;
+            merged['timeinmorning'] = bestTimeIn;
+          }
+          if (bestTimeOut != null) {
+            merged['timeOutMorning'] = bestTimeOut;
+            merged['timeoutmorning'] = bestTimeOut;
+          }
+          
+          consolidatedRows.add(merged);
+          print('[DASHBOARD_LOAD] Consolidated ${entries.length} entries for date $dateText');
+        }
+      }
+
+      final mappedRows = consolidatedRows.map(_rowFromTimelog).toList();
 
       final today = DateTimeFormats.dateOnly(DateTime.now());
       final todayIndex = mappedRows.indexWhere((row) => row.rawDate == today);
