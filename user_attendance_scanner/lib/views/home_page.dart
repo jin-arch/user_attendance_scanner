@@ -980,7 +980,7 @@ class _HomePageController extends GetxController with RouteAware {
                     ),
                     // Time & date - bottom-right transparent area
                     Positioned(
-                      right: cardW * 0.05,
+                      right: cardW * 0.01,
                       bottom: cardH * 0.045,
                       child: Obx(
                         () {
