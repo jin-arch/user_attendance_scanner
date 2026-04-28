@@ -475,6 +475,44 @@ class ZKTecoUSB {
     }
   }
 
+  /// Merge three enrollment captures into a single template.
+  Future<Uint8List?> mergeEnrollmentTemplates(
+    Uint8List template1,
+    Uint8List template2,
+    Uint8List template3,
+  ) async {
+    if (!_deviceOpened) return null;
+
+    try {
+      if (isAndroidPlatform) {
+        final result = await _channel.invokeMethod<Map>(
+          'mergeTemplatesForEnroll',
+          {
+            'template1': base64Encode(template1),
+            'template2': base64Encode(template2),
+            'template3': base64Encode(template3),
+          },
+        );
+        if (result == null) return null;
+        final map = Map<String, dynamic>.from(result);
+        final success = map['success'] == true;
+        final mergedBase64 = map['template'] as String?;
+        if (!success || mergedBase64 == null || mergedBase64.isEmpty) {
+          return null;
+        }
+        return base64Decode(mergedBase64);
+      }
+
+      if (_sdk != null) {
+        return _sdk!.dbMerge(template1, template2, template3);
+      }
+    } catch (e) {
+      debugPrint('mergeEnrollmentTemplates error: $e');
+    }
+
+    return null;
+  }
+
   /// Start enrollment process (Windows)
   void startEnrollment() {
     _enrollmentTemplates.clear();
@@ -644,11 +682,38 @@ class ZKTecoUSB {
 
     try {
       if (isAndroidPlatform) {
-        final score = await _channel.invokeMethod<int>('matchTemplates', {
-          'template1': base64Encode(template1),
-          'template2': base64Encode(template2),
+        try {
+          final score = await _channel.invokeMethod<int>('matchTemplates', {
+            'template1': base64Encode(template1),
+            'template2': base64Encode(template2),
+          });
+          if (score != null) return score;
+        } catch (_) {
+          // Fall through to compatibility path for older native plugin builds.
+        }
+
+        // Compatibility fallback: add template1 to the SDK DB temporarily and
+        // verify it against the current captured template (held by native side).
+        final tempFid = '__tmp_match_${DateTime.now().microsecondsSinceEpoch}';
+        final addOk = await _channel.invokeMethod<bool>('addTemplate', {
+          'fid': tempFid,
+          'template': base64Encode(template1),
         });
-        return score;
+        if (addOk != true) return null;
+
+        try {
+          final verifyResult = await _channel.invokeMethod<Map>('verify', {
+            'fid': tempFid,
+          });
+          if (verifyResult == null) return null;
+          final map = Map<String, dynamic>.from(verifyResult);
+          final rawScore = map['score'];
+          if (rawScore is int) return rawScore;
+          if (rawScore is num) return rawScore.toInt();
+          return (map['match'] == true) ? 1 : 0;
+        } finally {
+          await _channel.invokeMethod<bool>('removeTemplate', {'fid': tempFid});
+        }
       } else if (_sdk != null) {
         return _sdk!.dbMatch(template1, template2);
       }

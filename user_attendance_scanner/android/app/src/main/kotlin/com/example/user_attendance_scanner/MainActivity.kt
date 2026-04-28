@@ -200,6 +200,12 @@ class MainActivity : FlutterActivity() {
                     val template2 = call.argument<String>("template2") ?: ""
                     matchTemplates(template1, template2, result)
                 }
+                "mergeTemplatesForEnroll" -> {
+                    val template1 = call.argument<String>("template1") ?: ""
+                    val template2 = call.argument<String>("template2") ?: ""
+                    val template3 = call.argument<String>("template3") ?: ""
+                    mergeTemplatesForEnroll(template1, template2, template3, result)
+                }
                 "addTemplate" -> {
                     val fid = call.argument<String>("fid") ?: ""
                     val template = call.argument<String>("template") ?: ""
@@ -611,6 +617,37 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "matchTemplates error: ${e.message}")
             result.error("MATCH_ERROR", e.message, null)
+        }
+    }
+
+    private fun mergeTemplatesForEnroll(
+        template1Base64: String,
+        template2Base64: String,
+        template3Base64: String,
+        result: MethodChannel.Result
+    ) {
+        if (template1Base64.isEmpty() || template2Base64.isEmpty() || template3Base64.isEmpty()) {
+            result.error("INVALID_TEMPLATE", "Templates cannot be empty", null)
+            return
+        }
+        try {
+            val template1 = Base64.decode(template1Base64, Base64.NO_WRAP)
+            val template2 = Base64.decode(template2Base64, Base64.NO_WRAP)
+            val template3 = Base64.decode(template3Base64, Base64.NO_WRAP)
+            val mergedTemplate = ByteArray(2048)
+            val mergeRet = ZKFingerService.merge(template1, template2, template3, mergedTemplate)
+            if (mergeRet > 0) {
+                result.success(mapOf(
+                    "success" to true,
+                    "template" to Base64.encodeToString(mergedTemplate, 0, mergeRet, Base64.NO_WRAP),
+                    "size" to mergeRet
+                ))
+            } else {
+                result.success(mapOf("success" to false))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "mergeTemplatesForEnroll error: ${e.message}")
+            result.error("MERGE_ERROR", e.message, null)
         }
     }
     

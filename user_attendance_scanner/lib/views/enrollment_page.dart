@@ -144,6 +144,15 @@ class EnrollmentPage extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.green),
         );
+        final normalized = message.toLowerCase();
+        final didSave = normalized.contains('saved successfully') ||
+            normalized.contains('updated successfully');
+        if (didSave) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) return;
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          });
+        }
       }
     };
 

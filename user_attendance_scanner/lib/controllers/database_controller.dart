@@ -71,7 +71,10 @@ class DatabaseController extends GetxController {
     for (final emp in employees) {
       final empId = emp['employee_id'] as String;
       if (grouped.containsKey(empId)) {
-        grouped[empId]!['fingerprint_count'] = (grouped[empId]!['fingerprint_count'] as int) + 1;
+        final nextCount = (grouped[empId]!['fingerprint_count'] as int) + 1;
+        // Enrollment captures multiple samples per thumb, but we present this as
+        // logical fingerprint slots (left/right) in the UI.
+        grouped[empId]!['fingerprint_count'] = nextCount > 2 ? 2 : nextCount;
       } else {
         grouped[empId] = {
           'employee_id': empId,

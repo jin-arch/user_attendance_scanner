@@ -402,25 +402,43 @@ class EnrollmentController extends ChangeNotifier {
     required String employeeName,
     required String siteId,
   }) async {
-    for (var i = 0; i < leftThumbScansList.length; i++) {
-      await LocalDb.upsertEmployee(
-        fid: _stableFingerprintId(employeeId, 'left_$i'),
-        employeeId: employeeId,
-        employeeName: employeeName,
-        template: leftThumbScansList[i],
-        siteId: siteId,
-      );
+    final leftTemplate = await _resolveEnrollmentTemplate(leftThumbScansList);
+    final rightTemplate = await _resolveEnrollmentTemplate(rightThumbScansList);
+    if (leftTemplate == null || rightTemplate == null) {
+      throw Exception('Unable to prepare fingerprint templates');
     }
 
-    for (var i = 0; i < rightThumbScansList.length; i++) {
-      await LocalDb.upsertEmployee(
-        fid: _stableFingerprintId(employeeId, 'right_$i'),
-        employeeId: employeeId,
-        employeeName: employeeName,
-        template: rightThumbScansList[i],
-        siteId: siteId,
+    await LocalDb.upsertEmployee(
+      fid: _stableFingerprintId(employeeId, 'left'),
+      employeeId: employeeId,
+      employeeName: employeeName,
+      template: leftTemplate,
+      siteId: siteId,
+    );
+
+    await LocalDb.upsertEmployee(
+      fid: _stableFingerprintId(employeeId, 'right'),
+      employeeId: employeeId,
+      employeeName: employeeName,
+      template: rightTemplate,
+      siteId: siteId,
+    );
+  }
+
+  Future<Uint8List?> _resolveEnrollmentTemplate(
+      List<Uint8List> captures) async {
+    if (captures.isEmpty) return null;
+    if (captures.length >= scansPerFinger) {
+      final merged = await _device.mergeEnrollmentTemplates(
+        captures[0],
+        captures[1],
+        captures[2],
       );
+      if (merged != null && merged.isNotEmpty) {
+        return merged;
+      }
     }
+    return captures.first;
   }
 
   int _stableFingerprintId(String employeeId, String thumbKey) {
