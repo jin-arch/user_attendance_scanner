@@ -721,7 +721,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildTimePanel(w, h),
-              SizedBox(height: h * 0.03),
+              SizedBox(height: h * 0.1),
               _buildTodayLogCard(w, h),
             ],
           ),

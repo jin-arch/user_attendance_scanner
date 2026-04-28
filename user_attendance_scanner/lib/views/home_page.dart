@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../animations/rising_fade_particle.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_db.dart';
@@ -844,7 +845,7 @@ class _HomePageController extends GetxController with RouteAware {
                             SizedBox(height: screenH * 0.018),
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.all(24.0),
+                                padding: const EdgeInsets.all(20.0),
                                 child: _buildMainCard(screenW, screenH),
                               ),
                             ),
@@ -863,9 +864,10 @@ class _HomePageController extends GetxController with RouteAware {
                                                               
   Widget _buildMainCard(double screenW, double screenH) {
     final cardPadH = screenW * 0.03;
-    final cardPadV = screenH * 0.1;
+    final cardPadV = screenH * 0.12;
 
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         // Card background with FAST logo inside
         Positioned.fill(
@@ -887,8 +889,8 @@ class _HomePageController extends GetxController with RouteAware {
                   top: screenH * 0.001,
                   child: Image.asset(
                     'assets/images/FastLogo.png',
-                    width: screenW * 0.18,
-                    height: screenH * 0.08,
+                    width: screenW * 0.2,
+                    height: screenH * 0.09,
                     fit: BoxFit.contain,
                   ),
                 ),
@@ -909,10 +911,76 @@ class _HomePageController extends GetxController with RouteAware {
                 final cardH = constraints.maxHeight;
 
                 return Stack(
+                  clipBehavior: Clip.none,
                   children: [
+                    // Decorative rising particles (from animations/rising_fade_particle.dart)
+                    Builder(
+                      builder: (context) {
+                        final ps = (cardW * 0.045).clamp(14.0, 52.0);
+                        return Stack(
+                          children: [
+                            Positioned(
+                              left: cardW * 0.08 - ps / 2,
+                              top: cardH * 0.15 - ps / 2,
+                              width: ps * 1.2,
+                              height: ps * 1.2,
+                              child: RisingFadeParticle(
+                                size: ps * 1.2,
+                                phase: 0.0,
+                                assetPath: 'assets/icons/square-particles-fx.svg',
+                              ),
+                            ),
+                            Positioned(
+                              left: cardW * 0.28 - ps / 2,
+                              top: cardH * 0.08 - ps / 2,
+                              width: ps * 0.6,
+                              height: ps * 0.6,
+                              child: RisingFadeParticle(
+                                size: ps * 0.6,
+                                phase: 0.3,
+                                assetPath: 'assets/icons/square-particles-fx.svg',
+                              ),
+                            ),
+                            Positioned(
+                              left: cardW * 0.72 - ps / 2,
+                              top: cardH * 0.18 - ps / 2,
+                              width: ps * 0.9,
+                              height: ps * 0.9,
+                              child: RisingFadeParticle(
+                                size: ps * 0.9,
+                                phase: 0.6,
+                                assetPath: 'assets/icons/square-particles-fx.svg',
+                              ),
+                            ),
+                            Positioned(
+                              left: cardW * 0.5 - ps / 2,
+                              top: cardH * 0.72 - ps / 2,
+                              width: ps * 0.55,
+                              height: ps * 0.55,
+                              child: RisingFadeParticle(
+                                size: ps * 0.55,
+                                phase: 0.5,
+                                assetPath: 'assets/icons/square-particles-fx.svg',
+                              ),
+                            ),
+                            Positioned(
+                              left: cardW * 0.88 - ps / 2,
+                              top: cardH * 0.6 - ps / 2,
+                              width: ps * 1.15,
+                              height: ps * 1.15,
+                              child: RisingFadeParticle(
+                                size: ps * 1.15,
+                                phase: 0.25,
+                                assetPath: 'assets/icons/square-particles-fx.svg',
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                     // Time & date - bottom-right transparent area
                     Positioned(
-                      right: 0,
+                      right: cardW * 0.05,
                       bottom: cardH * 0.045,
                       child: Obx(
                         () {
@@ -978,21 +1046,7 @@ class _HomePageController extends GetxController with RouteAware {
                       ),
                     ),
 
-                    // Fingerprint icon - top-right
-                    Positioned(
-                      top: cardH * 0.0001,
-                      right: cardW * 0.01,
-                      bottom: cardH * 0.20,
-                      width: cardW * 0.30,
-                      child: Obx(
-                        () => Image.asset(
-                          _controller.biometricConnected.value
-                              ? 'assets/images/HIRSLogo-scanner-connected.png'
-                              : 'assets/images/HIRSLogo-scanner-unconnected.png',
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
+                    // (HIRS logo moved to render on top to avoid clipping)
 
                     // Title - left, vertically centered
                     Positioned(
@@ -1071,6 +1125,21 @@ class _HomePageController extends GetxController with RouteAware {
 
                     // Scan result overlay
                     _buildResultOverlay(cardW, cardH),
+
+                    // HIRS logo - placed last so it renders above other card content
+                    Positioned(
+                      top: -cardH * 0.02,
+                      right: cardW * 0.01,
+                      width: cardW * 0.30,
+                      child: Obx(
+                        () => Image.asset(
+                          _controller.biometricConnected.value
+                              ? 'assets/images/HIRSLogo-scanner-connected.png'
+                              : 'assets/images/HIRSLogo-scanner-unconnected.png',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
                   ],
                 );
               },
@@ -1723,88 +1792,4 @@ class _HomePageController extends GetxController with RouteAware {
 
 }
 
-class _CardRisingFadeParticle extends StatefulWidget {
-  const _CardRisingFadeParticle({
-    required this.size,
-    required this.assetPath,
-    required this.phase,
-  });
-
-  final double size;
-  final String assetPath;
-  final double phase;
-
-  @override
-  State<_CardRisingFadeParticle> createState() =>
-      _CardRisingFadeParticleState();
-}
-
-class _CardRisingFadeParticleState extends State<_CardRisingFadeParticle>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-  Animation<double>? _opacity;
-  Animation<double>? _translateY;
-  Animation<double>? _scale;
-
-  static const double _riseDistance = 48.0;
-  static const Duration _duration = Duration(milliseconds: 2600);
-
-  @override
-  void initState() {
-    super.initState();
-    final controller = AnimationController(vsync: this, duration: _duration);
-    final curve = CurvedAnimation(parent: controller, curve: Curves.easeOut);
-    _controller = controller;
-    _opacity = Tween<double>(begin: 0.7, end: 0.0).animate(curve);
-    _translateY = Tween<double>(begin: 0.0, end: -_riseDistance).animate(curve);
-    _scale = Tween<double>(begin: 1.0, end: 0.8).animate(curve);
-    controller.value = widget.phase;
-    controller.repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    final opacity = _opacity;
-    final translateY = _translateY;
-    final scale = _scale;
-    if (controller == null ||
-        opacity == null ||
-        translateY == null ||
-        scale == null) {
-      return const SizedBox.shrink();
-    }
-
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, translateY.value),
-          child: Opacity(
-            opacity: opacity.value,
-            child: Transform.scale(
-              scale: scale.value,
-              alignment: Alignment.center,
-              child: SvgPicture.asset(
-                widget.assetPath,
-                width: widget.size,
-                height: widget.size,
-                fit: BoxFit.contain,
-                colorFilter: const ColorFilter.mode(
-                  Color(0xFF5FCFFF),
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
+// Particle animation is provided by lib/animations/rising_fade_particle.dart
