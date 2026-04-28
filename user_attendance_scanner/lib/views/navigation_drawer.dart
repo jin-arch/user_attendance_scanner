@@ -1,9 +1,10 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import '../routes/app_routes.dart';
 import 'logs_page.dart';
 import 'database_page.dart';
-import 'enrollment_page.dart';
 
 class NavigationDrawer extends StatelessWidget {
   const NavigationDrawer({
@@ -102,8 +103,7 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    final navigator = Navigator.of(context);
-                    navigator.pop();
+                    Get.back<void>();
                     if (onNavigate != null) {
                       onNavigate!('home');
                     }
@@ -127,15 +127,13 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    final navigator = Navigator.of(context);
-                    navigator.pop();
-                    navigator.push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => EnrollmentPage(
-                          siteId: selectedSiteId,
-                          isEditMode: false,
-                        ),
-                      ),
+                    Get.back<void>();
+                    Get.toNamed<void>(
+                      AppRoutes.enrollment,
+                      arguments: <String, dynamic>{
+                        'siteId': selectedSiteId,
+                        'isEditMode': false,
+                      },
                     );
                   },
                 ),
@@ -157,13 +155,10 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    final navigator = Navigator.of(context);
-                    navigator.pop();
-                    navigator.push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => LogsPage(
-                          siteId: selectedSiteId,
-                        ),
+                    Get.back<void>();
+                    Get.to<void>(
+                      () => LogsPage(
+                        siteId: selectedSiteId,
                       ),
                     );
                   },
@@ -186,13 +181,10 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    final navigator = Navigator.of(context);
-                    navigator.pop();
-                    navigator.push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => DatabasePage(
-                          siteId: selectedSiteId,
-                        ),
+                    Get.back<void>();
+                    Get.to<void>(
+                      () => DatabasePage(
+                        siteId: selectedSiteId,
                       ),
                     );
                   },
@@ -217,8 +209,7 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () async {
-                    final navigator = Navigator.of(context);
-                    navigator.pop();
+                    Get.back<void>();
                     if (onSync != null) {
                       await onSync!.call();
                     } else {

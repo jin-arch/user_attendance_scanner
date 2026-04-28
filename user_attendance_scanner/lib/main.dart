@@ -8,6 +8,8 @@ import 'package:user_attendance_scanner/routes/app_routes.dart';
 import 'package:user_attendance_scanner/routes/route_observer.dart';
 
 import 'bindings/app_binding.dart';
+import 'bindings/enrollment_binding.dart';
+import 'bindings/splash_binding.dart';
 import 'views/splash_page.dart';
 
 import 'views/home_page.dart';
@@ -67,7 +69,20 @@ class MyApp extends StatelessWidget {
         // Refactored UI (using controllers and services)
         GetPage(name: AppRoutes.home, page: () => HomePage()),
         GetPage(name: AppRoutes.dashboard, page: () => DashboardPage()),
-        GetPage(name: AppRoutes.enrollment, page: () => const EnrollmentPage()),
+        GetPage(
+          name: AppRoutes.enrollment,
+          page: () {
+            final args = Get.arguments;
+            final map = args is Map ? args : const <Object?, Object?>{};
+            return EnrollmentPage(
+              siteId: map['siteId']?.toString(),
+              isEditMode: map['isEditMode'] == true,
+              employeeId: map['employeeId']?.toString(),
+              employeeName: map['employeeName']?.toString(),
+            );
+          },
+          binding: EnrollmentBinding(),
+        ),
         GetPage(name: AppRoutes.logs, page: () => const LogsPage()),
         GetPage(name: AppRoutes.database, page: () => const DatabasePage()),
 
@@ -76,7 +91,11 @@ class MyApp extends StatelessWidget {
         GetPage(name: AppRoutes.legacyDashboard, page: () => DashboardPage()),
 
         // Splash page
-        GetPage(name: AppRoutes.splash, page: () => const SplashPage()),
+        GetPage(
+          name: AppRoutes.splash,
+          page: () => const SplashPage(),
+          binding: SplashBinding(),
+        ),
       ],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

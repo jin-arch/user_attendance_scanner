@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
 
-class EnrollmentController extends ChangeNotifier {
+class EnrollmentController extends GetxController {
   final ZKTecoUSB _device = ZKTecoUSB();
 
   final deviceInitialized = ValueNotifier<bool>(false);
@@ -28,7 +29,6 @@ class EnrollmentController extends ChangeNotifier {
   Timer? _scanTimer;
   DateTime? _lastScanTime;
 
-  VoidCallback? onStateChanged;
   Function(String)? onError;
   Function(String)? onSuccess;
 
@@ -42,7 +42,11 @@ class EnrollmentController extends ChangeNotifier {
     this.isEditMode = false,
     this.employeeId,
     this.employeeName,
-  }) {
+  });
+
+  @override
+  void onInit() {
+    super.onInit();
     _initialize();
   }
 
@@ -57,7 +61,7 @@ class EnrollmentController extends ChangeNotifier {
   }
 
   @override
-  void dispose() {
+  void onClose() {
     idController.removeListener(_onFormChanged);
     usernameController.removeListener(_onFormChanged);
     idController.dispose();
@@ -73,14 +77,11 @@ class EnrollmentController extends ChangeNotifier {
     leftThumbScans.dispose();
     rightThumbScans.dispose();
 
-    super.dispose();
+    super.onClose();
   }
 
   void _onFormChanged() {
-    if (!isEditMode) {
-      notifyListeners();
-      return;
-    }
+    if (!isEditMode) return;
 
     final currentId = idController.text.trim();
     if (currentId.isEmpty) {
@@ -90,7 +91,6 @@ class EnrollmentController extends ChangeNotifier {
     } else {
       _loadEmployeePhotoForId(currentId);
     }
-    notifyListeners();
   }
 
   void _prefillEmployeeDetails() {

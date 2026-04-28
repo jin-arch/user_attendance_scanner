@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import 'bindings/app_binding.dart';
+import 'bindings/splash_binding.dart';
 import 'routes/app_routes.dart';
 import 'routes/route_observer.dart';
 
@@ -43,7 +44,11 @@ class MyApp extends StatelessWidget {
         GetPage(name: AppRoutes.legacyDashboard, page: () => const DashboardPage()),
 
         // MVP UI (kept for migration)
-        GetPage(name: AppRoutes.splash, page: () => const SplashPage()),
+        GetPage(
+          name: AppRoutes.splash,
+          page: () => const SplashPage(),
+          binding: SplashBinding(),
+        ),
         GetPage(name: AppRoutes.home, page: () => const HomePage()),
         GetPage(name: AppRoutes.dashboard, page: () => const DashboardPage()),
       ],

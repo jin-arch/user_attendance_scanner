@@ -6,11 +6,12 @@ import '../animations/dashboard_rising_fade_particle.dart';
 import '../constants/date_time_formats.dart';
 import '../controllers/dashboard_page_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
+import '../routes/app_routes.dart';
 import '../routes/route_observer.dart';
 import '../utils/color_with_values_compat.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
 import '../zkfp/zkteco_usb.dart';
-import 'enrollment_page.dart';
+part '../animations/dashboard_page_content_widget.dart';
 
 class DashboardPage extends StatelessWidget {
   final String? resultType; // 'timeInSuccess', 'timeOutSuccess', 'alreadyTimedIn', etc.
@@ -54,35 +55,6 @@ class DashboardPage extends StatelessWidget {
       timeOut: timeOut,
     );
   }
-}
-
-class _DashboardPageContent extends StatefulWidget {
-  const _DashboardPageContent({
-    this.employeeId,
-    this.employeeName,
-    this.attendanceType,
-    this.matchedAt,
-    this.siteId,
-    this.onPortalTap,
-    this.onEnrollNowTap,
-    this.resultType,
-    this.timeIn,
-    this.timeOut,
-  });
-
-  final String? employeeId;
-  final String? employeeName;
-  final String? attendanceType;
-  final DateTime? matchedAt;
-  final String? siteId;
-  final VoidCallback? onPortalTap;
-  final VoidCallback? onEnrollNowTap;
-  final String? resultType;
-  final String? timeIn;
-  final String? timeOut;
-
-  @override
-  State<_DashboardPageContent> createState() => _DashboardPageState();
 }
 
 class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
@@ -281,12 +253,10 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         if (mounted) {
           _dashboardController.setRouteActive(false);
           _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => DashboardPage(
-                siteId: widget.siteId,
-                resultType: 'fingerprintNotRecognized',
-              ),
+          Get.off<void>(
+            () => DashboardPage(
+              siteId: widget.siteId,
+              resultType: 'fingerprintNotRecognized',
             ),
           );
         }
@@ -311,18 +281,16 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
           if (!mounted) return;
           _dashboardController.setRouteActive(false);
           _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => DashboardPage(
-                employeeId: employee.id,
-                employeeName: employee.name,
-                attendanceType: attendanceType,
-                matchedAt: now,
-                siteId: widget.siteId,
-                resultType: resultTypeStr,
-                timeIn: attendanceType == 'TIME OUT' ? null : DateTimeFormats.timeOnly(now),
-                timeOut: attendanceType == 'TIME OUT' ? DateTimeFormats.timeOnly(now) : null,
-              ),
+          Get.off<void>(
+            () => DashboardPage(
+              employeeId: employee.id,
+              employeeName: employee.name,
+              attendanceType: attendanceType,
+              matchedAt: now,
+              siteId: widget.siteId,
+              resultType: resultTypeStr,
+              timeIn: attendanceType == 'TIME OUT' ? null : DateTimeFormats.timeOnly(now),
+              timeOut: attendanceType == 'TIME OUT' ? DateTimeFormats.timeOnly(now) : null,
             ),
           );
         });
@@ -350,16 +318,14 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
           if (!mounted) return;
           _dashboardController.setRouteActive(false);
           _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => DashboardPage(
-                employeeId: employee.id,
-                employeeName: employee.name,
-                attendanceType: attendanceType,
-                matchedAt: DateTime.now(),
-                siteId: widget.siteId,
-                resultType: resultTypeStr,
-              ),
+          Get.off<void>(
+            () => DashboardPage(
+              employeeId: employee.id,
+              employeeName: employee.name,
+              attendanceType: attendanceType,
+              matchedAt: DateTime.now(),
+              siteId: widget.siteId,
+              resultType: resultTypeStr,
             ),
           );
         });
@@ -462,11 +428,8 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
     }
     
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return Dialog(
+    Get.dialog<void>(
+      Dialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -514,7 +477,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                     child: ElevatedButton(
                       onPressed: () {
                         _resetAfkTimer(); // Reset AFK timer when user interacts
-                        Navigator.of(context).pop();
+                        Get.back<void>();
                         if (_enableScanning && _device.isConnected) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted) {
@@ -552,8 +515,8 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
               ],
             ),
           ),
-        );
-      },
+        ),
+      barrierDismissible: false,
     );
   }
   
@@ -576,9 +539,8 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         return;
       }
 
-      final navigator = Navigator.maybeOf(context);
-      if (navigator != null && navigator.canPop()) {
-        navigator.pop();
+      if (Get.key.currentState?.canPop() == true) {
+        Get.back<void>();
       }
     });
   }
@@ -844,7 +806,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                               if (widget.onPortalTap != null) {
                                 widget.onPortalTap!();
                               } else {
-                                Navigator.of(context).popUntil((route) => route.isFirst);
+                                Get.until((route) => route.isFirst);
                               }
                             },
                             child: _buildTopPill(
@@ -860,15 +822,14 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                           child: GestureDetector(
                             onTap: () {
                               _resetAfkTimer();
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => EnrollmentPage(
-                                    siteId: widget.siteId,
-                                    isEditMode: true,
-                                    employeeId: widget.employeeId,
-                                    employeeName: widget.employeeName,
-                                  ),
-                                ),
+                              Get.toNamed<void>(
+                                AppRoutes.enrollment,
+                                arguments: <String, dynamic>{
+                                  'siteId': widget.siteId,
+                                  'isEditMode': true,
+                                  'employeeId': widget.employeeId,
+                                  'employeeName': widget.employeeName,
+                                },
                               );
                             },
                             child: _buildTopPill(

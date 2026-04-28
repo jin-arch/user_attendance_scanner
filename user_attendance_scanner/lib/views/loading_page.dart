@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 
 import '../controllers/loading_page_controller.dart';
+part '../animations/loading_rising_fade_particle_widget.dart';
 
 /// Full-screen loading UI: dark blue rounded container, particles,
 /// centered fingerprint, progress % top-left, "DOWNLOADING RESOURCES..." bottom-right.
@@ -27,14 +28,14 @@ class LoadingPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetBuilder<LoadingPageController>(
-      init: LoadingPageController(
-        loadFuture: loadFuture,
-        progressListenable: progressListenable,
-        onFinish: () {
-          Navigator.of(context).pop();
-          onComplete?.call();
-        },
-      ),
+        init: LoadingPageController(
+          loadFuture: loadFuture,
+          progressListenable: progressListenable,
+          onFinish: () {
+            Get.back<void>();
+            onComplete?.call();
+          },
+        ),
       global: false,
       builder: (controller) {
         final size = MediaQuery.sizeOf(context);
@@ -319,21 +320,6 @@ class _DownloadingLabel extends StatelessWidget {
       ),
     );
   }
-}
-
-class _RisingFadeParticle extends StatefulWidget {
-  const _RisingFadeParticle({
-    required this.size,
-    required this.assetPath,
-    this.phase = 0.0,
-  });
-
-  final double size;
-  final String assetPath;
-  final double phase;
-
-  @override
-  State<_RisingFadeParticle> createState() => _RisingFadeParticleState();
 }
 
 class _RisingFadeParticleState extends State<_RisingFadeParticle>

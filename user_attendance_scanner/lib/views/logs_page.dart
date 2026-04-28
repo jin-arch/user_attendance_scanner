@@ -28,7 +28,7 @@ class LogsPage extends StatelessWidget {
             elevation: 0,
             leading: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Get.back<void>(),
             ),
             title: const Text(
               'Time Logs',

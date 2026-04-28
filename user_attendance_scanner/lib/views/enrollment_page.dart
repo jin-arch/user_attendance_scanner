@@ -22,27 +22,9 @@ class EnrollmentPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final routeId = ModalRoute.of(context)?.hashCode ?? context.hashCode;
-    final tag =
-        'enrollment_${siteId ?? 'default'}_${employeeId ?? 'new'}_$routeId';
-    EnrollmentController controller;
-
-    if (Get.isRegistered<EnrollmentController>(tag: tag)) {
-      controller = Get.find<EnrollmentController>(tag: tag);
-    } else {
-      controller = Get.put(
-        EnrollmentController(
-          siteId: siteId,
-          isEditMode: isEditMode,
-          employeeId: employeeId,
-          employeeName: employeeName,
-        ),
-        tag: tag,
-      );
-    }
+    final controller = Get.find<EnrollmentController>();
 
     // Set up callbacks
-    controller.onStateChanged = () {};
     controller.onError = (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -62,7 +44,7 @@ class EnrollmentPage extends StatelessWidget {
         if (didSave) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!context.mounted) return;
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            Get.until((route) => route.isFirst);
           });
         }
       }
@@ -508,9 +490,7 @@ class EnrollmentPage extends StatelessWidget {
                           children: [
                             Expanded(
                               child: GestureDetector(
-                                onTap: () => Navigator.of(
-                                  context,
-                                ).popUntil((route) => route.isFirst),
+                                onTap: () => Get.until((route) => route.isFirst),
                                 child: _buildTopPill(w, label: 'PORTAL'),
                               ),
                             ),
@@ -518,17 +498,15 @@ class EnrollmentPage extends StatelessWidget {
                             Expanded(
                               child: GestureDetector(
                                 onTap: () {
-                                  Navigator.of(context).pushReplacement(
-                                    MaterialPageRoute(
-                                      builder: (_) => DashboardPage(
-                                        employeeId: displayId.isNotEmpty
-                                            ? displayId
-                                            : employeeId,
-                                        employeeName: displayName.isNotEmpty
-                                            ? displayName
-                                            : employeeName,
-                                        siteId: siteId,
-                                      ),
+                                  Get.off<void>(
+                                    () => DashboardPage(
+                                      employeeId: displayId.isNotEmpty
+                                          ? displayId
+                                          : employeeId,
+                                      employeeName: displayName.isNotEmpty
+                                          ? displayName
+                                          : employeeName,
+                                      siteId: siteId,
                                     ),
                                   );
                                 },

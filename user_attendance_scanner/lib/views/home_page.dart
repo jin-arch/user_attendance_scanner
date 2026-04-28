@@ -434,18 +434,16 @@ class _HomePageController extends GetxController with RouteAware {
     final progress = ValueNotifier<double>(0.0);
     final syncFuture = _connectAndSync(progress: progress);
     try {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => LoadingPage(
-            loadFuture: syncFuture,
-            onComplete: () {
-              // Already on home page, just start scanning
-              _startScanLoop();
-            },
-            progressListenable: progress,
-          ),
-          fullscreenDialog: true,
+      await Get.to<void>(
+        () => LoadingPage(
+          loadFuture: syncFuture,
+          onComplete: () {
+            // Already on home page, just start scanning
+            _startScanLoop();
+          },
+          progressListenable: progress,
         ),
+        fullscreenDialog: true,
       );
     } finally {
       progress.dispose();
@@ -572,10 +570,10 @@ class _HomePageController extends GetxController with RouteAware {
                           Expanded(
                             child: SizedBox(
                               height: 44,
-                              child: OutlinedButton(
-                                onPressed: requiredSelection
-                                    ? null
-                                    : () => Navigator.of(context).pop(),
+                                child: OutlinedButton(
+                                  onPressed: requiredSelection
+                                      ? null
+                                      : () => Get.back<void>(),
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(
                                     color: Color(0xFFD6DBE5),
@@ -593,9 +591,8 @@ class _HomePageController extends GetxController with RouteAware {
                           Expanded(
                             child: SizedBox(
                               height: 44,
-                              child: ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(selectedId),
+                                child: ElevatedButton(
+                                  onPressed: () => Get.back<String>(result: selectedId),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3E7DDD),
                                   foregroundColor: Colors.white,
@@ -1462,44 +1459,38 @@ class _HomePageController extends GetxController with RouteAware {
         final String displayAttendanceType = attendanceType == 'QUEUED OFFLINE' ? 'Time In (Queued)' : (attendanceType ?? 'Time In');
         final DateTime now = DateTime.now();
         
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => SuccessLoadingPage(
-              employeeName: employee!.name,
-              attendanceType: displayAttendanceType,
-              timestamp: now,
-              onComplete: () {
-                Navigator.of(context).pop();
-                Navigator.of(context)
-                    .push(
-                      MaterialPageRoute(
-                        builder: (_) => DashboardPage(
-                          employeeId: employee!.id,
-                          employeeName: employee.name,
-                          attendanceType: displayAttendanceType,
-                          matchedAt: now,
-                          siteId: _selectedSiteId,
-                          resultType: resultTypeStr,
-                          timeIn: attendanceType == 'TIME OUT'
-                              ? null
-                              : _controller.formatTimeOnly(now),
-                          timeOut: attendanceType == 'TIME OUT'
-                              ? _controller.formatTimeOnly(now)
-                              : null,
-                        ),
-                      ),
-                    )
-                    .then((_) {
-                      if (!mounted) return;
-                      if (_device.isConnected && _uiMode == _HomeUiMode.scanner) {
-                        debugPrint('[HOME_SCAN] Dashboard closed, resuming scan loop');
-                        _restartScanningWithFeedback();
-                      }
-                    });
-              },
-            ),
-            fullscreenDialog: true,
+        await Get.to<void>(
+          () => SuccessLoadingPage(
+            employeeName: employee!.name,
+            attendanceType: displayAttendanceType,
+            timestamp: now,
+            onComplete: () {
+              Get.back<void>();
+              Get.to<void>(
+                () => DashboardPage(
+                  employeeId: employee!.id,
+                  employeeName: employee.name,
+                  attendanceType: displayAttendanceType,
+                  matchedAt: now,
+                  siteId: _selectedSiteId,
+                  resultType: resultTypeStr,
+                  timeIn: attendanceType == 'TIME OUT'
+                      ? null
+                      : _controller.formatTimeOnly(now),
+                  timeOut: attendanceType == 'TIME OUT'
+                      ? _controller.formatTimeOnly(now)
+                      : null,
+                ),
+              )?.then((_) {
+                if (!mounted) return;
+                if (_device.isConnected && _uiMode == _HomeUiMode.scanner) {
+                  debugPrint('[HOME_SCAN] Dashboard closed, resuming scan loop');
+                  _restartScanningWithFeedback();
+                }
+              });
+            },
           ),
+          fullscreenDialog: true,
         );
         
         _controller.setStatus(
@@ -1521,20 +1512,17 @@ class _HomePageController extends GetxController with RouteAware {
         resultTypeStr = 'timeInUnsuccessful';
       }
       
-      Navigator.of(context)
-          .push(
-            MaterialPageRoute(
-              builder: (_) => DashboardPage(
-                employeeId: employee!.id,
-                employeeName: employee.name,
-                attendanceType: attendanceType,
-                matchedAt: DateTime.now(),
-                siteId: _selectedSiteId,
-                resultType: resultTypeStr,
-              ),
+      Get.to<void>(
+            () => DashboardPage(
+              employeeId: employee!.id,
+              employeeName: employee.name,
+              attendanceType: attendanceType,
+              matchedAt: DateTime.now(),
+              siteId: _selectedSiteId,
+              resultType: resultTypeStr,
             ),
           )
-          .then((_) {
+          ?.then((_) {
             if (!mounted) return;
             if (_device.isConnected && _uiMode == _HomeUiMode.scanner) {
               debugPrint('[HOME_SCAN] Dashboard closed, resuming scan loop');
@@ -1601,14 +1589,12 @@ class _HomePageController extends GetxController with RouteAware {
     final progress = ValueNotifier<double>(0.0);
     final syncFuture = _connectAndSync(progress: progress);
     try {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => LoadingPage(
-            loadFuture: syncFuture,
-            progressListenable: progress,
-          ),
-          fullscreenDialog: true,
+      await Get.to<void>(
+        () => LoadingPage(
+          loadFuture: syncFuture,
+          progressListenable: progress,
         ),
+        fullscreenDialog: true,
       );
     } finally {
       progress.dispose();
@@ -1647,11 +1633,8 @@ class _HomePageController extends GetxController with RouteAware {
   void _showFingerprintErrorModal() {
     if (!mounted) return;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return Dialog(
+    Get.dialog<void>(
+      Dialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -1702,7 +1685,7 @@ class _HomePageController extends GetxController with RouteAware {
                   height: 32,
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.of(context).pop();
+                      Get.back<void>();
                       if (_device.isConnected) {
                         _startScanLoop();
                       } else {
@@ -1730,8 +1713,8 @@ class _HomePageController extends GetxController with RouteAware {
               ],
             ),
           ),
-        );
-      },
+        ),
+      barrierDismissible: false,
     );
   }
 
