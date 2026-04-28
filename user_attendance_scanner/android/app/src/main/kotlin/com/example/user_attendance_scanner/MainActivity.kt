@@ -195,6 +195,11 @@ class MainActivity : FlutterActivity() {
                 "cancelEnroll" -> cancelEnroll(result)
                 "verify" -> verify(call.argument<String>("fid") ?: "", result)
                 "identify" -> identify(result)
+                "matchTemplates" -> {
+                    val template1 = call.argument<String>("template1") ?: ""
+                    val template2 = call.argument<String>("template2") ?: ""
+                    matchTemplates(template1, template2, result)
+                }
                 "addTemplate" -> {
                     val fid = call.argument<String>("fid") ?: ""
                     val template = call.argument<String>("template") ?: ""
@@ -586,6 +591,26 @@ class MainActivity : FlutterActivity() {
             ))
         } else {
             result.success(mapOf("found" to false))
+        }
+    }
+
+    private fun matchTemplates(
+        template1Base64: String,
+        template2Base64: String,
+        result: MethodChannel.Result
+    ) {
+        if (template1Base64.isEmpty() || template2Base64.isEmpty()) {
+            result.error("INVALID_TEMPLATE", "Templates cannot be empty", null)
+            return
+        }
+        try {
+            val template1 = Base64.decode(template1Base64, Base64.NO_WRAP)
+            val template2 = Base64.decode(template2Base64, Base64.NO_WRAP)
+            val score = ZKFingerService.verify(template1, template2)
+            result.success(score)
+        } catch (e: Exception) {
+            Log.e(TAG, "matchTemplates error: ${e.message}")
+            result.error("MATCH_ERROR", e.message, null)
         }
     }
     

@@ -102,7 +102,8 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    Navigator.of(context).pop();
+                    final navigator = Navigator.of(context);
+                    navigator.pop();
                     if (onNavigate != null) {
                       onNavigate!('home');
                     }
@@ -126,8 +127,9 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
+                    final navigator = Navigator.of(context);
+                    navigator.pop();
+                    navigator.push(
                       MaterialPageRoute<void>(
                         builder: (_) => EnrollmentPage(
                           siteId: selectedSiteId,
@@ -155,8 +157,9 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
+                    final navigator = Navigator.of(context);
+                    navigator.pop();
+                    navigator.push(
                       MaterialPageRoute<void>(
                         builder: (_) => LogsPage(
                           siteId: selectedSiteId,
@@ -183,8 +186,9 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
+                    final navigator = Navigator.of(context);
+                    navigator.pop();
+                    navigator.push(
                       MaterialPageRoute<void>(
                         builder: (_) => DatabasePage(
                           siteId: selectedSiteId,
@@ -213,7 +217,8 @@ class NavigationDrawer extends StatelessWidget {
                     ),
                   ),
                   onTap: () async {
-                    Navigator.of(context).pop();
+                    final navigator = Navigator.of(context);
+                    navigator.pop();
                     if (onSync != null) {
                       await onSync!.call();
                     } else {

@@ -8,6 +8,7 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_db.dart';
 import '../controllers/legacy_home_page_controller.dart';
+import '../utils/color_with_values_compat.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../routes/route_observer.dart';
 import 'loading_page.dart';
@@ -55,30 +56,6 @@ class _ScanResult {
   final _ScanResultType type;
   final String? employeeName;
   final String? attendanceType;
-}
-
-class _PendingTimeLog {
-  const _PendingTimeLog({
-    required this.timeLogId,
-    required this.timeLogDate,
-    required this.remarks,
-    required this.schedule,
-    required this.code,
-    this.timeInMorning,
-    this.timeOutMorning,
-    this.timeInAfternoon,
-    this.timeOutAfternoon,
-  });
-
-  final String timeLogId;
-  final String timeLogDate;
-  final String remarks;
-  final String schedule;
-  final String code;
-  final String? timeInMorning;
-  final String? timeOutMorning;
-  final String? timeInAfternoon;
-  final String? timeOutAfternoon;
 }
 
 enum _HomeUiMode { scanner, portal }
@@ -971,6 +948,9 @@ class _HomePageController extends GetxController with RouteAware {
                             children: [
                               Text(
                                 timeString,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
                                 style: TextStyle(
                                   fontFamily: 'CEORUSE',
                                   fontSize: cardW * 0.07,
@@ -981,6 +961,9 @@ class _HomePageController extends GetxController with RouteAware {
                               ),
                               Text(
                                 dateString,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
                                 style: TextStyle(
                                   fontFamily: 'CEORUSE',
                                   fontSize: cardW * 0.024,
@@ -1141,6 +1124,9 @@ class _HomePageController extends GetxController with RouteAware {
           Flexible(
             child: Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'CEORUSE',
@@ -1194,6 +1180,8 @@ class _HomePageController extends GetxController with RouteAware {
                     isSuccess
                         ? 'RECORDED'
                         : (result.errorMessage ?? 'UNREGISTERED'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'CEORUSE',
                       fontSize: cardW * 0.028,
@@ -1418,7 +1406,7 @@ class _HomePageController extends GetxController with RouteAware {
                       MaterialPageRoute(
                         builder: (_) => DashboardPage(
                           employeeId: employee!.id,
-                          employeeName: employee!.name,
+                          employeeName: employee.name,
                           attendanceType: displayAttendanceType,
                           matchedAt: now,
                           siteId: _selectedSiteId,
@@ -1446,7 +1434,7 @@ class _HomePageController extends GetxController with RouteAware {
         );
         
         _controller.setStatus(
-          '${employee!.name} - ${attendanceType ?? 'RECORDED'}',
+          '${employee.name} - ${attendanceType ?? 'RECORDED'}',
         );
         return;
       }
@@ -1469,7 +1457,7 @@ class _HomePageController extends GetxController with RouteAware {
             MaterialPageRoute(
               builder: (_) => DashboardPage(
                 employeeId: employee!.id,
-                employeeName: employee!.name,
+                employeeName: employee.name,
                 attendanceType: attendanceType,
                 matchedAt: DateTime.now(),
                 siteId: _selectedSiteId,
@@ -1486,7 +1474,7 @@ class _HomePageController extends GetxController with RouteAware {
           });
       
       _controller.setStatus(
-        '${employee!.name} - ${attendanceType ?? 'FAILED'}',
+        '${employee.name} - ${attendanceType ?? 'FAILED'}',
       );
     } else {
       debugPrint('[HOME_SCAN] No employee found - showing fingerprint not recognized');
@@ -1739,7 +1727,7 @@ class _CardRisingFadeParticle extends StatefulWidget {
   const _CardRisingFadeParticle({
     required this.size,
     required this.assetPath,
-    this.phase = 0.0,
+    required this.phase,
   });
 
   final double size;

@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 
 import '../controllers/loading_page_controller.dart';
+import '../utils/color_with_values_compat.dart';
 
 /// Full-screen loading UI: dark blue rounded container, particles,
 /// centered fingerprint, progress % top-left, "DOWNLOADING RESOURCES..." bottom-right.

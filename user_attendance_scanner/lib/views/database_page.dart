@@ -166,6 +166,9 @@ class DatabasePage extends StatelessWidget {
                                           ),
                                           title: Text(
                                             title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
                                             style: const TextStyle(
                                               color: Colors.white,
                                               fontFamily: 'Poppins',
@@ -178,6 +181,9 @@ class DatabasePage extends StatelessWidget {
                                             children: [
                                               Text(
                                                 'ID: ${emp['employee_id']}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                softWrap: false,
                                                 style: TextStyle(
                                                   color: Colors.white
                                                       .withOpacity(0.7),

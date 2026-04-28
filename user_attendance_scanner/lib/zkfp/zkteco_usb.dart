@@ -636,6 +636,29 @@ class ZKTecoUSB {
     return _sdk!.dbMatch(template1, template2);
   }
 
+  /// Match two templates across supported platforms.
+  /// Returns null when matching is unavailable.
+  Future<int?> matchTemplatesAsync(
+      Uint8List template1, Uint8List template2) async {
+    if (!_deviceOpened) return null;
+
+    try {
+      if (isAndroidPlatform) {
+        final score = await _channel.invokeMethod<int>('matchTemplates', {
+          'template1': base64Encode(template1),
+          'template2': base64Encode(template2),
+        });
+        return score;
+      } else if (_sdk != null) {
+        return _sdk!.dbMatch(template1, template2);
+      }
+    } catch (e) {
+      debugPrint('matchTemplatesAsync error: $e');
+    }
+
+    return null;
+  }
+
   /// Get number of fingerprints in database
   Future<int> getDatabaseCountAsync() async {
     if (!_deviceOpened) return 0;

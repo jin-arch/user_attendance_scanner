@@ -1,136 +1,120 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
 
-class EnrollmentController extends GetxController {
-  // Device management
+class EnrollmentController extends ChangeNotifier {
   final ZKTecoUSB _device = ZKTecoUSB();
-  final RxBool deviceInitialized = false.obs;
-  final RxBool isScanning = false.obs;
-  final Rx<Uint8List?> lastFingerprintImage = Rx<Uint8List?>(null);
-  
-  // Form fields
+
+  final deviceInitialized = ValueNotifier<bool>(false);
+  final isScanning = ValueNotifier<bool>(false);
+  final lastFingerprintImage = ValueNotifier<Uint8List?>(null);
+
   final TextEditingController idController = TextEditingController();
   final TextEditingController usernameController = TextEditingController();
-  final RxBool showForm = false.obs;
-  final Rx<Uint8List?> selfieImageBytes = Rx<Uint8List?>(null);
-  
-  // Fingerprint scanning state
-  final RxInt leftThumbScans = 0.obs;
-  final RxInt rightThumbScans = 0.obs;
-  final RxList<Uint8List> leftThumbScansList = <Uint8List>[].obs;
-  final RxList<Uint8List> rightThumbScansList = <Uint8List>[].obs;
-  final Rxn<DateTime> lastScanTime = Rxn<DateTime>();
-  
-  // Constants
+  final showForm = ValueNotifier<bool>(false);
+  final selfieImageBytes = ValueNotifier<Uint8List?>(null);
+
+  final leftThumbScans = ValueNotifier<int>(0);
+  final rightThumbScans = ValueNotifier<int>(0);
+  final leftThumbScansList = <Uint8List>[];
+  final rightThumbScansList = <Uint8List>[];
+
   static const int scansPerFinger = 3;
   static const int minTimeBetweenScansMs = 800;
-  
-  // Timer for scan loop
+
   Timer? _scanTimer;
-  
-  // Callbacks for UI updates
+  DateTime? _lastScanTime;
+
   VoidCallback? onStateChanged;
   Function(String)? onError;
   Function(String)? onSuccess;
-  
-  // Constructor parameters
+
   final String? siteId;
   final bool isEditMode;
   final String? employeeId;
   final String? employeeName;
-  
+
   EnrollmentController({
     this.siteId,
     this.isEditMode = false,
     this.employeeId,
     this.employeeName,
-  });
-  
-  String get displayName {
-    final fromForm = usernameController.text.trim();
-    if (fromForm.isNotEmpty) return fromForm;
-    final fromWidget = employeeName?.trim();
-    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
-    return 'UNKNOWN USER';
+  }) {
+    _initialize();
   }
-  
-  String get displayId {
-    final fromForm = idController.text.trim();
-    if (fromForm.isNotEmpty) return fromForm;
-    final fromWidget = employeeId?.trim();
-    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
-    return 'N/A';
-  }
-  
-  @override
-  void onInit() {
-    super.onInit();
-    _setupFormListeners();
+
+  void _initialize() {
+    idController.addListener(_onFormChanged);
+    usernameController.addListener(_onFormChanged);
     _prefillEmployeeDetails();
     _loadEmployeePhoto();
     _clearScanState();
     _device.clearCachedCapture();
     _initDevice();
   }
-  
+
   @override
-  void onClose() {
-    _removeFormListeners();
+  void dispose() {
+    idController.removeListener(_onFormChanged);
+    usernameController.removeListener(_onFormChanged);
     idController.dispose();
     usernameController.dispose();
     _stopScanLoop();
-    super.onClose();
+    _device.clearCachedCapture();
+
+    deviceInitialized.dispose();
+    isScanning.dispose();
+    lastFingerprintImage.dispose();
+    showForm.dispose();
+    selfieImageBytes.dispose();
+    leftThumbScans.dispose();
+    rightThumbScans.dispose();
+
+    super.dispose();
   }
-  
-  void _setupFormListeners() {
-    idController.addListener(_onFormChanged);
-    usernameController.addListener(_onFormChanged);
-  }
-  
-  void _removeFormListeners() {
-    idController.removeListener(_onFormChanged);
-    usernameController.removeListener(_onFormChanged);
-  }
-  
+
   void _onFormChanged() {
+    if (!isEditMode) {
+      notifyListeners();
+      return;
+    }
+
     final currentId = idController.text.trim();
     if (currentId.isEmpty) {
       if (selfieImageBytes.value != null) {
         selfieImageBytes.value = null;
       }
-      onStateChanged?.call();
-      return;
+    } else {
+      _loadEmployeePhotoForId(currentId);
     }
-    _loadEmployeePhotoForId(currentId);
-    onStateChanged?.call();
+    notifyListeners();
   }
-  
+
   void _prefillEmployeeDetails() {
-    final initialId = employeeId?.trim();
-    final initialName = employeeName?.trim();
-    if (initialId != null && initialId.isNotEmpty) {
-      idController.text = initialId;
+    if (employeeId != null && employeeId!.isNotEmpty) {
+      idController.text = employeeId!;
     }
-    if (initialName != null && initialName.isNotEmpty) {
-      usernameController.text = initialName;
+    if (employeeName != null && employeeName!.isNotEmpty) {
+      usernameController.text = employeeName!;
     }
-    if ((initialId != null && initialId.isNotEmpty) ||
-        (initialName != null && initialName.isNotEmpty)) {
+    if ((employeeId != null && employeeId!.isNotEmpty) ||
+        (employeeName != null && employeeName!.isNotEmpty)) {
       showForm.value = true;
     }
   }
-  
+
   Future<void> _loadEmployeePhoto() async {
+    if (!isEditMode) {
+      selfieImageBytes.value = null;
+      return;
+    }
+
     final empId = employeeId?.trim();
     if (empId == null || empId.isEmpty) {
-      if (selfieImageBytes.value != null) {
-        selfieImageBytes.value = null;
-      }
+      selfieImageBytes.value = null;
       return;
     }
     final site = siteId ?? 'default';
@@ -140,7 +124,7 @@ class EnrollmentController extends GetxController {
     );
     selfieImageBytes.value = photo;
   }
-  
+
   Future<void> _loadEmployeePhotoForId(String empId) async {
     final site = siteId ?? 'default';
     final photo = await LocalDb.getEmployeePhoto(
@@ -149,7 +133,7 @@ class EnrollmentController extends GetxController {
     );
     selfieImageBytes.value = photo;
   }
-  
+
   Future<void> _initDevice() async {
     try {
       final env = await _device.getAndroidSdkEnvironment();
@@ -158,14 +142,14 @@ class EnrollmentController extends GetxController {
         onError?.call('SDK not compatible: ${env['reason']}');
         return;
       }
-      
+
       final initResult = await _device.initSdk();
       if (!initResult) {
         debugPrint('SDK init failed');
         onError?.call('SDK initialization failed');
         return;
       }
-      
+
       final count = await _device.getDeviceCountAsync();
       if (count == 0) {
         debugPrint('No device found');
@@ -173,14 +157,14 @@ class EnrollmentController extends GetxController {
         await _device.terminateSdk();
         return;
       }
-      
+
       final opened = await _device.openDevice(0);
       if (!opened) {
         debugPrint('Failed to open device');
         onError?.call('Failed to open fingerprint device');
         return;
       }
-      
+
       _device.onImageCaptured = (int width, int height, Uint8List imageData) {
         debugPrint('Image captured: ${width}x$height');
         lastFingerprintImage.value = imageData;
@@ -189,7 +173,7 @@ class EnrollmentController extends GetxController {
       _device.clearCachedCapture();
       _clearScanState();
       deviceInitialized.value = true;
-      debugPrint('Device initialized successfully - starting scan loop...');
+      debugPrint('Device initialized successfully');
       onSuccess?.call('Device ready for fingerprint scanning');
       _startScanLoop();
     } catch (e) {
@@ -197,79 +181,111 @@ class EnrollmentController extends GetxController {
       onError?.call('Device initialization error: $e');
     }
   }
-  
+
   void _startScanLoop() {
     if (isScanning.value) return;
     isScanning.value = true;
     debugPrint('Starting enrollment scan loop...');
-    
+
     _scanTimer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
       if (!isScanning.value || !_device.isConnected) return;
-      
-      // Check if enrollment is complete
-      if (leftThumbScans.value >= scansPerFinger && rightThumbScans.value >= scansPerFinger) {
+
+      if (leftThumbScans.value >= scansPerFinger &&
+          rightThumbScans.value >= scansPerFinger) {
         _stopScanLoop();
         return;
       }
-      
+
       try {
         final template = await _device.captureFingerprint();
         if (template != null && template.isNotEmpty) {
-          _onFingerprintCaptured(template);
+          await _onFingerprintCaptured(template);
         }
       } catch (e) {
-        // Silent fail - keep trying
+        // Silent fail
       }
     });
   }
-  
+
   void _stopScanLoop() {
     _scanTimer?.cancel();
     _scanTimer = null;
     isScanning.value = false;
   }
-  
-  void _onFingerprintCaptured(Uint8List template) {
-    // Determine which thumb we're scanning
-    final isLeft = leftThumbScans.value < scansPerFinger;
-    final isRight = rightThumbScans.value < scansPerFinger;
-    
-    // Debounce: prevent same finger from scanning too quickly
+
+  Future<void> _onFingerprintCaptured(Uint8List template) async {
+    final isLeftTurn = leftThumbScans.value < scansPerFinger;
+    final isRightTurn = rightThumbScans.value < scansPerFinger;
+
     final now = DateTime.now();
-    if (lastScanTime.value != null) {
-      final diff = now.difference(lastScanTime.value!).inMilliseconds;
+    if (_lastScanTime != null) {
+      final diff = now.difference(_lastScanTime!).inMilliseconds;
       if (diff < minTimeBetweenScansMs) {
-        debugPrint('Scan too fast (${diff}ms) - same finger detected, please use different finger');
-        onError?.call(isLeft 
-          ? 'Left thumb already scanned. Please scan RIGHT thumb now.' 
-          : 'Right thumb already scanned. Please scan LEFT thumb now.');
+        // Ignore duplicate captures fired too quickly while the same finger is held.
         return;
       }
     }
-    lastScanTime.value = now;
-    
-    if (leftThumbScans.value < scansPerFinger) {
+
+    _lastScanTime = now;
+
+    if (isLeftTurn) {
+      if (leftThumbScansList.isNotEmpty) {
+        final score = await _device.matchTemplatesAsync(
+          leftThumbScansList.first,
+          template,
+        );
+        if (score != null && score <= 0) {
+          onError?.call(
+              'Different finger detected. Please use the same LEFT thumb.');
+          return;
+        }
+      }
       leftThumbScansList.add(template);
-      leftThumbScans.value++;
-    } else if (rightThumbScans.value < scansPerFinger) {
+      leftThumbScans.value = leftThumbScans.value + 1;
+      debugPrint('Left thumb scan ${leftThumbScans.value}/$scansPerFinger');
+    } else if (isRightTurn) {
+      if (rightThumbScansList.isEmpty && leftThumbScansList.isNotEmpty) {
+        final scoreVsLeft = await _device.matchTemplatesAsync(
+          leftThumbScansList.first,
+          template,
+        );
+        if (scoreVsLeft != null && scoreVsLeft > 0) {
+          onError?.call(
+              'Please use your RIGHT thumb, not the same finger as the left.');
+          return;
+        }
+      }
+      if (rightThumbScansList.isNotEmpty) {
+        final score = await _device.matchTemplatesAsync(
+          rightThumbScansList.first,
+          template,
+        );
+        if (score != null && score <= 0) {
+          onError?.call(
+              'Different finger detected. Please keep using the same RIGHT thumb.');
+          return;
+        }
+      }
       rightThumbScansList.add(template);
-      rightThumbScans.value++;
+      rightThumbScans.value = rightThumbScans.value + 1;
+      debugPrint('Right thumb scan ${rightThumbScans.value}/$scansPerFinger');
     }
-    
-    // Show feedback with clear next step
+
     final totalScans = leftThumbScans.value + rightThumbScans.value;
     final isComplete = totalScans >= (scansPerFinger * 2);
-    
+
     if (isComplete) {
       onSuccess?.call('Both thumbs captured! Enter employee details.');
       showForm.value = true;
-    } else if (totalScans == 1) {
-      onSuccess?.call('Left thumb captured! Now scan RIGHT thumb.');
+    } else if (leftThumbScans.value < scansPerFinger) {
+      onSuccess?.call('Left thumb scan ${leftThumbScans.value}/$scansPerFinger captured');
+    } else if (rightThumbScans.value == 0) {
+      onSuccess?.call('Left thumb complete. Now scan RIGHT thumb 3 times.');
     } else {
-      onSuccess?.call('Scan $totalScans/${scansPerFinger * 2} complete');
+      onSuccess?.call('Right thumb scan ${rightThumbScans.value}/$scansPerFinger captured');
     }
   }
-  
+
   Future<void> takeSelfie() async {
     try {
       final ImagePicker picker = ImagePicker();
@@ -283,7 +299,7 @@ class EnrollmentController extends GetxController {
       onError?.call('Error taking photo: $e');
     }
   }
-  
+
   void resetFingerprints() {
     _device.clearCachedCapture();
     leftThumbScans.value = 0;
@@ -291,79 +307,74 @@ class EnrollmentController extends GetxController {
     leftThumbScansList.clear();
     rightThumbScansList.clear();
     lastFingerprintImage.value = null;
-    lastScanTime.value = null;
+    _lastScanTime = null;
     showForm.value = true;
     onSuccess?.call('Enter employee details');
   }
-  
+
   Future<void> saveEnrollment() async {
-    // Validate form
     if (idController.text.isEmpty || usernameController.text.isEmpty) {
       onError?.call('Please enter ID and username');
       return;
     }
-    
-    // Check if all fingerprints were captured
-    if (leftThumbScans.value < scansPerFinger || rightThumbScans.value < scansPerFinger) {
+
+    if (leftThumbScans.value < scansPerFinger ||
+        rightThumbScans.value < scansPerFinger) {
       onError?.call('Please scan each thumb 3 times (3 left, 3 right)');
       return;
     }
-    
+
     try {
       final site = siteId ?? 'default';
       final empId = idController.text.trim();
       final empName = usernameController.text.trim();
-      
-      debugPrint('Saving enrollment:');
-      debugPrint('  ID: $empId');
-      debugPrint('  Name: $empName');
-      debugPrint('  Site: $site');
-      debugPrint('  Left scans: ${leftThumbScansList.length}');
-      debugPrint('  Right scans: ${rightThumbScansList.length}');
-      
-      // Save only 2 templates (1st scan from each finger)
-      // fid 1 = left thumb, fid 2 = right thumb
-      await LocalDb.upsertEmployee(
-        fid: 1,
-        employeeId: empId,
-        employeeName: empName,
-        template: leftThumbScansList[0],
-        siteId: site,
-      );
-      debugPrint('Saved left thumb template');
 
-      await LocalDb.upsertEmployee(
-        fid: 2,
+      if (!isEditMode) {
+        final existing = await LocalDb.getEmployeesBySite(site);
+        final found = existing.any(
+          (emp) => emp['employee_id'].toString() == empId,
+        );
+
+        if (found) {
+          onError?.call('Employee with this ID already exists!');
+          return;
+        }
+      }
+
+      if (isEditMode) {
+        await LocalDb.deleteEmployeeFingerprints(
+          employeeId: empId,
+          siteId: site,
+        );
+      }
+
+      await _saveFingerTemplates(
         employeeId: empId,
         employeeName: empName,
-        template: rightThumbScansList[0],
         siteId: site,
       );
-      debugPrint('Saved right thumb template');
-      
+
       if (selfieImageBytes.value != null) {
         await LocalDb.upsertEmployeePhoto(
           employeeId: empId,
           siteId: site,
           photo: selfieImageBytes.value!,
         );
-        debugPrint('Saved employee selfie');
       }
-      
-      // Clear all data after save
+
       _clearEnrollmentData();
-      
+
       onSuccess?.call(
         isEditMode
-            ? 'Enrollment updated successfully! Employee data refreshed.'
-            : 'Enrollment saved successfully! Employee registered.'
+            ? 'Enrollment updated successfully!'
+            : 'Enrollment saved successfully!'
       );
     } catch (e) {
       debugPrint('Save error: $e');
       onError?.call('Save failed: $e');
     }
   }
-  
+
   void _clearEnrollmentData() {
     showForm.value = false;
     leftThumbScans.value = 0;
@@ -374,25 +385,51 @@ class EnrollmentController extends GetxController {
     usernameController.clear();
     lastFingerprintImage.value = null;
     selfieImageBytes.value = null;
-    lastScanTime.value = null;
+    _lastScanTime = null;
   }
-  
+
   void _clearScanState() {
     leftThumbScans.value = 0;
     rightThumbScans.value = 0;
     leftThumbScansList.clear();
     rightThumbScansList.clear();
     lastFingerprintImage.value = null;
-    lastScanTime.value = null;
+    _lastScanTime = null;
   }
-  
-  String initialsFromName(String name) {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty || trimmed.toUpperCase() == 'UNKNOWN USER') return '';
-    final parts = trimmed.split(RegExp(r'\s+'));
-    if (parts.isEmpty) return '';
-    final first = parts.first.isNotEmpty ? parts.first[0] : '';
-    final last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
-    return (first + last).toUpperCase();
+
+  Future<void> _saveFingerTemplates({
+    required String employeeId,
+    required String employeeName,
+    required String siteId,
+  }) async {
+    for (var i = 0; i < leftThumbScansList.length; i++) {
+      await LocalDb.upsertEmployee(
+        fid: _stableFingerprintId(employeeId, 'left_$i'),
+        employeeId: employeeId,
+        employeeName: employeeName,
+        template: leftThumbScansList[i],
+        siteId: siteId,
+      );
+    }
+
+    for (var i = 0; i < rightThumbScansList.length; i++) {
+      await LocalDb.upsertEmployee(
+        fid: _stableFingerprintId(employeeId, 'right_$i'),
+        employeeId: employeeId,
+        employeeName: employeeName,
+        template: rightThumbScansList[i],
+        siteId: siteId,
+      );
+    }
+  }
+
+  int _stableFingerprintId(String employeeId, String thumbKey) {
+    var hash = 0x811C9DC5;
+    final input = '$employeeId:$thumbKey';
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
   }
 }

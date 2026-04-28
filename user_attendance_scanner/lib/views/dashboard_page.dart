@@ -7,6 +7,7 @@ import '../constants/date_time_formats.dart';
 import '../controllers/dashboard_page_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
 import '../routes/route_observer.dart';
+import '../utils/color_with_values_compat.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
 import '../zkfp/zkteco_usb.dart';
 import 'enrollment_page.dart';
@@ -568,9 +569,16 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     
     // Small delay then navigate back
     Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        // Pop back to home page (which is now safely in the navigation stack)
-        Navigator.of(context).pop();
+      if (!mounted) return;
+
+      if (widget.onPortalTap != null) {
+        widget.onPortalTap!.call();
+        return;
+      }
+
+      final navigator = Navigator.maybeOf(context);
+      if (navigator != null && navigator.canPop()) {
+        navigator.pop();
       }
     });
   }
@@ -1101,7 +1109,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       final now = widget.matchedAt ?? DateTime.now();
       final todayDate = DateTimeFormats.dateLongUpper(now);
       final todayKey = DateTimeFormats.dateKey(now);
-      final rows = _dashboardController.rows;
+      final rows = _dashboardController.rows.value;
       final todayRow = rows.firstWhere(
         (row) => _rowDateKey(row) == todayKey,
         orElse: () => rows.isNotEmpty
@@ -1217,6 +1225,9 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                     Expanded(
                       child: Text(
                         todayDate,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontFamily: 'Poppins',
@@ -1229,6 +1240,9 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                     Expanded(
                       child: Text(
                         todayIn,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontFamily: 'Poppins',
@@ -1241,6 +1255,9 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                     Expanded(
                       child: Text(
                         todayOut,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontFamily: 'Poppins',
@@ -1278,7 +1295,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     );
 
     return Obx(() {
-      final rows = _dashboardController.rows;
+      final rows = _dashboardController.rows.value;
       final loadingRows = _dashboardController.isLoadingRows.value;
 
       return Container(
@@ -1345,19 +1362,43 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                           children: [
                             Expanded(
                               flex: 3,
-                              child: Text(row.date, style: cellStyle),
+                              child: Text(
+                                row.date,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: cellStyle,
+                              ),
                             ),
                             Expanded(
                               flex: 2,
-                              child: Text(row.day, style: cellStyle),
+                              child: Text(
+                                row.day,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: cellStyle,
+                              ),
                             ),
                             Expanded(
                               flex: 3,
-                              child: Text(row.shift, style: cellStyle),
+                              child: Text(
+                                row.shift,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: cellStyle,
+                              ),
                             ),
                             Expanded(
                               flex: 3,
-                              child: Text(row.timeLogs, style: cellStyle),
+                              child: Text(
+                                row.timeLogs,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: cellStyle,
+                              ),
                             ),
                             Expanded(
                               flex: 2,
@@ -1388,32 +1429,40 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         ? const Color(0xFF162D1D)
         : const Color(0xFF2E2611);
 
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: w * 0.015, vertical: w * 0.005),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(w * 0.018),
-        color: bg,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: w * 0.01,
-            height: w * 0.01,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-          ),
-          SizedBox(width: w * 0.008),
-          Text(
-            row.status,
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: w * 0.010,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-              letterSpacing: 1.5,
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: w * 0.16),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: w * 0.015, vertical: w * 0.005),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(w * 0.018),
+          color: bg,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: w * 0.01,
+              height: w * 0.01,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: color),
             ),
-          ),
-        ],
+            SizedBox(width: w * 0.008),
+            Flexible(
+              child: Text(
+                row.status,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: w * 0.010,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

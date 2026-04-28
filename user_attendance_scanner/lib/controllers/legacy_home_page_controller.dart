@@ -18,6 +18,7 @@ class LegacyHomePageController extends GetxController {
       '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
+  static const int _timeOutCooldownMinutes = 5;
 
   final Rx<DateTime> now = DateTime.now().obs;
   final RxBool biometricConnected = false.obs;
@@ -339,14 +340,11 @@ class LegacyHomePageController extends GetxController {
 
           if (!isBlankAttendanceValue(timeInMorning) &&
               isBlankAttendanceValue(timeOutMorning)) {
-            final currentTime = now.hour * 60 + now.minute;
-            final timeInHour =
-                int.tryParse(timeInMorning?.split(':')[0] ?? '0') ?? 0;
-            final timeInMinute =
-                int.tryParse(timeInMorning?.split(':')[1] ?? '0') ?? 0;
-            final timeInMinutes = timeInHour * 60 + timeInMinute;
+            final timeInDateTime = _parseTodayTime(timeInMorning, now);
 
-            if (currentTime - timeInMinutes >= 480) {
+            if (timeInDateTime != null &&
+                now.difference(timeInDateTime).inMinutes >=
+                    _timeOutCooldownMinutes) {
               await LocalDb.saveTimelog(
                 siteId: siteId,
                 employeeId: employeeId,
@@ -410,5 +408,37 @@ class LegacyHomePageController extends GetxController {
         text == '00:00:00' ||
         text == '0' ||
         text.toUpperCase() == 'N/A';
+  }
+
+  DateTime? _parseTodayTime(String? rawTime, DateTime now) {
+    if (isBlankAttendanceValue(rawTime)) return null;
+    final text = rawTime!.trim();
+    final upper = text.toUpperCase();
+    final hasPm = upper.contains('PM');
+    final hasAm = upper.contains('AM');
+    final normalized = upper.replaceAll(RegExp(r'[^0-9:]'), '');
+    final parts = normalized
+        .split(':')
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (parts.length < 2) return null;
+
+    var hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    final second = parts.length > 2 ? int.tryParse(parts[2]) ?? 0 : 0;
+    if (hour == null || minute == null) return null;
+
+    if (hasPm && hour < 12) hour += 12;
+    if (hasAm && hour == 12) hour = 0;
+    if (hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59 ||
+        second < 0 ||
+        second > 59) {
+      return null;
+    }
+
+    return DateTime(now.year, now.month, now.day, hour, minute, second);
   }
 }

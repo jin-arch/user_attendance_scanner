@@ -1,5 +1,4 @@
 // Simplified main.dart without complex architecture
-import 'dart:io' show Platform;
 import 'package:device_preview/device_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -24,13 +23,14 @@ void main() async {
   
   if (!kIsWeb) {
     try {
-      if (Platform.isAndroid || Platform.isIOS) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        await SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
-        ]);
-      } else if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      final target = defaultTargetPlatform;
+      final isSupportedPlatform = target == TargetPlatform.android ||
+          target == TargetPlatform.iOS ||
+          target == TargetPlatform.windows ||
+          target == TargetPlatform.linux ||
+          target == TargetPlatform.macOS;
+
+      if (isSupportedPlatform) {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
         await SystemChrome.setPreferredOrientations([
           DeviceOrientation.landscapeLeft,
@@ -56,7 +56,6 @@ class MyApp extends StatelessWidget {
     final previewEnabled = kDebugMode;
 
     return GetMaterialApp(
-      useInheritedMediaQuery: previewEnabled,
       locale: previewEnabled ? DevicePreview.locale(context) : null,
       builder: previewEnabled ? DevicePreview.appBuilder : null,
       navigatorObservers: [routeObserver],

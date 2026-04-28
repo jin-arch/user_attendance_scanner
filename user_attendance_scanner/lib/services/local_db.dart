@@ -1017,6 +1017,19 @@ class LocalDb {
     );
   }
 
+  /// Delete only fingerprint templates for an employee (keeps photo intact).
+  static Future<void> deleteEmployeeFingerprints({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    final database = await db;
+    await database.delete(
+      'employees',
+      where: 'employee_id = ? AND site_id = ?',
+      whereArgs: [employeeId, siteId],
+    );
+  }
+
   /// Close the database (call on app exit if needed).
   static Future<void> close() async {
     await _db?.close();

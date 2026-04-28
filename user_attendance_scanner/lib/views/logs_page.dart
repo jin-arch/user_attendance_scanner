@@ -154,6 +154,9 @@ class LogsPage extends StatelessWidget {
                                           title: Text(
                                             (log['employee_name'] as String?) ??
                                                 'Unknown',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
                                             style: const TextStyle(
                                               color: Colors.white,
                                               fontWeight: FontWeight.w600,
@@ -165,6 +168,9 @@ class LogsPage extends StatelessWidget {
                                             children: [
                                               Text(
                                                 'ID: ${log['employee_id'] ?? 'N/A'}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                softWrap: false,
                                                 style: TextStyle(
                                                   color: Colors.white
                                                       .withOpacity(0.7),
@@ -173,6 +179,9 @@ class LogsPage extends StatelessWidget {
                                               if (log['period'] != null)
                                                 Text(
                                                   '${log['period']}',
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  softWrap: false,
                                                   style: TextStyle(
                                                     color: Colors.white
                                                         .withOpacity(0.6),
@@ -181,34 +190,43 @@ class LogsPage extends StatelessWidget {
                                                 ),
                                             ],
                                           ),
-                                          trailing: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.end,
-                                            children: [
-                                              Text(
-                                                (log['type'] as String?) ??
-                                                    'Unknown',
-                                                style: TextStyle(
-                                                  color: isTimeIn
-                                                      ? Colors.green
-                                                      : Colors.orange,
-                                                  fontWeight: FontWeight.bold,
+                                          trailing: SizedBox(
+                                            width: w * 0.22,
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  (log['type'] as String?) ??
+                                                      'Unknown',
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  softWrap: false,
+                                                  style: TextStyle(
+                                                    color: isTimeIn
+                                                        ? Colors.green
+                                                        : Colors.orange,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
                                                 ),
-                                              ),
-                                              Text(
-                                                (log['time_only'] as String?) ??
-                                                    controller.formatTimestamp(
-                                                      log['timestamp'],
-                                                    ),
-                                                style: TextStyle(
-                                                  color: Colors.white
-                                                      .withOpacity(0.6),
-                                                  fontSize: 12,
+                                                Text(
+                                                  (log['time_only'] as String?) ??
+                                                      controller.formatTimestamp(
+                                                        log['timestamp'],
+                                                      ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  softWrap: false,
+                                                  style: TextStyle(
+                                                    color: Colors.white
+                                                        .withOpacity(0.6),
+                                                    fontSize: 12,
+                                                  ),
                                                 ),
-                                              ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
                                         );
                                       },
