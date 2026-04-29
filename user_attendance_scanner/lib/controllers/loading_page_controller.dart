@@ -16,7 +16,7 @@ class LoadingPageController extends GetxController {
   final VoidCallback onFinish;
   final bool stayOnScreen;
 
-  int progress = 0;
+  final RxInt progress = 0.obs;
 
   Timer? _fallbackTimer;
   VoidCallback? _progressListener;
@@ -66,8 +66,8 @@ class LoadingPageController extends GetxController {
     _fallbackTimer?.cancel();
     _fallbackTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
       if (_workComplete || isClosed) return;
-      final next = (progress + 1).clamp(0, 95);
-      if (next > progress) {
+      final next = (progress.value + 1).clamp(0, 95);
+      if (next > progress.value) {
         _setProgress(next);
       }
     });
@@ -83,8 +83,9 @@ class LoadingPageController extends GetxController {
 
   void _setProgress(int value) {
     if (isClosed) return;
-    if (value == progress) return;
-    progress = value.clamp(0, 100);
+    final clamped = value.clamp(0, 100);
+    if (clamped == progress.value) return;
+    progress.value = clamped;
     update();
   }
 

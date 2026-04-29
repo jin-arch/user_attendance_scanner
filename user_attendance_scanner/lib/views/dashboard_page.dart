@@ -106,14 +106,26 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     // Defer loading to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _loadRows();
-        if (_enableScanning) {
-          _dashboardController.loadEmployeeDatabase(
-            siteId: widget.siteId,
-            device: _device,
-          );
-        }
-        _loadProfilePhoto();
+        _loadRows().then((_) {
+          if (_enableScanning) {
+            _dashboardController.loadEmployeeDatabase(
+              siteId: widget.siteId,
+              device: _device,
+            );
+          }
+          _loadProfilePhoto();
+          
+          // Start scanning only after data is loaded to prevent duplicate time-ins
+          if (_enableScanning && _device.isConnected) {
+            _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+            _dashboardController.startScanLoop(
+              device: _device,
+              isScanning: () => _controller.isScanning.value,
+              setScanning: _controller.setScanning,
+              onTemplateReady: _onTemplateReady,
+            );
+          }
+        });
       }
     });
 
@@ -122,21 +134,6 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         _returnToScanner();
       }
     });
-    
-    // Start scanning if device is connected (deferred) - only when scanning is enabled
-    if (_enableScanning && _device.isConnected) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          _dashboardController.startScanLoop(
-            device: _device,
-            isScanning: () => _controller.isScanning.value,
-            setScanning: _controller.setScanning,
-            onTemplateReady: _onTemplateReady,
-          );
-        }
-      });
-    }
     
     // Show result modal if resultType is provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -207,15 +204,22 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       setScanning: _controller.setScanning,
       isMounted: () => mounted,
     );
-    if (_enableScanning && _device.isConnected) {
-      _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-      _dashboardController.startScanLoop(
-        device: _device,
-        isScanning: () => _controller.isScanning.value,
-        setScanning: _controller.setScanning,
-        onTemplateReady: _onTemplateReady,
-      );
-    }
+    // Defer scanning start until after data is loaded to prevent duplicate time-ins
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadRows().then((_) {
+          if (_enableScanning && _device.isConnected) {
+            _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+            _dashboardController.startScanLoop(
+              device: _device,
+              isScanning: () => _controller.isScanning.value,
+              setScanning: _controller.setScanning,
+              onTemplateReady: _onTemplateReady,
+            );
+          }
+        });
+      }
+    });
   }
 
   @override

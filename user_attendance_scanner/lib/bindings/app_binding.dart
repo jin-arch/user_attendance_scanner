@@ -15,16 +15,20 @@ import '../controllers/home_page_bridge.dart';
 class AppBinding extends Bindings {
   @override
   void dependencies() {
-    // Services
-    Get.lazyPut<DeviceService>(() => DeviceServiceImpl(), fenix: true);
+    // Initialize dependencies
+    final deviceService = DeviceServiceImpl();
+    final siteRepository = SiteRepositoryImpl();
+    final employeeRepository = EmployeeRepositoryImpl();
+    final attendanceRepository = AttendanceRepositoryImpl();
 
-    // Repositories
-    Get.lazyPut<SiteRepository>(() => SiteRepositoryImpl(), fenix: true);
-    Get.lazyPut<EmployeeRepository>(() => EmployeeRepositoryImpl(), fenix: true);
-    Get.lazyPut<AttendanceRepository>(() => AttendanceRepositoryImpl(), fenix: true);
+    // Register dependencies
+    Get.lazyPut(() => deviceService, fenix: true);
+    Get.lazyPut(() => siteRepository, fenix: true);
+    Get.lazyPut(() => employeeRepository, fenix: true);
+    Get.lazyPut(() => attendanceRepository, fenix: true);
 
-    // Presenter/Controller (GetX)
-    Get.lazyPut<HomePageController>(
+    // Register controllers with dependencies
+    Get.lazyPut(
       () => HomePageController(
         Get.find<SiteRepository>(),
         Get.find<EmployeeRepository>(),
@@ -34,13 +38,13 @@ class AppBinding extends Bindings {
       fenix: true,
     );
 
-    // Legacy controller still used by the current Views.
-    Get.lazyPut<LegacyHomePageController>(() => LegacyHomePageController(), fenix: true);
+    // Legacy controller still used by the current Views
+    Get.lazyPut(() => LegacyHomePageController(), fenix: true);
 
-    // Dashboard business logic/state helper for the legacy dashboard view.
-    Get.lazyPut<DashboardPageController>(() => DashboardPageController(), fenix: true);
+    // Dashboard business logic/state helper for the legacy dashboard view
+    Get.lazyPut(() => DashboardPageController(), fenix: true);
 
-    // Bridge is optional, but kept for gradual migration.
-    Get.lazyPut<HomePageBridge>(() => HomePageBridge(), fenix: true);
+    // Bridge is optional, but kept for gradual migration
+    Get.lazyPut(() => HomePageBridge(), fenix: true);
   }
 }

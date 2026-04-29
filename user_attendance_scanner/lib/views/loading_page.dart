@@ -219,11 +219,14 @@ class LoadingPage extends StatelessWidget {
                                             Positioned(
                                               left: cw * 0.1,
                                               top: ch * 0.02,
-                                              child: _ProgressText(
-                                                progress: controller.progress,
-                                                fontSize: (cw * 0.055).clamp(
-                                                  28.0,
-                                                  56.0,
+                                              child: Obx(
+                                                () => _ProgressText(
+                                                  progress:
+                                                      controller.progress.value,
+                                                  fontSize: (cw * 0.055).clamp(
+                                                    28.0,
+                                                    56.0,
+                                                  ),
                                                 ),
                                               ),
                                             ),
