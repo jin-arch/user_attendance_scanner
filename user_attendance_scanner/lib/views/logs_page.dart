@@ -253,14 +253,6 @@ class LogsPage extends StatelessWidget {
                                     // Generate unique key for this log entry
                                     final logKey = '${log['employee_id']}_${log['timestamp']}_${log['type']}';
 
-                                    // Start cooldown for this log on first display
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                      if (!controller.isLogInCooldown(logKey) &&
-                                          controller.logCooldownMap[logKey] == null) {
-                                        controller.startLogCooldown(logKey);
-                                      }
-                                    });
-
                                     return Obx(() {
                                       final inCooldown = controller.isLogInCooldown(logKey);
 
