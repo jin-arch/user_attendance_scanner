@@ -377,18 +377,18 @@ class LogsController extends GetxController {
     }
   }
 
-  /// Wait for finger on scanner, then perform single scan
+  /// Wait for finger on scanner, then perform continuous scanning
   Future<void> _waitForFingerAndScan() async {
-    debugPrint('[LOGS_CONTROLLER] Ready for fingerprint scan...');
-    setStatus('Place finger on scanner...');
+    debugPrint('[LOGS_CONTROLLER] Ready for continuous fingerprint scan...');
+    setStatus('Place finger on scanner - continuous scanning active');
 
     try {
       // Activate scanning mode on the device
       debugPrint('[LOGS_CONTROLLER] Activating scanner...');
       await _deviceService.startScanningMode();
-      debugPrint('[LOGS_CONTROLLER] Scanner activated - keeping in scanning mode');
+      debugPrint('[LOGS_CONTROLLER] Scanner activated - continuous scanning enabled');
 
-      // Keep scanning until a match is found
+      // Keep scanning continuously until a match is found
       while (!isAuthenticated.value && isDeviceConnected.value && siteId != null) {
         try {
           isScanning.value = true;
@@ -401,15 +401,18 @@ class LogsController extends GetxController {
             break;
           }
 
-          // No match, keep scanning - stay with same message
-          debugPrint('[LOGS_CONTROLLER] No match - waiting for next finger...');
-          setStatus('Place finger on scanner...');
-          await Future.delayed(const Duration(milliseconds: 500));
+          // No match - immediately continue scanning without delay
+          debugPrint('[LOGS_CONTROLLER] No match detected - continuing continuous scan...');
+          // Clear any error messages and keep scanning
+          if (errorMessage.value.isNotEmpty) {
+            errorMessage.value = '';
+          }
         } catch (e) {
           debugPrint('[LOGS_CONTROLLER] Scan attempt error: $e');
           isScanning.value = false;
-          setStatus('Place finger on scanner...');
-          await Future.delayed(const Duration(milliseconds: 500));
+          // Clear error and continue scanning immediately
+          errorMessage.value = '';
+          debugPrint('[LOGS_CONTROLLER] Continuing continuous scan after error...');
         }
       }
     } catch (e) {
@@ -468,18 +471,21 @@ class LogsController extends GetxController {
           debugPrint('[LOGS_CONTROLLER] ✓ Fingerprint authentication complete');
         } else {
           debugPrint('[LOGS_CONTROLLER] ✗ Fingerprint not matched: ${scanResult.errorMessage}');
-          errorMessage.value = scanResult.errorMessage ?? 'Fingerprint not recognized';
+          // Don't set error message to avoid stopping continuous scan
+          // errorMessage.value = scanResult.errorMessage ?? 'Fingerprint not recognized';
           // Keep status blue for failed authentication
         }
       } else {
         debugPrint('[LOGS_CONTROLLER] ✗ No fingerprint template received');
-        errorMessage.value = 'No fingerprint detected';
+        // Don't set error message to avoid stopping continuous scan
+        // errorMessage.value = 'No fingerprint detected';
         // DON'T change status - keep it blue
       }
     } catch (e, stackTrace) {
       debugPrint('[LOGS_CONTROLLER] ✗ Fingerprint scan error: $e');
       debugPrint('[LOGS_CONTROLLER] Stack trace: $stackTrace');
-      errorMessage.value = 'Scanning error: $e';
+      // Don't set error message to avoid stopping continuous scan
+      // errorMessage.value = 'Scanning error: $e';
       // DON'T change status - keep it blue
     }
     debugPrint('[LOGS_CONTROLLER] ===== FINGERPRINT SCAN END =====');
