@@ -330,6 +330,13 @@ class LogsController extends GetxController {
       // Now load logs (will fetch from API if needed)
       setStatus('Loading employee time logs...');
       await loadLogs();
+      
+      // Set status to green after successful authentication and log loading
+      if (isAuthenticated.value && logs.isNotEmpty) {
+        setStatus('Time logs loaded successfully');
+      } else if (isAuthenticated.value) {
+        setStatus('Authenticated - no time logs found');
+      }
 
       _resetAfkTimer(); // Reset AFK timeout on successful authentication
     } catch (e) {
@@ -450,11 +457,11 @@ class LogsController extends GetxController {
 
           authenticatedEmployee.value = scanResult.employee;
           isAuthenticated.value = true;
-          // NOW change status to show success
-          setStatus('Welcome, ${scanResult.employee!.name}! Loading your time logs...');
+          // Change status to green (ready) after successful authentication
+          setStatus('Welcome, ${scanResult.employee!.name}! Time logs ready');
 
           debugPrint('[LOGS_CONTROLLER] Authenticating by employee ID: ${scanResult.employee!.id}');
-          // Auto-load logs via the authenticate function
+          // Auto-load logs via authenticate function
           await authenticateByEmployeeId(scanResult.employee!.id);
 
           _resetAfkTimer(); // Reset AFK timeout on successful scan
@@ -462,7 +469,7 @@ class LogsController extends GetxController {
         } else {
           debugPrint('[LOGS_CONTROLLER] ✗ Fingerprint not matched: ${scanResult.errorMessage}');
           errorMessage.value = scanResult.errorMessage ?? 'Fingerprint not recognized';
-          // DON'T change status - keep it blue
+          // Keep status blue for failed authentication
         }
       } else {
         debugPrint('[LOGS_CONTROLLER] ✗ No fingerprint template received');
@@ -516,7 +523,7 @@ class LogsController extends GetxController {
       if (localLogs.isNotEmpty) {
         logs.assignAll(localLogs);
         debugPrint('[LOGS_CONTROLLER] ✅ Loaded ${localLogs.length} logs from local database');
-        setStatus('Loaded ${localLogs.length} time logs from local cache');
+        setStatus('Loaded ${localLogs.length} time logs - ready');
         return;
       }
 
@@ -532,10 +539,10 @@ class LogsController extends GetxController {
       if (filteredApiLogs.isNotEmpty) {
         logs.assignAll(filteredApiLogs);
         debugPrint('[LOGS_CONTROLLER] ✅ Loaded ${filteredApiLogs.length} logs from API');
-        setStatus('Loaded ${filteredApiLogs.length} time logs from server');
+        setStatus('Loaded ${filteredApiLogs.length} time logs - ready');
       } else {
         debugPrint('[LOGS_CONTROLLER] ⚠️ No logs found for employee ${authenticatedEmployee.value?.id}');
-        setStatus('No time logs found for this employee');
+        setStatus('Authenticated - no time logs found');
         logs.clear();
       }
     } catch (e) {
