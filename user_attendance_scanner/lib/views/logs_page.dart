@@ -250,6 +250,8 @@ class LogsPage extends StatelessWidget {
                                     final type = (log['type'] ?? '').toString().toLowerCase();
                                     final isTimeIn = type.contains('in');
 
+                                    debugPrint('[LOGS_PAGE] Log $index: emp=${log['employee_id']}, name=${log['employee_name']}, type=${log['type']}, timestamp=${log['timestamp']}, time_only=${log['time_only']}');
+
                                     // Generate unique key for this log entry
                                     final logKey = '${log['employee_id']}_${log['timestamp']}_${log['type']}';
 
@@ -273,7 +275,9 @@ class LogsPage extends StatelessWidget {
                                               ),
                                             ),
                                             title: Text(
-                                              (log['employee_name'] as String?) ?? 'Unknown',
+                                              (log['employee_name'] as String?) ??
+                                              (log['name'] as String?) ??
+                                              'Unknown',
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               softWrap: false,
@@ -326,15 +330,13 @@ class LogsPage extends StatelessWidget {
                                               ],
                                             ),
                                             trailing: SizedBox(
-                                              width: w * 0.22,
+                                              width: w * 0.28,
                                               child: Column(
                                                 mainAxisAlignment: MainAxisAlignment.center,
                                                 crossAxisAlignment: CrossAxisAlignment.end,
                                                 children: [
                                                   Text(
-                                                    inCooldown
-                                                        ? 'Hidden'
-                                                        : (log['type'] as String?) ?? 'Unknown',
+                                                    controller.getTimeInOut(log),
                                                     maxLines: 1,
                                                     overflow: TextOverflow.ellipsis,
                                                     softWrap: false,
@@ -349,13 +351,24 @@ class LogsPage extends StatelessWidget {
                                                   ),
                                                   if (!inCooldown)
                                                     Text(
+                                                      controller.formatDate(log['timestamp']),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      softWrap: false,
+                                                      style: TextStyle(
+                                                        color: Colors.white.withOpacity(0.5),
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                  if (!inCooldown)
+                                                    Text(
                                                       (log['time_only'] as String?) ??
                                                           controller.formatTimestamp(log['timestamp']),
                                                       maxLines: 1,
                                                       overflow: TextOverflow.ellipsis,
                                                       softWrap: false,
                                                       style: TextStyle(
-                                                        color: Colors.white.withOpacity(0.6),
+                                                        color: Colors.white.withOpacity(0.7),
                                                         fontSize: 12,
                                                       ),
                                                     )

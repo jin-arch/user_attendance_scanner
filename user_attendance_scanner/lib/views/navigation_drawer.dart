@@ -110,15 +110,15 @@ class NavigationDrawer extends StatelessWidget {
                   },
                 ),
 
-                // Enrollment Button (for new users)
+                // Enrollment Button (for updating existing users)
                 ListTile(
                   leading: const Icon(
-                    Icons.person_add_alt_1_outlined,
+                    Icons.fingerprint,
                     color: Colors.white,
                     size: 24,
                   ),
                   title: const Text(
-                    'Enrollment',
+                    'Update Fingerprint',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -132,7 +132,7 @@ class NavigationDrawer extends StatelessWidget {
                       AppRoutes.enrollment,
                       arguments: <String, dynamic>{
                         'siteId': selectedSiteId,
-                        'isEditMode': false,
+                        'isEditMode': true,
                       },
                     );
                   },

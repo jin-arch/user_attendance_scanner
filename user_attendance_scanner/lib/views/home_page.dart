@@ -8,6 +8,8 @@ import '../animations/rising_fade_particle.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_db.dart';
+import '../services/site_repository_impl.dart';
+import '../models/site_model.dart';
 import '../controllers/legacy_home_page_controller.dart';
 import '../utils/color_with_values_compat.dart';
 import '../zkfp/zkteco_usb.dart';
@@ -121,6 +123,7 @@ class _HomePageController extends GetxController with RouteAware {
   _EmployeeEntry? _matchedEmployee;
   String? _matchedAttendanceType;
   DateTime? _matchedAt;
+  bool _startupSiteSelectionCompleted = false;
 
   void ensureInitialized(BuildContext context) {
     _context = context;
@@ -131,16 +134,25 @@ class _HomePageController extends GetxController with RouteAware {
 
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
-    
+
     _loadDeviceSiteMap();
+
+    // Load saved site preference first (synchronously load the site if available)
+    _loadSavedSitePreferenceSync();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _requireSiteSelectionOnStartup();
+      // Only run startup site selection once
+      if (!_startupSiteSelectionCompleted) {
+        _startupSiteSelectionCompleted = true;
+        _requireSiteSelectionOnStartup();
+      }
     });
 
     // Set up Android callbacks
     if (ZKTecoUSB.isAndroidPlatform) {
       _device.onDeviceAttached = () {
         _controller.setStatus('Device attached!');
+        debugPrint('[DEVICE] Device attached - attempting auto-connect with site: $_selectedSiteId');
         // Auto-connect when device is attached
         _autoConnectIfSiteSelected();
       };
@@ -162,6 +174,34 @@ class _HomePageController extends GetxController with RouteAware {
 
     // Try to auto-connect if already have site selected
     _autoConnectIfSiteSelected();
+  }
+
+  /// Load previously saved site preference from database
+  void _loadSavedSitePreferenceSync() {
+    try {
+      // This should complete quickly since we're just reading from local database
+      _loadSavedSitePreference().then((_) {
+        debugPrint('[INIT] Site preference loaded: $_selectedSiteId');
+      }).catchError((e) {
+        debugPrint('[INIT] Error loading site preference: $e');
+      });
+    } catch (e) {
+      debugPrint('[INIT] Error in sync load: $e');
+    }
+  }
+
+  /// Load previously saved site preference from database (async)
+  Future<void> _loadSavedSitePreference() async {
+    try {
+      final siteRepository = SiteRepositoryImpl();
+      final savedSite = await siteRepository.getSelectedSite();
+      if (savedSite != null && savedSite.id.isNotEmpty) {
+        debugPrint('[INIT] Loaded saved site: ${savedSite.id}');
+        _selectedSiteId = savedSite.id;
+      }
+    } catch (e) {
+      debugPrint('[INIT] Error loading saved site: $e');
+    }
   }
 
   void _bindRoute() {
@@ -406,6 +446,34 @@ class _HomePageController extends GetxController with RouteAware {
   Future<void> _requireSiteSelectionOnStartup() async {
     if (!mounted) return;
 
+    // If site was already loaded from saved preference, skip dialog
+    if (_selectedSiteId != null && _selectedSiteId!.isNotEmpty) {
+      debugPrint('[STARTUP] Site already loaded: $_selectedSiteId, skipping dialog');
+      _controller.setStatus(
+        'Using saved site: ${_siteNameById(_selectedSiteId)}',
+      );
+
+      // Proceed directly to sync
+      final progress = ValueNotifier<double>(0.0);
+      final syncFuture = _connectAndSync(progress: progress);
+      try {
+        await Get.to<void>(
+          () => LoadingPage(
+            loadFuture: syncFuture,
+            onComplete: () {
+              _startScanLoop();
+            },
+            progressListenable: progress,
+          ),
+          fullscreenDialog: true,
+        );
+      } finally {
+        progress.dispose();
+      }
+      if (mounted) _startScanLoop();
+      return;
+    }
+
     // Step 1 - fetch site list quietly (status bar only, no loading screen)
     _controller.setStatus('Loading site list...');
     await _ensureSitesLoaded();
@@ -419,11 +487,21 @@ class _HomePageController extends GetxController with RouteAware {
     }
     _controller.setStatus('');
 
-    // Step 2 - let the user choose their work site
+    // Step 2 - let the user choose their work site if no previous selection
     final selected = await _showSiteSelectionDialog(requiredSelection: true);
     if (!mounted || selected == null) return;
 
     setState(() => _selectedSiteId = selected);
+
+    // Persist the newly selected site
+    final siteRepository = SiteRepositoryImpl();
+    await siteRepository.selectSite(
+      Site(
+        id: selected,
+        name: _siteNameById(selected) ?? selected,
+      ),
+    );
+
     await LocalDb.pruneToSite(selected);
     _controller.setStatus(
       'Selected site: ${_siteNameById(selected) ?? selected}',
@@ -438,7 +516,6 @@ class _HomePageController extends GetxController with RouteAware {
         () => LoadingPage(
           loadFuture: syncFuture,
           onComplete: () {
-            // Already on home page, just start scanning
             _startScanLoop();
           },
           progressListenable: progress,
@@ -1320,7 +1397,13 @@ class _HomePageController extends GetxController with RouteAware {
         final fid = row['fid'] as int;
         final empId = row['employee_id'] as String;
         final empName = row['employee_name'] as String?;
-        final templateBytes = row['finger_template'] as Uint8List;
+        final templateRaw = row['finger_template'];
+        final templateBytes = templateRaw is Uint8List
+            ? templateRaw
+            : (templateRaw is List<int> ? Uint8List.fromList(templateRaw) : null);
+        if (templateBytes == null) {
+          continue;
+        }
 
         debugPrint('[LOAD_EMPLOYEES] Processing employee: fid=$fid, id=$empId, name=$empName');
         await _device.registerFingerprint(fid, templateBytes);
@@ -1559,6 +1642,54 @@ class _HomePageController extends GetxController with RouteAware {
     if (_controller.isSearching.value) return;
     if (!mounted) return;
 
+    // If site already selected, use fast reconnect (load from local DB only)
+    if (_selectedSiteId != null && _selectedSiteId!.isNotEmpty) {
+      debugPrint('[SEARCH] Site already selected: $_selectedSiteId - fast reconnect');
+
+      // Check if we already have employees cached
+      final hasCachedEmployees = await _checkAndLoadCachedEmployees(_selectedSiteId!);
+
+      if (hasCachedEmployees) {
+        // Fast path: employees already in memory, just connect device
+        debugPrint('[SEARCH] Employees cached - fast connect without loading screen');
+        _controller.setStatus('Connecting to device...');
+
+        try {
+          await _quickDeviceConnect();
+          if (mounted) {
+            _controller.setStatus(
+              'Connected: ${_siteNameById(_selectedSiteId)}',
+            );
+            _startScanLoop();
+          }
+        } catch (e) {
+          debugPrint('[SEARCH] Quick connect failed: $e');
+          _controller.setStatus('Connection failed: $e');
+        }
+        return;
+      }
+
+      // Slow path: need to sync employees, show loading screen
+      _controller.setStatus('Syncing data...');
+      if (!mounted) return;
+      final progress = ValueNotifier<double>(0.0);
+      final syncFuture = _connectAndSync(progress: progress);
+      try {
+        await Get.to<void>(
+          () => LoadingPage(
+            loadFuture: syncFuture,
+            progressListenable: progress,
+          ),
+          fullscreenDialog: true,
+        );
+      } finally {
+        progress.dispose();
+      }
+      if (mounted) _startScanLoop();
+      return;
+    }
+
+    // Only show site dialog if no site is selected yet
     if (_sites.isEmpty) {
       _controller.setStatus('Loading site list...');
       await _ensureSitesLoaded();
@@ -1580,6 +1711,16 @@ class _HomePageController extends GetxController with RouteAware {
     if (!mounted || selected == null) return;
 
     setState(() => _selectedSiteId = selected);
+
+    // Persist the newly selected site
+    final siteRepository = SiteRepositoryImpl();
+    await siteRepository.selectSite(
+      Site(
+        id: selected,
+        name: _siteNameById(selected) ?? selected,
+      ),
+    );
+
     await LocalDb.pruneToSite(selected);
     _controller.setStatus(
       'Selected site: ${_siteNameById(selected) ?? selected}',
@@ -1600,6 +1741,100 @@ class _HomePageController extends GetxController with RouteAware {
       progress.dispose();
     }
     if (mounted) _startScanLoop();
+  }
+
+  /// Check if employees are cached for the site, load them in batch
+  Future<bool> _checkAndLoadCachedEmployees(String siteId) async {
+    try {
+      if (_employeeDb.isNotEmpty) {
+        debugPrint('[CACHE] Employees already in memory: ${_employeeDb.length}');
+        return true;
+      }
+
+      // Load employees from local DB in batch (not one by one)
+      final rows = await LocalDb.getEmployeesBySite(siteId);
+      if (rows.isEmpty) {
+        debugPrint('[CACHE] No cached employees for site: $siteId');
+        return false;
+      }
+
+      debugPrint('[CACHE] Loading ${rows.length} employees from local DB');
+      _employeeDb.clear();
+      _employeeDbByFid.clear();
+
+      // Batch load employees into memory
+      for (final row in rows) {
+        final fid = row['fid'] as int?;
+        final empId = row['employee_id']?.toString() ?? '';
+        final empName = row['employee_name']?.toString() ?? '';
+
+        if (fid != null && empId.isNotEmpty) {
+          final entry = _EmployeeEntry(id: empId, name: empName);
+          _employeeDb[fid] = entry;
+          _employeeDbByFid[fid.toString()] = entry;
+        }
+      }
+
+      debugPrint('[CACHE] Loaded ${_employeeDb.length} employees from cache');
+      return _employeeDb.isNotEmpty;
+    } catch (e) {
+      debugPrint('[CACHE] Error loading cached employees: $e');
+      return false;
+    }
+  }
+
+  /// Quick device connect without full sync (for cached employees)
+  Future<void> _quickDeviceConnect() async {
+    final siteId = _selectedSiteId;
+    if (siteId == null || siteId.isEmpty) {
+      throw Exception('No site selected');
+    }
+
+    try {
+      if (ZKTecoUSB.isAndroidPlatform) {
+        final env = await _device.getAndroidSdkEnvironment();
+        if (env['canUseSdk'] != true) {
+          throw Exception('SDK not compatible');
+        }
+      }
+
+      final sdkInit = await _device.initSdk();
+      if (!sdkInit) throw Exception('SDK init failed');
+
+      final count = await _device.getDeviceCountAsync();
+      if (count == 0) {
+        await _device.terminateSdk();
+        throw Exception('No device found');
+      }
+
+      final opened = await _device.openDevice(0);
+      if (!opened) {
+        await _device.terminateSdk();
+        throw Exception('Failed to open device');
+      }
+
+      final serial = await _device.getSerialNumber();
+      debugPrint('[QUICK_CONNECT] Connected: $serial');
+
+      // Register fingerprints that are already in memory
+      for (final entry in _employeeDb.entries) {
+        final fid = entry.key;
+        final row = (await LocalDb.getEmployeesBySite(siteId))
+            .firstWhere((r) => r['fid'] == fid, orElse: () => {});
+        if (row.isNotEmpty) {
+          final template = row['finger_template'] as Uint8List?;
+          if (template != null) {
+            await _device.registerFingerprint(fid, template);
+          }
+        }
+      }
+
+      _controller.setConnected(true, status: 'Connected: ${serial ?? 'Unknown'}');
+      debugPrint('[QUICK_CONNECT] Device ready for scanning');
+    } catch (e) {
+      debugPrint('[QUICK_CONNECT] Error: $e');
+      rethrow;
+    }
   }
 
   void _displayResult(_ScanResult result) {

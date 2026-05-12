@@ -15,17 +15,11 @@ import '../controllers/home_page_bridge.dart';
 class AppBinding extends Bindings {
   @override
   void dependencies() {
-    // Initialize dependencies
-    final deviceService = DeviceServiceImpl();
-    final siteRepository = SiteRepositoryImpl();
-    final employeeRepository = EmployeeRepositoryImpl();
-    final attendanceRepository = AttendanceRepositoryImpl();
-
     // Register dependencies
-    Get.lazyPut(() => deviceService, fenix: true);
-    Get.lazyPut(() => siteRepository, fenix: true);
-    Get.lazyPut(() => employeeRepository, fenix: true);
-    Get.lazyPut(() => attendanceRepository, fenix: true);
+    Get.lazyPut<DeviceService>(() => DeviceServiceImpl(), fenix: true);
+    Get.lazyPut<SiteRepository>(() => SiteRepositoryImpl(), fenix: true);
+    Get.lazyPut<EmployeeRepository>(() => EmployeeRepositoryImpl(), fenix: true);
+    Get.lazyPut<AttendanceRepository>(() => AttendanceRepositoryImpl(), fenix: true);
 
     // Register controllers with dependencies
     Get.lazyPut(

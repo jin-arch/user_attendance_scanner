@@ -80,11 +80,27 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     return (first + last).toUpperCase();
   }
 
-  Future<void> _loadProfilePhoto() async {
+  Future<String?> _resolveSiteId() async {
+    return _dashboardController.resolveSiteId(widget.siteId);
+  }
+
+  Future<void> _loadProfilePhoto({String? siteId}) async {
     await _dashboardController.loadProfilePhoto(
       employeeId: widget.employeeId,
-      siteId: widget.siteId,
+      siteId: siteId ?? widget.siteId,
     );
+  }
+
+  Future<void> _prepareDashboardData({required bool loadEmployeeDatabase}) async {
+    final resolvedSiteId = await _resolveSiteId();
+    await _loadRows(siteId: resolvedSiteId);
+    await _loadProfilePhoto(siteId: resolvedSiteId);
+    if (loadEmployeeDatabase) {
+      await _dashboardController.loadEmployeeDatabase(
+        siteId: resolvedSiteId,
+        device: _device,
+      );
+    }
   }
 
   @override
@@ -94,6 +110,12 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
     _dashboardController = Get.find<DashboardPageController>();
+    
+    // Update siteId in controller if available
+    if (widget.siteId != null) {
+      // Re-initialize controller with siteId if needed
+      // For now, we'll use a different approach - pass siteId to methods directly
+    }
     
     _dashboardController.setRouteActive(true);
     _dashboardController.attachAndroidTemplateCallback(
@@ -106,15 +128,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     // Defer loading to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _loadRows().then((_) {
-          if (_enableScanning) {
-            _dashboardController.loadEmployeeDatabase(
-              siteId: widget.siteId,
-              device: _device,
-            );
-          }
-          _loadProfilePhoto();
-          
+        _prepareDashboardData(loadEmployeeDatabase: _enableScanning).then((_) {
           // Start scanning only after data is loaded to prevent duplicate time-ins
           if (_enableScanning && _device.isConnected) {
             _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
@@ -134,10 +148,16 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         _returnToScanner();
       }
     });
-    
-    // Show result modal if resultType is provided
+
+    // Show result modal if navigated with a resultType from home page
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showResultModalIfNeeded();
+      if (widget.resultType != null && widget.resultType!.isNotEmpty) {
+        _showScanResultModal(
+          resultType: widget.resultType!,
+          employeeName: widget.employeeName,
+          attendanceType: widget.attendanceType,
+        );
+      }
     });
   }
 
@@ -145,17 +165,12 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   void didUpdateWidget(covariant _DashboardPageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     final changed = oldWidget.employeeId != widget.employeeId ||
-        oldWidget.siteId != widget.siteId ||
-        oldWidget.attendanceType != widget.attendanceType ||
-        oldWidget.matchedAt != widget.matchedAt ||
-        oldWidget.resultType != widget.resultType;
+        oldWidget.siteId != widget.siteId;
     if (changed) {
       // Use addPostFrameCallback to avoid calling setState during build
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _loadRows();
-        _loadProfilePhoto();
-        _showResultModalIfNeeded();
+        _prepareDashboardData(loadEmployeeDatabase: _enableScanning);
       });
     }
   }
@@ -174,16 +189,16 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     // Reload data when page becomes visible (deferred to avoid setState during build)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _loadRows();
-        _loadProfilePhoto();
-        if (_enableScanning && _device.isConnected) {
-          _dashboardController.startScanLoop(
-            device: _device,
-            isScanning: () => _controller.isScanning.value,
-            setScanning: _controller.setScanning,
-            onTemplateReady: _onTemplateReady,
-          );
-        }
+        _prepareDashboardData(loadEmployeeDatabase: _enableScanning).then((_) {
+          if (_enableScanning && _device.isConnected) {
+            _dashboardController.startScanLoop(
+              device: _device,
+              isScanning: () => _controller.isScanning.value,
+              setScanning: _controller.setScanning,
+              onTemplateReady: _onTemplateReady,
+            );
+          }
+        });
       }
     });
   }
@@ -207,7 +222,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     // Defer scanning start until after data is loaded to prevent duplicate time-ins
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _loadRows().then((_) {
+        _prepareDashboardData(loadEmployeeDatabase: _enableScanning).then((_) {
           if (_enableScanning && _device.isConnected) {
             _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
             _dashboardController.startScanLoop(
@@ -244,63 +259,63 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       return;
     }
 
+    final resolvedSiteId = await _resolveSiteId();
     _controller.setScanning(false);
-    final employee = await _dashboardController.resolveEmployeeFromTemplate(
+    var employee = await _dashboardController.resolveEmployeeFromTemplate(
       device: _device,
       template: template,
     );
-    
+
+    if (employee == null && resolvedSiteId != null && resolvedSiteId.isNotEmpty) {
+      await _dashboardController.loadEmployeeDatabase(
+        siteId: resolvedSiteId,
+        device: _device,
+      );
+      employee = await _dashboardController.resolveEmployeeFromTemplate(
+        device: _device,
+        template: template,
+      );
+    }
+
     if (employee == null) {
       print('[DASHBOARD_SCAN] Employee not found - showing fingerprint not recognized');
-      // Show fingerprint not recognized error
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _dashboardController.setRouteActive(false);
-          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Get.off<void>(
-            () => DashboardPage(
-              siteId: widget.siteId,
-              resultType: 'fingerprintNotRecognized',
-            ),
-          );
-        }
-      });
+      if (mounted) {
+        _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+        _showScanResultModal(
+          resultType: 'fingerprintNotRecognized',
+          employeeName: null,
+          attendanceType: null,
+        );
+      }
       return;
     }
-    
-    // Record attendance
+
+    // Record attendance - ONLY RECORD ONCE
     print('[DASHBOARD_SCAN] Recording attendance for employee: ${employee.id}');
-    final attendanceType = await _recordAttendance(employee.id);
+    final attendanceType = await _recordAttendance(
+      employee.id,
+      siteId: resolvedSiteId,
+    );
     print('[DASHBOARD_SCAN] Attendance result: $attendanceType');
-    
-    if (attendanceType == 'TIME IN' || attendanceType == 'TIME OUT') {
-      final resultTypeStr = attendanceType == 'TIME OUT' 
-          ? 'timeOutSuccess' 
+
+    if (attendanceType == 'TIME IN' || attendanceType == 'TIME OUT' || attendanceType == 'QUEUED OFFLINE') {
+      final resultTypeStr = attendanceType == 'TIME OUT'
+          ? 'timeOutSuccess'
           : 'timeInSuccess';
-      final now = DateTime.now();
-      
-      // Navigate to dashboard with new attendance info
+      final displayAttendanceType = attendanceType == 'QUEUED OFFLINE' ? 'Time In (Queued)' : (attendanceType ?? 'Time In');
+
       if (mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _dashboardController.setRouteActive(false);
-          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Get.off<void>(
-            () => DashboardPage(
-              employeeId: employee.id,
-              employeeName: employee.name,
-              attendanceType: attendanceType,
-              matchedAt: now,
-              siteId: widget.siteId,
-              resultType: resultTypeStr,
-              timeIn: attendanceType == 'TIME OUT' ? null : DateTimeFormats.timeOnly(now),
-              timeOut: attendanceType == 'TIME OUT' ? DateTimeFormats.timeOnly(now) : null,
-            ),
-          );
-        });
+        _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+        _showScanResultModal(
+          resultType: resultTypeStr,
+          employeeName: employee.name,
+          attendanceType: displayAttendanceType,
+        );
+        // Reload employee data for today's log display
+        await _loadRows(siteId: resolvedSiteId);
       }
     } else {
-      // Handle error cases - map error strings to result types like HomePage does
+      // Handle error cases
       String resultTypeStr;
       print('[DASHBOARD_ERROR] attendanceType=$attendanceType');
       if (attendanceType == 'ALREADY IN') {
@@ -315,39 +330,23 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         resultTypeStr = 'timeInUnsuccessful';
       }
       print('[DASHBOARD_ERROR] resultTypeStr=$resultTypeStr');
-      
-      // Navigate to dashboard with error result type to show modal
+
       if (mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _dashboardController.setRouteActive(false);
-          _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
-          Get.off<void>(
-            () => DashboardPage(
-              employeeId: employee.id,
-              employeeName: employee.name,
-              attendanceType: attendanceType,
-              matchedAt: DateTime.now(),
-              siteId: widget.siteId,
-              resultType: resultTypeStr,
-            ),
-          );
-        });
+        _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
+        _showScanResultModal(
+          resultType: resultTypeStr,
+          employeeName: employee.name,
+          attendanceType: attendanceType,
+        );
       }
     }
   }
-  
-  Future<String?> _recordAttendance(String employeeId) async {
-    return _dashboardController.recordAttendance(
-      employeeId: employeeId,
-      siteId: widget.siteId?.toString(),
-    );
-  }
-  
-  void _showResultModalIfNeeded() {
-    final type = widget.resultType;
-    if (type == null || type.isEmpty) return;
-    
+
+  void _showScanResultModal({
+    required String resultType,
+    required String? employeeName,
+    required String? attendanceType,
+  }) {
     String title;
     String subtitle;
     String buttonText;
@@ -355,11 +354,11 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     Color iconBgColor;
     Color iconColor;
     IconData iconData;
-    
-    switch (type) {
+
+    switch (resultType) {
       case 'timeInSuccess':
         title = 'TIME IN SUCCESSFUL';
-        subtitle = 'Your time in has been recorded successfully. Wishing you a productive day!';
+        subtitle = '$employeeName, your time in has been recorded. Have a productive day!';
         buttonText = 'PROCEED';
         buttonColor = const Color(0xFF90EE90);
         iconBgColor = const Color(0xFF90EE90).withValues(alpha: 0.3);
@@ -368,7 +367,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
       case 'timeOutSuccess':
         title = 'TIME OUT SUCCESSFUL';
-        subtitle = 'Your time out has been recorded successfully. Wishing you a productive day!';
+        subtitle = '$employeeName, your time out has been recorded. Have a great day!';
         buttonText = 'PROCEED';
         buttonColor = const Color(0xFF90EE90);
         iconBgColor = const Color(0xFF90EE90).withValues(alpha: 0.3);
@@ -377,7 +376,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
       case 'alreadyTimedIn':
         title = 'ALREADY TIMED IN';
-        subtitle = 'You have already timed in. Please wait 5 minutes to time out.';
+        subtitle = 'You have already timed in. Wait 5 minutes to time out.';
         buttonText = 'Close';
         buttonColor = const Color(0xFFA3C9FF);
         iconBgColor = const Color(0xFFA3C9FF).withValues(alpha: 0.3);
@@ -386,25 +385,16 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
       case 'alreadyTimedOut':
         title = 'ALREADY TIMED OUT';
-        subtitle = 'You have already timed out for today. Please come back tomorrow.';
+        subtitle = 'You have already timed out for today. Come back tomorrow.';
         buttonText = 'Close';
         buttonColor = const Color(0xFFA3C9FF);
         iconBgColor = const Color(0xFFA3C9FF).withValues(alpha: 0.3);
         iconColor = const Color(0xFF1565C0);
         iconData = Icons.info;
         break;
-      case 'wait5Minutes':
-        title = 'PLEASE WAIT';
-        subtitle = 'You must wait 5 minutes after time in before you can time out.';
-        buttonText = 'Close';
-        buttonColor = const Color(0xFFFFB74D);
-        iconBgColor = const Color(0xFFFFB74D).withValues(alpha: 0.3);
-        iconColor = const Color(0xFFEF6C00);
-        iconData = Icons.access_time;
-        break;
       case 'timeInUnsuccessful':
         title = 'TIME IN UNSUCCESSFUL';
-        subtitle = "We couldn't process your request. Please try again.";
+        subtitle = 'Could not process your request. Please try again.';
         buttonText = 'RETRY';
         buttonColor = const Color(0xFFFFA0A0);
         iconBgColor = const Color(0xFFFFA0A0).withValues(alpha: 0.3);
@@ -413,7 +403,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
       case 'timeOutUnsuccessful':
         title = 'TIME OUT UNSUCCESSFUL';
-        subtitle = "We couldn't process your request. Please try again.";
+        subtitle = 'Could not process your request. Please try again.';
         buttonText = 'RETRY';
         buttonColor = const Color(0xFFFFA0A0);
         iconBgColor = const Color(0xFFFFA0A0).withValues(alpha: 0.3);
@@ -423,7 +413,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       case 'fingerprintNotRecognized':
       default:
         title = 'FINGERPRINT NOT RECOGNIZED';
-        subtitle = "We couldn't recognize your fingerprint. Please try again.";
+        subtitle = 'Could not recognize your fingerprint. Please try again.';
         buttonText = 'RETRY';
         buttonColor = const Color(0xFFFFE4D6);
         iconBgColor = const Color(0xFFFFE4D6).withValues(alpha: 0.3);
@@ -431,99 +421,83 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         iconData = Icons.fingerprint;
         break;
     }
-    
+
     Get.dialog<void>(
       Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Container(
-            width: 320,
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: iconBgColor,
-                    shape: BoxShape.circle,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: 320,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
+                child: Icon(iconData, color: iconColor, size: 24),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 120,
+                height: 32,
+                child: ElevatedButton(
+                  onPressed: () {
+                    _resetAfkTimer();
+                    Get.back<void>();
+                    if (_enableScanning && _device.isConnected && mounted) {
+                      _dashboardController.startScanLoop(
+                        device: _device,
+                        isScanning: () => _controller.isScanning.value,
+                        setScanning: _controller.setScanning,
+                        onTemplateReady: _onTemplateReady,
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: buttonColor,
+                    foregroundColor: Colors.black87,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    padding: EdgeInsets.zero,
                   ),
-                  child: Icon(
-                    iconData,
-                    color: iconColor,
-                    size: 24,
+                  child: Text(
+                    buttonText,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
                   ),
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  subtitle,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.black54,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: 120,
-                  height: 32,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        _resetAfkTimer(); // Reset AFK timer when user interacts
-                        Get.back<void>();
-                        if (_enableScanning && _device.isConnected) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              _dashboardController.stopScanLoop(
-                                setScanning: _controller.setScanning,
-                              );
-                              _dashboardController.startScanLoop(
-                                device: _device,
-                                isScanning: () => _controller.isScanning.value,
-                                setScanning: _controller.setScanning,
-                                onTemplateReady: _onTemplateReady,
-                              );
-                            }
-                          });
-                        }
-                      },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: buttonColor,
-                      foregroundColor: Colors.black87,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Text(
-                      buttonText,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
       barrierDismissible: false,
     );
   }
   
+  Future<String?> _recordAttendance(String employeeId, {String? siteId}) async {
+    final resolvedSiteId = siteId ?? await _resolveSiteId();
+    return _dashboardController.recordAttendance(
+      employeeId: employeeId,
+      siteId: resolvedSiteId,
+    );
+  }
+
   void _returnToScanner() {
     // Show brief message before returning
     ScaffoldMessenger.of(context).showSnackBar(
@@ -553,9 +527,9 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     _dashboardController.resetAfkTimer();
   }
 
-  Future<void> _loadRows() async {
+  Future<void> _loadRows({String? siteId}) async {
     await _dashboardController.loadRows(
-      siteId: widget.siteId,
+      siteId: siteId ?? widget.siteId,
       employeeId: widget.employeeId,
       overrideTimeIn: widget.timeIn,
       overrideTimeOut: widget.timeOut,

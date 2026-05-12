@@ -684,80 +684,207 @@ class EnrollmentPage extends StatelessWidget {
     EnrollmentController controller,
   ) {
     return ValueListenableBuilder<bool>(
-      valueListenable: controller.showForm,
-      builder: (context, showForm, _) {
-        if (showForm) {
-          return _buildEnrollmentForm(w, h, controller);
+      valueListenable: controller.isIdentifyingEmployee,
+      builder: (context, isIdentifying, _) {
+        if (isIdentifying) {
+          return _buildIdentificationGuide(w, h, controller);
         }
-        return Container(
-          width: w * 0.20,
-          padding: EdgeInsets.symmetric(
-            horizontal: w * 0.020,
-            vertical: h * 0.020,
+        return ValueListenableBuilder<bool>(
+          valueListenable: controller.showForm,
+          builder: (context, showForm, _) {
+            if (showForm) {
+              return _buildEnrollmentForm(w, h, controller);
+            }
+            return _buildManualEntryGuide(w, h, controller);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildIdentificationGuide(
+    double w,
+    double h,
+    EnrollmentController controller,
+  ) {
+    return Container(
+      width: w * 0.20,
+      padding: EdgeInsets.symmetric(
+        horizontal: w * 0.020,
+        vertical: h * 0.020,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B2742).withOpacity(0.70),
+        borderRadius: BorderRadius.circular(w * 0.022),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Identify Employee',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: w * 0.012,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B2742).withOpacity(0.70),
-            borderRadius: BorderRadius.circular(w * 0.022),
+          SizedBox(height: h * 0.024),
+          Text(
+            '1. Place your finger on the scanner\n2. System will identify you\n3. Your details will be displayed\n4. Then scan new fingerprints\n5. Press SAVE to update',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: w * 0.011,
+              color: Colors.white,
+              height: 1.6,
+              letterSpacing: 0.5,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          SizedBox(height: h * 0.020),
+          GestureDetector(
+            onTap: controller.cancelIdentificationMode,
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: w * 0.016,
+                vertical: h * 0.012,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF244D86),
+                borderRadius: BorderRadius.circular(w * 0.012),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.keyboard, color: Colors.white, size: w * 0.014),
+                  SizedBox(width: w * 0.008),
+                  Text(
+                    'ENTER ID MANUALLY',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: w * 0.011,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualEntryGuide(
+    double w,
+    double h,
+    EnrollmentController controller,
+  ) {
+    return Container(
+      width: w * 0.20,
+      padding: EdgeInsets.symmetric(
+        horizontal: w * 0.020,
+        vertical: h * 0.020,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B2742).withOpacity(0.70),
+        borderRadius: BorderRadius.circular(w * 0.022),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Update Fingerprint',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: w * 0.012,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          SizedBox(height: h * 0.024),
+          Text(
+            '1. Enter employee ID to lookup\n2. Or scan fingerprint to identify\n3. System displays employee details\n4. Scan new fingerprints (3 left, 3 right)\n5. Press SAVE to update',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: w * 0.011,
+              color: Colors.white,
+              height: 1.6,
+              letterSpacing: 0.5,
+            ),
+          ),
+          SizedBox(height: h * 0.020),
+          Row(
             children: [
-              Text(
-                isEditMode ? 'Update Enrollment' : 'Enrollment Guide',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: w * 0.012,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              SizedBox(height: h * 0.024),
-              Text(
-                isEditMode
-                    ? '1. Enter existing employee details\n2. Press SCAN to capture new prints\n3. Place left thumb 3 times\n4. Place right thumb 3 times\n5. Press SAVE to update'
-                    : '1. Tap PROFILE to take selfie\n2. Press SCAN to start\n3. Place left thumb 3 times\n4. Place right thumb 3 times\n5. Press SAVE to complete',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: w * 0.011,
-                  color: Colors.white,
-                  height: 1.6,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              SizedBox(height: h * 0.020),
-              GestureDetector(
-                onTap: () => controller.showForm.value = true,
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: w * 0.016,
-                    vertical: h * 0.012,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3E7DDD),
-                    borderRadius: BorderRadius.circular(w * 0.012),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.edit, color: Colors.white, size: w * 0.014),
-                      SizedBox(width: w * 0.008),
-                      Text(
-                        'ENTER DETAILS',
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: w * 0.011,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => controller.showForm.value = true,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: w * 0.012,
+                      vertical: h * 0.012,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3E7DDD),
+                      borderRadius: BorderRadius.circular(w * 0.012),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.edit, color: Colors.white, size: w * 0.014),
+                        SizedBox(width: w * 0.006),
+                        Text(
+                          'ENTER ID',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: w * 0.010,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: w * 0.008),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () async {
+                    await controller.startIdentificationMode();
+                  },
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: w * 0.012,
+                      vertical: h * 0.012,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF44D980),
+                      borderRadius: BorderRadius.circular(w * 0.012),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.fingerprint, color: Colors.white, size: w * 0.014),
+                        SizedBox(width: w * 0.006),
+                        Text(
+                          'SCAN',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: w * 0.010,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -778,7 +905,7 @@ class EnrollmentPage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            isEditMode ? 'Edit Employee Details' : 'Employee Details',
+            isEditMode ? 'Employee Details' : 'Employee Details',
             style: TextStyle(
               fontFamily: 'Poppins',
               fontSize: w * 0.012,
@@ -792,7 +919,7 @@ class EnrollmentPage extends StatelessWidget {
             h,
             'Employee ID',
             controller.idController,
-            readOnly: readOnly,
+            readOnly: false,
           ),
           SizedBox(height: h * 0.016),
           _buildTextField(
@@ -800,7 +927,69 @@ class EnrollmentPage extends StatelessWidget {
             h,
             'Username',
             controller.usernameController,
-            readOnly: readOnly,
+            readOnly: true,
+          ),
+          SizedBox(height: h * 0.016),
+          GestureDetector(
+            onTap: () => controller.loadEmployeeDetails(controller.idController.text),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: w * 0.016,
+                vertical: h * 0.012,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3E7DDD),
+                borderRadius: BorderRadius.circular(w * 0.012),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search, color: Colors.white, size: w * 0.014),
+                  SizedBox(width: w * 0.008),
+                  Text(
+                    'LOOKUP EMPLOYEE',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: w * 0.011,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: h * 0.008),
+          GestureDetector(
+            onTap: () async {
+              await controller.startIdentificationMode();
+            },
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: w * 0.016,
+                vertical: h * 0.012,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF44D980),
+                borderRadius: BorderRadius.circular(w * 0.012),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.fingerprint, color: Colors.white, size: w * 0.014),
+                  SizedBox(width: w * 0.008),
+                  Text(
+                    'SCAN TO IDENTIFY',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: w * 0.011,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

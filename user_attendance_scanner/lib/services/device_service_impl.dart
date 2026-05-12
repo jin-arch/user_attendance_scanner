@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:get/get.dart';
 import '../models/employee_model.dart';
 import '../models/scan_result_model.dart';
 import '../zkfp/zkteco_usb.dart';

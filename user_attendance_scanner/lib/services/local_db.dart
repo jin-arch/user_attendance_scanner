@@ -64,6 +64,15 @@ class LocalDb {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS site_preferences (
+        id INTEGER PRIMARY KEY,
+        selected_site_id TEXT NOT NULL,
+        selected_site_name TEXT,
+        last_updated TEXT NOT NULL
+      )
+    ''');
+
     await _ensureTimelogCacheColumns(db);
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_timelog_cache_lookup ON timelog_cache (site_id, employee_id, timelog_date)',
@@ -146,7 +155,7 @@ class LocalDb {
 
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await _ensureSchema(db);
       },
@@ -401,28 +410,38 @@ class LocalDb {
     required List<Map<String, dynamic>> rows,
   }) async {
     final database = await db;
-    
+
     // Get list of employees registered/enrolled on THIS device for THIS site
     final registeredEmployees = await database.query(
       'employees',
       where: 'site_id = ?',
       whereArgs: [siteId],
-      columns: ['employee_id'],
+      columns: ['employee_id', 'employee_name'],
     );
-    
+
     final registeredIds = registeredEmployees
         .map((row) => row['employee_id'].toString())
         .toSet();
-    
+
+    debugPrint('[TIMELOG_CACHE] ===== TIMELOG SYNC START =====');
     debugPrint('[TIMELOG_CACHE] Site $siteId has ${registeredIds.length} registered employees');
+    debugPrint('[TIMELOG_CACHE] Registered employee IDs: $registeredIds');
     debugPrint('[TIMELOG_CACHE] API returned ${rows.length} timelog rows');
-    
-    // IMPORTANT: Do NOT delete/replace timelog_cache.
-    // Replacing was wiping the locally saved TIME IN, causing the next scan to
-    // look like a fresh TIME IN instead of TIME OUT.
-    //
-    // Instead, merge (upsert) API rows into the cache (per employee + date).
+
+    if (rows.isEmpty) {
+      debugPrint('[TIMELOG_CACHE] WARNING: API returned 0 rows. Check API endpoint and siteID.');
+      return;
+    }
+
+    // Log first few API rows for debugging
+    for (int i = 0; i < rows.take(3).length; i++) {
+      debugPrint('[TIMELOG_CACHE] API row $i: ${rows[i]}');
+    }
+
     int upsertCount = 0;
+    int skippedCount = 0;
+    final List<String> skippedEmployeeIds = [];
+
     for (final row in rows) {
       final employeeId = (row['employee_id'] ??
               row['companyID'] ??
@@ -432,8 +451,10 @@ class LocalDb {
 
       if (employeeId == null || !registeredIds.contains(employeeId)) {
         if (employeeId != null) {
+          skippedEmployeeIds.add(employeeId);
+          skippedCount++;
           debugPrint(
-              '[TIMELOG_CACHE] Skipping employee $employeeId - not enrolled on this device');
+              '[TIMELOG_CACHE] Skipping employee $employeeId (ID not in enrolled list)');
         }
         continue;
       }
@@ -458,8 +479,12 @@ class LocalDb {
       upsertCount++;
     }
 
-    debugPrint(
-        '[TIMELOG_CACHE] Upserted $upsertCount records for enrolled employees only');
+    debugPrint('[TIMELOG_CACHE] ===== TIMELOG SYNC COMPLETE =====');
+    debugPrint('[TIMELOG_CACHE] Upserted: $upsertCount records for enrolled employees');
+    debugPrint('[TIMELOG_CACHE] Skipped: $skippedCount records - Employee IDs: $skippedEmployeeIds');
+    if (skippedCount > 0) {
+      debugPrint('[TIMELOG_CACHE] ACTION: Ensure these employees are enrolled/synced before fetching timelogs');
+    }
   }
 
   static Future<Map<String, dynamic>?> getLatestTimelogForEmployee({
@@ -617,6 +642,7 @@ class LocalDb {
         merged[entry.key] = entry.value;
       }
     }
+    merged['employee_id'] ??= employeeId;
 
     final payload = jsonEncode(merged);
 
@@ -794,7 +820,7 @@ class LocalDb {
   /// Get formatted attendance logs for display (proper Time In/Out detection)
   static Future<List<Map<String, dynamic>>> getAttendanceLogsForSite(String siteId) async {
     final database = await db;
-    
+
     // Get all timelog_cache entries for the site
     final rows = await database.query(
       'timelog_cache',
@@ -802,57 +828,91 @@ class LocalDb {
       whereArgs: [siteId],
       orderBy: 'id DESC',
     );
-    
+
+    // Get all employees for this site to lookup names
+    final employeeRows = await database.query(
+      'employees',
+      where: 'site_id = ?',
+      whereArgs: [siteId],
+    );
+
+    final employeeMap = <String, String>{};
+    for (final empRow in employeeRows) {
+      final empId = empRow['employee_id']?.toString() ?? '';
+      final empName = empRow['employee_name']?.toString() ?? '';
+      if (empId.isNotEmpty && empName.isNotEmpty) {
+        employeeMap[empId] = empName;
+      }
+    }
+
     final logs = <Map<String, dynamic>>[];
-    
+
     for (final row in rows) {
       try {
         final rawJson = row['raw_json'] as String?;
         if (rawJson == null || rawJson.isEmpty) continue;
-        
+
         final timelogData = jsonDecode(rawJson) as Map<String, dynamic>;
-        
-        // Get employee ID from DB field or extract from JSON if null
-        String? employeeId = row['employee_id'] as String?;
-        if (employeeId == null || employeeId.isEmpty) {
-          employeeId = (timelogData['employee_id'] ?? 
-                       timelogData['companyID'] ?? 
-                       timelogData['employeeID'] ?? 
-                       timelogData['EMPLOYEEID'])?.toString();
+
+        // If raw_json already contains the parsed API format, use it directly
+        if (timelogData.containsKey('employee_id') &&
+            timelogData.containsKey('type') &&
+            timelogData.containsKey('timestamp')) {
+          // Enrich with employee name from lookup
+          final empId = timelogData['employee_id']?.toString() ?? '';
+          if (empId.isNotEmpty && employeeMap.containsKey(empId)) {
+            timelogData['employee_name'] = employeeMap[empId];
+          }
+          logs.add(timelogData);
+        } else {
+          // Otherwise, try to extract attendance entries from old format
+          String? employeeId = row['employee_id'] as String?;
+          if (employeeId == null || employeeId.isEmpty) {
+            employeeId = (timelogData['employee_id'] ??
+                         timelogData['companyID'] ??
+                         timelogData['employeeID'] ??
+                         timelogData['EMPLOYEEID'])?.toString();
+          }
+
+          if (employeeId != null && employeeId.isNotEmpty) {
+            // Enrich with employee name from lookup
+            if (employeeMap.containsKey(employeeId)) {
+              timelogData['employee_name'] = employeeMap[employeeId];
+            }
+            final entries = _extractAttendanceEntries(timelogData, employeeId);
+            logs.addAll(entries);
+          }
         }
-        
-        // Skip records without employee ID
-        if (employeeId == null || employeeId.isEmpty) {
-          continue;
-        }
-        
-        // Extract attendance entries from this timelog record
-        final entries = _extractAttendanceEntries(timelogData, employeeId);
-        logs.addAll(entries);
-        
+
       } catch (e) {
         debugPrint('[LOGS] Error parsing timelog record ${row['id']}: $e');
       }
     }
-    
+
     // Sort by timestamp (newest first)
     logs.sort((a, b) {
-      final aTime = DateTime.tryParse(a['timestamp'] ?? '') ?? DateTime(1970);
-      final bTime = DateTime.tryParse(b['timestamp'] ?? '') ?? DateTime(1970);
+      final aTime = DateTime.tryParse(a['timestamp']?.toString() ?? '') ?? DateTime(1970);
+      final bTime = DateTime.tryParse(b['timestamp']?.toString() ?? '') ?? DateTime(1970);
       return bTime.compareTo(aTime);
     });
-    
+
+    debugPrint('[LOGS] Returning ${logs.length} total logs for site $siteId');
+
     return logs;
   }
   
   /// Extract individual attendance entries from a timelog record
   static List<Map<String, dynamic>> _extractAttendanceEntries(
-    Map<String, dynamic> timelogData, 
+    Map<String, dynamic> timelogData,
     String? employeeId
   ) {
     final entries = <Map<String, dynamic>>[];
-    final date = timelogData['timeLogDate'] ?? timelogData['timelog'] ?? '';
-    
+    final date = timelogData['timeLogDate'] ??
+                 timelogData['timelog'] ??
+                 timelogData['TIMELOG'] ??
+                 timelogData['DATECAPTURED'] ??
+                 '';
+
     // Extract employee name from the data or use ID
     String employeeName = 'Employee $employeeId';
     try {
@@ -865,43 +925,231 @@ class LocalDb {
     } catch (e) {
       employeeName = 'Employee $employeeId';
     }
-    
-    // Create entries for each time slot that has data
+
+    // Create entries for each time slot that has data (support both camelCase and UPPERCASE)
     final timeSlots = [
-      {'field': 'timeInMorning', 'type': 'Time In', 'period': 'Morning'},
-      {'field': 'timeOutMorning', 'type': 'Time Out', 'period': 'Morning'},
-      {'field': 'timeInAfternoon', 'type': 'Time In', 'period': 'Afternoon'},
-      {'field': 'timeOutAfternoon', 'type': 'Time Out', 'period': 'Afternoon'},
+      {'field': ['timeInMorning', 'TIMEINMORNING'], 'type': 'Time In', 'period': 'Morning'},
+      {'field': ['timeOutMorning', 'TIMEOUTMORNING'], 'type': 'Time Out', 'period': 'Morning'},
+      {'field': ['timeInAfternoon', 'TIMEINAFTERNOON'], 'type': 'Time In', 'period': 'Afternoon'},
+      {'field': ['timeOutAfternoon', 'TIMEOUTAFTERNOON'], 'type': 'Time Out', 'period': 'Afternoon'},
     ];
-    
+
     for (final slot in timeSlots) {
-      final timeValue = timelogData[slot['field']];
-      if (timeValue != null && timeValue.toString().isNotEmpty && timeValue.toString() != 'null') {
-        // Create a full timestamp by combining date and time
-        String timestamp;
+      String? timeValue;
+
+      // Try both camelCase and UPPERCASE field names
+      for (final fieldName in (slot['field'] as List<String>)) {
+        timeValue = timelogData[fieldName]?.toString();
+        if (timeValue != null && timeValue.isNotEmpty && timeValue != 'null') {
+          break;
+        }
+      }
+
+      if (timeValue != null && timeValue.isNotEmpty && timeValue != 'null') {
+        // timeValue already contains full datetime like "2026/02/20 08:38:42"
+        // Parse it and store both date and time
+        String timestamp = timeValue;
+        String? timeOnly;
+
         try {
-          final timeOnly = timeValue.toString();
-          if (date.isNotEmpty) {
-            timestamp = '${date}T$timeOnly';
-          } else {
-            timestamp = DateTime.now().toIso8601String();
+          // Convert "2026/02/20 08:38:42" to ISO format and extract parts
+          if (timeValue.contains('/')) {
+            // Format: 2026/02/20 08:38:42
+            final parts = timeValue.split(' ');
+            if (parts.length >= 2) {
+              final datePart = parts[0].replaceAll('/', '-'); // 2026-02-20
+              final timePart = parts[1]; // 08:38:42
+              timestamp = '${datePart}T$timePart';
+              timeOnly = timePart.substring(0, 5); // HH:MM
+            }
           }
         } catch (e) {
-          timestamp = DateTime.now().toIso8601String();
+          debugPrint('[ATTENDANCE] Error parsing time: $e');
         }
-        
+
         entries.add({
           'employee_id': employeeId ?? '',
           'employee_name': employeeName,
           'type': slot['type'],
           'period': slot['period'],
           'timestamp': timestamp,
-          'time_only': timeValue.toString(),
+          'time_only': timeOnly ?? timeValue,
         });
       }
     }
     
     return entries;
+  }
+
+  /// Save attendance logs from API to local database using batch insert
+  static Future<void> saveAttendanceLogsForSite(String siteId, List<Map<String, dynamic>> logs) async {
+    final database = await db;
+    
+    // Clear existing timelog_cache for this site to avoid duplicates
+    await database.delete(
+      'timelog_cache',
+      where: 'site_id = ?',
+      whereArgs: [siteId],
+    );
+
+    // Prepare batch insert with all employee timelogs
+    final batch = database.batch();
+    int mergedCount = 0;
+    int skippedCount = 0;
+
+    for (final log in logs) {
+      final employeeId = (log['employee_id'] ??
+              log['employeeId'] ??
+              log['employeeID'] ??
+              log['EMPLOYEEID'] ??
+              log['companyID'])
+          ?.toString()
+          .trim();
+
+      if (employeeId == null || employeeId.isEmpty) {
+        skippedCount++;
+        continue;
+      }
+
+      // Prepare the complete payload with all timelog data
+      final payload = Map<String, dynamic>.from(log);
+      
+      // Normalize and set date fields
+      final dateOnly = _normalizeDate(
+        payload['timelog'] ??
+            payload['timeLogDate'] ??
+            payload['timelog_date'] ??
+            payload['datecaptured'] ??
+            payload['datelog'] ??
+            payload['date'] ??
+            payload['timestamp'],
+      );
+      if (dateOnly != null) {
+        payload['timelog_date'] = dateOnly;
+        payload['timeLogDate'] ??= dateOnly;
+        payload['timelog'] ??= dateOnly;
+      }
+      payload['employee_id'] = employeeId;
+
+      // Ensure we have time fields (check both camelCase and UPPERCASE)
+      final hasAnyAttendanceField = !_isBlank(payload['timeInMorning']) ||
+          !_isBlank(payload['timeOutMorning']) ||
+          !_isBlank(payload['timeInAfternoon']) ||
+          !_isBlank(payload['timeOutAfternoon']) ||
+          !_isBlank(payload['TIMEINMORNING']) ||
+          !_isBlank(payload['TIMEOUTMORNING']) ||
+          !_isBlank(payload['TIMEINAFTERNOON']) ||
+          !_isBlank(payload['TIMEOUTAFTERNOON']);
+      if (!hasAnyAttendanceField) {
+        final type = payload['type']?.toString().toLowerCase() ?? '';
+        final parsedTs = DateTime.tryParse(payload['timestamp']?.toString() ?? '');
+        final hh = parsedTs?.hour.toString().padLeft(2, '0');
+        final mm = parsedTs?.minute.toString().padLeft(2, '0');
+        final ss = parsedTs?.second.toString().padLeft(2, '0');
+        final inferredTime = (payload['time_only']?.toString().trim().isNotEmpty ?? false)
+            ? payload['time_only'].toString().trim()
+            : ((hh != null && mm != null && ss != null) ? '$hh:$mm:$ss' : null);
+        if (inferredTime != null && inferredTime.isNotEmpty) {
+          if (type.contains('out')) {
+            payload['timeOutMorning'] = inferredTime;
+          } else {
+            payload['timeInMorning'] = inferredTime;
+          }
+        }
+      }
+
+      // Insert using batch with complete data in raw_json
+      batch.insert('timelog_cache', {
+        'site_id': siteId,
+        'employee_id': employeeId,
+        'timelog_date': dateOnly ?? DateTime.now().toIso8601String(),
+        'raw_json': jsonEncode(payload), // Store all timelog data as JSON
+      });
+
+      mergedCount++;
+    }
+
+    // Execute batch insert
+    await batch.commit(noResult: true);
+
+    debugPrint(
+      '[LOCAL_DB] Batch inserted $mergedCount attendance logs for site $siteId (skipped $skippedCount without employee_id)',
+    );
+  }
+
+  /// Get attendance logs for a specific employee
+  static Future<List<Map<String, dynamic>>> getAttendanceLogsForEmployee(String employeeId, String siteId) async {
+    final database = await db;
+    
+    final timelogEntries = await database.query(
+      'timelog_cache',
+      where: 'employee_id = ? AND site_id = ?',
+      whereArgs: [employeeId, siteId],
+      orderBy: 'id DESC',
+    );
+
+    final logs = <Map<String, dynamic>>[];
+    
+    for (final entry in timelogEntries) {
+      try {
+        final rawJson = entry['raw_json'] as String?;
+        if (rawJson == null || rawJson.isEmpty) {
+          debugPrint('[LOCAL_DB] Skipping entry with no raw_json');
+          continue;
+        }
+        
+        final timelogData = jsonDecode(rawJson) as Map<String, dynamic>;
+        
+        // Check if data is in new format (has 'type', 'time_only', 'timestamp' fields)
+        if (timelogData.containsKey('type') || timelogData.containsKey('time_only') || timelogData.containsKey('timestamp')) {
+          // New format: each entry is already a complete log record
+          final empId = (timelogData['employee_id'] ?? timelogData['employeeId'] ?? timelogData['employeeID'] ?? timelogData['companyID'] ?? '')?.toString() ?? '';
+          if (empId.toLowerCase().trim() == employeeId.toLowerCase().trim()) {
+            // Extract time from timestamp if time_only is missing
+            String timeOnly = (timelogData['time_only'] ?? timelogData['timeOnly'] ?? timelogData['time'] ?? timelogData['Time'] ?? '')?.toString() ?? '';
+            String timestamp = (timelogData['timestamp'] ?? timelogData['timelog'] ?? timelogData['TIMELOG'] ?? timelogData['date'] ?? timelogData['datetime'] ?? '')?.toString() ?? '';
+            
+            if (timeOnly.isEmpty && timestamp.isNotEmpty) {
+              try {
+                final dt = DateTime.parse(timestamp);
+                timeOnly = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+              } catch (e) {
+                if (timestamp.contains(' ')) {
+                  final parts = timestamp.split(' ');
+                  if (parts.length >= 2) {
+                    timeOnly = parts[1].substring(0, parts[1].length >= 5 ? 5 : parts[1].length);
+                  }
+                }
+              }
+            }
+            
+            logs.add({
+              'employee_id': empId,
+              'employee_name': (timelogData['employee_name'] ?? timelogData['employeeName'] ?? timelogData['EMPLOYEE_NAME'] ?? timelogData['name'] ?? timelogData['Name'] ?? 'Unknown')?.toString() ?? 'Unknown',
+              'type': (timelogData['type'] ?? timelogData['attendance_type'] ?? timelogData['CODE'] ?? timelogData['code'] ?? '')?.toString() ?? '',
+              'time_only': timeOnly,
+              'timestamp': timestamp,
+              'period': (timelogData['period'] ?? timelogData['periodType'] ?? timelogData['shift'] ?? '')?.toString() ?? '',
+            });
+          }
+        } else {
+          // Old format: extract attendance entries from timelog record
+          final entries = _extractAttendanceEntries(timelogData, employeeId);
+          logs.addAll(entries);
+        }
+      } catch (e) {
+        debugPrint('[LOCAL_DB] Error parsing timelog entry: $e');
+      }
+    }
+    
+    // Sort by timestamp (newest first)
+    logs.sort((a, b) {
+      final aTime = DateTime.tryParse(a['timestamp'] ?? '') ?? DateTime(1970);
+      final bTime = DateTime.tryParse(b['timestamp'] ?? '') ?? DateTime(1970);
+      return bTime.compareTo(aTime);
+    });
+    
+    return logs;
   }
 
   static Future<void> pruneToSite(String siteId) async {
@@ -1038,39 +1286,89 @@ class LocalDb {
 
   // Missing methods needed by HomePageService
   static Future<void> cacheTimeLogs(String siteId, List<Map<String, dynamic>> logs) async {
-    final db = await _open();
-    final batch = db.batch();
-    
-    for (final log in logs) {
-      batch.insert('timelog_cache', {
-        ...log,
-        'site_id': siteId,
-        'cached_at': DateTime.now().toIso8601String(),
-      });
-    }
-    
-    await batch.commit(noResult: true);
+    await saveAttendanceLogsForSite(siteId, logs);
   }
 
   static Future<List<Map<String, dynamic>>> getEmployeeLogsForDate(String employeeId, String siteId, DateTime date) async {
-    final db = await _open();
-    final startOfDay = DateTime(date.year, date.month, date.day);
-    final endOfDay = startOfDay.add(const Duration(days: 1));
-    
-    return await db.query(
+    final database = await db;
+    final dayKey =
+        '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+    final rows = await database.query(
       'timelog_cache',
-      where: 'employee_id = ? AND site_id = ? AND timestamp >= ? AND timestamp < ?',
-      whereArgs: [employeeId, siteId, startOfDay.toIso8601String(), endOfDay.toIso8601String()],
-      orderBy: 'timestamp DESC',
+      columns: ['raw_json'],
+      where: 'employee_id = ? AND site_id = ? AND timelog_date = ?',
+      whereArgs: [employeeId, siteId, dayKey],
+      orderBy: 'id DESC',
     );
+
+    final entries = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final raw = row['raw_json'] as String?;
+      if (raw == null || raw.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          entries.addAll(_extractAttendanceEntries(decoded, employeeId));
+        }
+      } catch (_) {}
+    }
+
+    return entries;
   }
 
   static Future<void> insertTimeLog(Map<String, dynamic> timelog) async {
-    final db = await _open();
-    await db.insert('timelog_cache', {
-      ...timelog,
-      'cached_at': DateTime.now().toIso8601String(),
-    });
+    final siteId = (timelog['siteId'] ?? timelog['site_id'])?.toString().trim();
+    final employeeId =
+        (timelog['employeeId'] ?? timelog['employee_id'])?.toString().trim();
+
+    if (siteId == null || siteId.isEmpty || employeeId == null || employeeId.isEmpty) {
+      throw Exception('insertTimeLog requires siteId and employeeId');
+    }
+
+    final payload = Map<String, dynamic>.from(timelog);
+    payload['employee_id'] = employeeId;
+
+    final timestampText = payload['timestamp']?.toString();
+    final parsedTimestamp =
+        timestampText != null ? DateTime.tryParse(timestampText) : null;
+    final normalizedDate = _normalizeDate(
+      payload['timelog'] ??
+          payload['timeLogDate'] ??
+          payload['timelog_date'] ??
+          parsedTimestamp?.toIso8601String(),
+    );
+    if (normalizedDate != null) {
+      payload['timelog_date'] = normalizedDate;
+      payload['timeLogDate'] ??= normalizedDate;
+      payload['timelog'] ??= normalizedDate;
+    }
+
+    final hour = parsedTimestamp?.hour.toString().padLeft(2, '0');
+    final minute = parsedTimestamp?.minute.toString().padLeft(2, '0');
+    final second = parsedTimestamp?.second.toString().padLeft(2, '0');
+    final timeOnly =
+        (hour != null && minute != null && second != null) ? '$hour:$minute:$second' : null;
+
+    final type = payload['type']?.toString().toLowerCase() ?? '';
+    final hasAnyAttendanceField = !_isBlank(payload['timeInMorning']) ||
+        !_isBlank(payload['timeOutMorning']) ||
+        !_isBlank(payload['timeInAfternoon']) ||
+        !_isBlank(payload['timeOutAfternoon']);
+
+    if (!hasAnyAttendanceField && timeOnly != null) {
+      if (type.contains('out')) {
+        payload['timeOutMorning'] = timeOnly;
+      } else {
+        payload['timeInMorning'] = timeOnly;
+      }
+    }
+
+    await saveTimelog(
+      siteId: siteId,
+      employeeId: employeeId,
+      timelogData: payload,
+    );
   }
 
   static Future<void> deleteEmployeePhoto(String employeeId, String siteId) async {
@@ -1080,5 +1378,105 @@ class LocalDb {
       where: 'employee_id = ? AND site_id = ?',
       whereArgs: [employeeId, siteId],
     );
+  }
+
+  /// Save selected site preference (batch insert compatible)
+  static Future<void> saveSelectedSite({
+    required String siteId,
+    required String? siteName,
+  }) async {
+    final database = await db;
+    await database.transaction((txn) async {
+      final batch = txn.batch();
+
+      // Clear existing preference
+      batch.delete('site_preferences');
+
+      // Insert new preference
+      batch.insert(
+        'site_preferences',
+        {
+          'id': 1,
+          'selected_site_id': siteId,
+          'selected_site_name': siteName ?? '',
+          'last_updated': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      await batch.commit(noResult: true);
+    });
+
+    debugPrint('[SITE_PREFS] Saved selected site: $siteId ($siteName)');
+  }
+
+  /// Get currently selected site
+  static Future<Map<String, dynamic>?> getSelectedSite() async {
+    final database = await db;
+    final rows = await database.query(
+      'site_preferences',
+      where: 'id = ?',
+      whereArgs: const [1],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      debugPrint('[SITE_PREFS] No selected site found');
+      return null;
+    }
+
+    debugPrint('[SITE_PREFS] Retrieved selected site: ${rows.first['selected_site_id']}');
+    return rows.first;
+  }
+
+  /// Batch insert operation: save selected site and sync with employee data
+  static Future<void> batchSaveSiteWithEmployees({
+    required String siteId,
+    required String? siteName,
+    required List<Map<String, dynamic>> employees,
+  }) async {
+    final database = await db;
+    await database.transaction((txn) async {
+      final batch = txn.batch();
+
+      // Clear existing preferences and replace with new one
+      batch.delete('site_preferences');
+      batch.insert(
+        'site_preferences',
+        {
+          'id': 1,
+          'selected_site_id': siteId,
+          'selected_site_name': siteName ?? '',
+          'last_updated': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      // Batch insert all employees for this site
+      for (final emp in employees) {
+        batch.insert(
+          'employees',
+          {
+            'fid': emp['fid'],
+            'employee_id': emp['employee_id'],
+            'employee_name': emp['employee_name'],
+            'finger_template': emp['finger_template'],
+            'site_id': siteId,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      await batch.commit(noResult: true);
+    });
+
+    debugPrint('[BATCH_SITE] Saved site preference and ${employees.length} employees');
+  }
+
+  /// Clear selected site preference
+  static Future<void> clearSelectedSite() async {
+    final database = await db;
+    await database.delete('site_preferences');
+    debugPrint('[SITE_PREFS] Cleared selected site');
   }
 }

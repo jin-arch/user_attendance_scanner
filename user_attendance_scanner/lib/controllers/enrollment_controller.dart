@@ -17,6 +17,7 @@ class EnrollmentController extends GetxController {
   final TextEditingController usernameController = TextEditingController();
   final showForm = ValueNotifier<bool>(false);
   final selfieImageBytes = ValueNotifier<Uint8List?>(null);
+  final isIdentifyingEmployee = ValueNotifier<bool>(false);
 
   final leftThumbScans = ValueNotifier<int>(0);
   final rightThumbScans = ValueNotifier<int>(0);
@@ -57,7 +58,17 @@ class EnrollmentController extends GetxController {
     _loadEmployeePhoto();
     _clearScanState();
     _device.clearCachedCapture();
-    _initDevice();
+    
+    // Only start device initialization if employee details are pre-filled
+    // Otherwise, wait for user to identify employee first
+    if ((employeeId != null && employeeId!.isNotEmpty) ||
+        (employeeName != null && employeeName!.isNotEmpty)) {
+      _initDevice();
+    } else {
+      // Don't start scanning until user is identified
+      deviceInitialized.value = false;
+      onSuccess?.call('Please identify an employee first by entering ID or clicking SCAN');
+    }
   }
 
   @override
@@ -74,6 +85,7 @@ class EnrollmentController extends GetxController {
     lastFingerprintImage.dispose();
     showForm.dispose();
     selfieImageBytes.dispose();
+    isIdentifyingEmployee.dispose();
     leftThumbScans.dispose();
     rightThumbScans.dispose();
 
@@ -103,6 +115,8 @@ class EnrollmentController extends GetxController {
     if ((employeeId != null && employeeId!.isNotEmpty) ||
         (employeeName != null && employeeName!.isNotEmpty)) {
       showForm.value = true;
+      // Clear scan state to prepare for new fingerprint enrollment
+      _clearScanState();
     }
   }
 
@@ -190,6 +204,20 @@ class EnrollmentController extends GetxController {
     _scanTimer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
       if (!isScanning.value || !_device.isConnected) return;
 
+      // If in identification mode, try to identify employee
+      if (isIdentifyingEmployee.value) {
+        try {
+          final template = await _device.captureFingerprint();
+          if (template != null && template.isNotEmpty) {
+            await _identifyEmployeeByFingerprint(template);
+          }
+        } catch (e) {
+          // Silent fail
+        }
+        return;
+      }
+
+      // Normal enrollment scan mode
       if (leftThumbScans.value >= scansPerFinger &&
           rightThumbScans.value >= scansPerFinger) {
         _stopScanLoop();
@@ -449,5 +477,161 @@ class EnrollmentController extends GetxController {
       hash = (hash * 0x01000193) & 0x7fffffff;
     }
     return hash == 0 ? 1 : hash;
+  }
+
+  /// Look up an existing employee by ID from the database
+  Future<Map<String, dynamic>?> lookupExistingEmployee(String employeeId) async {
+    if (employeeId.isEmpty || siteId == null) {
+      return null;
+    }
+
+    try {
+      final employees = await LocalDb.getEmployeesBySite(siteId!);
+      for (final emp in employees) {
+        final empId = emp['employee_id']?.toString() ?? '';
+        if (empId == employeeId.trim()) {
+          return {
+            'id': empId,
+            'name': emp['employee_name']?.toString() ?? 'Unknown',
+            'exists': true,
+          };
+        }
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[ENROLLMENT] Error looking up employee: $e');
+      return null;
+    }
+  }
+
+  /// Load employee details into the form when employee ID is found
+  Future<bool> loadEmployeeDetails(String employeeId) async {
+    if (employeeId.isEmpty) {
+      onError?.call('Please enter an employee ID');
+      return false;
+    }
+
+    try {
+      final employee = await lookupExistingEmployee(employeeId);
+      if (employee == null) {
+        onError?.call('Employee ID not found. Please use an existing employee ID.');
+        return false;
+      }
+
+      idController.text = employee['id'];
+      usernameController.text = employee['name'];
+      await _loadEmployeePhotoForId(employee['id']);
+      showForm.value = true;
+      isIdentifyingEmployee.value = false;
+      // Clear scan state to prepare for new fingerprint enrollment
+      _clearScanState();
+      
+      // Initialize device if not already initialized
+      if (!deviceInitialized.value) {
+        await _initDevice();
+      }
+      
+      onSuccess?.call('Employee found: ${employee['name']}. Please scan new fingerprints.');
+      return true;
+    } catch (e) {
+      onError?.call('Error loading employee: $e');
+      return false;
+    }
+  }
+
+  /// Identify employee by scanning their fingerprint
+  Future<void> _identifyEmployeeByFingerprint(Uint8List template) async {
+    final now = DateTime.now();
+    if (_lastScanTime != null) {
+      final diff = now.difference(_lastScanTime!).inMilliseconds;
+      if (diff < minTimeBetweenScansMs) {
+        // Ignore duplicate captures fired too quickly
+        return;
+      }
+    }
+    _lastScanTime = now;
+
+    try {
+      final site = siteId ?? 'default';
+      final employees = await LocalDb.getEmployeesBySite(site);
+      
+      if (employees.isEmpty) {
+        onError?.call('No employees found in database');
+        return;
+      }
+
+      // Group employees by employee_id (each employee has 2 records: left and right thumb)
+      final employeeGroups = <String, List<Map<String, dynamic>>>{};
+      for (final emp in employees) {
+        final empId = emp['employee_id']?.toString() ?? '';
+        if (empId.isNotEmpty) {
+          employeeGroups.putIfAbsent(empId, () => []);
+          employeeGroups[empId]!.add(emp);
+        }
+      }
+
+      // Match fingerprint against all employee templates
+      for (final entry in employeeGroups.entries) {
+        final empId = entry.key;
+        final empRecords = entry.value;
+        final empName = empRecords.first['employee_name']?.toString() ?? 'Unknown';
+
+        // Check both left and right thumb templates
+        for (final record in empRecords) {
+          final fingerTemplate = record['finger_template'] as Uint8List?;
+          if (fingerTemplate == null || fingerTemplate.isEmpty) {
+            continue;
+          }
+
+          final score = await _device.matchTemplatesAsync(
+            template,
+            fingerTemplate,
+          );
+
+          if (score != null && score > 0) {
+            // Found a match
+            idController.text = empId;
+            usernameController.text = empName;
+            await _loadEmployeePhotoForId(empId);
+            showForm.value = true;
+            isIdentifyingEmployee.value = false;
+            // Clear scan state to prepare for new fingerprint enrollment
+            _clearScanState();
+            onSuccess?.call('Employee identified: $empName. Please scan new fingerprints.');
+            return;
+          }
+        }
+      }
+
+      onError?.call('Fingerprint not recognized. Please try again or enter employee ID.');
+    } catch (e) {
+      debugPrint('Identification error: $e');
+      onError?.call('Error identifying employee: $e');
+    }
+  }
+
+  /// Start identification mode (scan fingerprint to find employee)
+  Future<void> startIdentificationMode() async {
+    _clearScanState();
+    isIdentifyingEmployee.value = true;
+    idController.clear();
+    usernameController.clear();
+    selfieImageBytes.value = null;
+    
+    // Initialize device if not already initialized
+    if (!deviceInitialized.value) {
+      await _initDevice();
+    }
+    
+    onSuccess?.call('Scan fingerprint to identify employee');
+  }
+
+  /// Cancel identification mode and enter employee ID manually
+  void cancelIdentificationMode() {
+    isIdentifyingEmployee.value = false;
+    showForm.value = true;
+    // Clear scan state to prepare for new fingerprint enrollment
+    _clearScanState();
+    onSuccess?.call('Enter employee ID manually');
   }
 }

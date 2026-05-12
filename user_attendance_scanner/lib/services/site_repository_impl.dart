@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import '../models/site_model.dart';
 import 'site_repository.dart';
-import '../services/local_db.dart';
+import 'local_db.dart';
 
 class SiteRepositoryImpl implements SiteRepository {
   static const String _siteApiUrl = 'https://fastdevs-api.com/HRIS_BIOMETRICS/public/api/v1/site/all';
@@ -13,17 +13,17 @@ class SiteRepositoryImpl implements SiteRepository {
   Future<List<Site>> fetchSites() async {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 20);
-    
+
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
       request.headers.add('Authorization', _basicAuth(_apiUsername, _apiPassword));
-      
+
       final response = await request.close();
-      
+
       if (response.statusCode == 200) {
         final responseBody = await response.transform(utf8.decoder).join();
         final Map<String, dynamic> data = jsonDecode(responseBody);
-        
+
         final List sitesData = data['data'] ?? [];
         return sitesData.map((json) => Site.fromJson(json)).toList();
       } else {
@@ -38,13 +38,14 @@ class SiteRepositoryImpl implements SiteRepository {
 
   @override
   Future<List<Site>> getCachedSites() async {
-    // For now, return empty list - could implement SharedPreferences caching
+    // Retrieve cached sites from local database (placeholder for future use)
+    // For now, return empty list - sites are persisted but not cached here
     return [];
   }
 
   @override
   Future<void> cacheSites(List<Site> sites) async {
-    // For now, no-op - could implement SharedPreferences caching
+    // Sites are automatically persisted when selected
   }
 
   @override
@@ -59,7 +60,31 @@ class SiteRepositoryImpl implements SiteRepository {
 
   @override
   Future<void> clearCache() async {
-    // For now, no-op - could implement SharedPreferences clearing
+    await LocalDb.clearSelectedSite();
+  }
+
+  /// Save selected site with persistence
+  Future<void> selectSite(Site site) async {
+    await LocalDb.saveSelectedSite(
+      siteId: site.id,
+      siteName: site.name,
+    );
+  }
+
+  /// Get the last selected site
+  Future<Site?> getSelectedSite() async {
+    final prefs = await LocalDb.getSelectedSite();
+    if (prefs == null) return null;
+
+    final siteId = prefs['selected_site_id']?.toString();
+    final siteName = prefs['selected_site_name']?.toString();
+
+    if (siteId == null) return null;
+
+    return Site(
+      id: siteId,
+      name: siteName ?? 'Unknown Site',
+    );
   }
 
   String _basicAuth(String username, String password) {

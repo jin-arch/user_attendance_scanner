@@ -734,6 +734,8 @@ class HomePageService extends GetxService {
   Future<void> selectSite(String siteId) async {
     setSiteId(siteId);
     await loadFromLocalDb(siteId);
+    // Fetch timelogs from API when site is selected
+    await fetchAndCacheSiteTimeLogs();
   }
 
   void dispose() {

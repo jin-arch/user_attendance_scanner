@@ -231,11 +231,16 @@ class LegacyHomePageController extends GetxController {
 
   Future<void> fetchAndCacheSiteTimeLogs(String siteId) async {
     try {
+      debugPrint('[TIMELOG_FETCH] ===== START FETCHING TIMELOGS =====');
+      debugPrint('[TIMELOG_FETCH] SiteID: $siteId');
+      final apiUrl = '$_timelogPerSiteApiUrl$siteId';
+      debugPrint('[TIMELOG_FETCH] API URL: $apiUrl');
+
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 20);
       try {
         final request = await client.getUrl(
-          Uri.parse('$_timelogPerSiteApiUrl$siteId'),
+          Uri.parse(apiUrl),
         );
         final basicToken = base64Encode(
           utf8.encode('$_apiUsername:$_apiPassword'),
@@ -247,20 +252,56 @@ class LegacyHomePageController extends GetxController {
           'Basic $basicToken',
         );
 
+        debugPrint('[TIMELOG_FETCH] Sending HTTP GET request...');
         final response = await request.close();
+        debugPrint('[TIMELOG_FETCH] HTTP Response Status: ${response.statusCode}');
+
         final body = await response.transform(utf8.decoder).join();
-        if (response.statusCode < 200 || response.statusCode > 299) {
-          throw Exception('HTTP ${response.statusCode}');
+        debugPrint('[TIMELOG_FETCH] Response Body Length: ${body.length} characters');
+
+        if (body.length < 500) {
+          debugPrint('[TIMELOG_FETCH] Response Body: $body');
+        } else {
+          debugPrint('[TIMELOG_FETCH] Response Body (first 500 chars): ${body.substring(0, 500)}');
         }
 
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          debugPrint('[TIMELOG_FETCH] ERROR: HTTP ${response.statusCode} - $body');
+          throw Exception('HTTP ${response.statusCode}: $body');
+        }
+
+        if (body.isEmpty) {
+          debugPrint('[TIMELOG_FETCH] WARNING: Empty response body from API');
+          return;
+        }
+
+        debugPrint('[TIMELOG_FETCH] Decoding JSON response...');
         final decoded = jsonDecode(body);
+        debugPrint('[TIMELOG_FETCH] Decoded JSON type: ${decoded.runtimeType}');
+
         final rows = _extractRows(decoded);
+        debugPrint('[TIMELOG_FETCH] Extracted rows count: ${rows.length}');
+
+        if (rows.isEmpty) {
+          debugPrint('[TIMELOG_FETCH] WARNING: No rows extracted from API response');
+          debugPrint('[TIMELOG_FETCH] Full decoded response: $decoded');
+          return;
+        }
+
+        // Log first 3 rows for inspection
+        for (int i = 0; i < rows.take(3).length; i++) {
+          debugPrint('[TIMELOG_FETCH] Row $i: ${rows[i]}');
+        }
+
+        debugPrint('[TIMELOG_FETCH] Saving ${rows.length} rows to local cache...');
         await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
+        debugPrint('[TIMELOG_FETCH] ===== TIMELOG FETCH COMPLETE =====');
       } finally {
         client.close(force: true);
       }
-    } catch (e) {
-      debugPrint('fetchAndCacheSiteTimeLogs: $e');
+    } catch (e, stackTrace) {
+      debugPrint('[TIMELOG_FETCH] ERROR: $e');
+      debugPrint('[TIMELOG_FETCH] Stack trace: $stackTrace');
     }
   }
 
@@ -273,8 +314,11 @@ class LegacyHomePageController extends GetxController {
   }
 
   List<Map<String, dynamic>> _extractRows(dynamic decoded) {
+    debugPrint('[EXTRACT_ROWS] Input type: ${decoded.runtimeType}');
+
     dynamic data = decoded;
     if (decoded is Map<String, dynamic>) {
+      // Try common response wrapper keys
       data =
           decoded['data'] ??
               decoded['sites'] ??
@@ -284,16 +328,28 @@ class LegacyHomePageController extends GetxController {
               decoded['employees'] ??
               decoded['timelogs'] ??
               decoded['timelog'] ??
-              decoded['logs'];
+              decoded['logs'] ??
+              decoded['results'] ??
+              decoded['items'] ??
+              decoded;  // If no wrapper found, use the entire map
     }
 
+    debugPrint('[EXTRACT_ROWS] Data type after extraction: ${data.runtimeType}');
+
     if (data is List) {
-      return data
+      debugPrint('[EXTRACT_ROWS] Found list with ${data.length} items');
+      final result = data
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      debugPrint('[EXTRACT_ROWS] Converted to ${result.length} valid maps');
+      return result;
+    } else if (data is Map<String, dynamic>) {
+      debugPrint('[EXTRACT_ROWS] Converting single map to list');
+      return [data];
     }
 
+    debugPrint('[EXTRACT_ROWS] No valid data format found, returning empty list');
     return const [];
   }
 

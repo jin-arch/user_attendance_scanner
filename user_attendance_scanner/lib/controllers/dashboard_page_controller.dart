@@ -90,6 +90,20 @@ class DashboardPageController extends GetxController {
     _isActiveRoute = isActive;
   }
 
+  Future<String?> resolveSiteId(String? siteId) async {
+    final incoming = siteId?.trim();
+    if (incoming != null && incoming.isNotEmpty) {
+      return incoming;
+    }
+
+    final selectedSite = await LocalDb.getSelectedSite();
+    final selectedId = selectedSite?['selected_site_id']?.toString().trim();
+    if (selectedId == null || selectedId.isEmpty) {
+      return null;
+    }
+    return selectedId;
+  }
+
   Future<void> loadEmployeeDatabase({
     required String? siteId,
     required ZKTecoUSB device,
@@ -106,7 +120,12 @@ class DashboardPageController extends GetxController {
         final fid = row['fid'] as int?;
         final empId = row['employee_id']?.toString() ?? '';
         final empName = row['employee_name']?.toString() ?? '';
-        final templateBytes = row['finger_template'] as Uint8List?;
+        final templateRaw = row['finger_template'];
+        final templateBytes = templateRaw is Uint8List
+            ? templateRaw
+            : (templateRaw is List<int>
+                ? Uint8List.fromList(templateRaw)
+                : null);
 
         print('[DASHBOARD_SCAN] Employee row: fid=$fid, empId=$empId, name=$empName, hasTemplate=${templateBytes != null}');
 
@@ -350,7 +369,7 @@ class DashboardPageController extends GetxController {
           'datelog',
           'timelog',
         ]);
-        if (dateText != null && dateText.isNotEmpty) {
+        if (dateText.isNotEmpty) {
           groupedByDate.putIfAbsent(dateText, () => []).add(entry);
         }
       }
@@ -379,12 +398,12 @@ class DashboardPageController extends GetxController {
             final timeIn = _pickFirst(entry, ['timeInMorning', 'timeinmorning']);
             final timeOut = _pickFirst(entry, ['timeOutMorning', 'timeoutmorning']);
             
-            if (timeIn != null && timeIn.isNotEmpty && timeIn != '-') {
+            if (timeIn.isNotEmpty && timeIn != '-') {
               if (bestTimeIn == null || timeIn.compareTo(bestTimeIn) < 0) {
                 bestTimeIn = timeIn;
               }
             }
-            if (timeOut != null && timeOut.isNotEmpty && timeOut != '-') {
+            if (timeOut.isNotEmpty && timeOut != '-') {
               if (bestTimeOut == null || timeOut.compareTo(bestTimeOut) > 0) {
                 bestTimeOut = timeOut;
               }
