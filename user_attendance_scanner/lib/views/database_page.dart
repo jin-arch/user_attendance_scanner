@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../controllers/database_controller.dart';
+import '../services/sync_service.dart';
 
 class DatabasePage extends StatelessWidget {
   const DatabasePage({super.key, this.siteId});
@@ -43,6 +44,19 @@ class DatabasePage extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.refresh, color: Colors.white),
                 onPressed: controller.refreshEmployees,
+              ),
+              IconButton(
+                icon: const Icon(Icons.sync, color: Colors.white),
+                onPressed: () async {
+                  await SyncService.syncAllWithDialog(
+                    context,
+                    siteId: siteId,
+                    onStatusUpdate: (status) {
+                      controller.setStatus(status);
+                    },
+                  );
+                  controller.refreshEmployees();
+                },
               ),
             ],
           ),

@@ -9,8 +9,15 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_db.dart';
 import '../services/site_repository_impl.dart';
-import '../models/site_model.dart';
+import '../controllers/home_page_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
+import '../controllers/home_page_bridge.dart';
+import '../services/device_service.dart';
+import '../services/employee_repository.dart';
+import '../services/attendance_repository.dart';
+import '../services/site_repository.dart';
+import '../services/sync_service.dart';
+import '../models/site_model.dart';
 import '../utils/color_with_values_compat.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../routes/route_observer.dart';
@@ -174,6 +181,7 @@ class _HomePageController extends GetxController with RouteAware {
 
     // Try to auto-connect if already have site selected
     _autoConnectIfSiteSelected();
+
   }
 
   /// Load previously saved site preference from database
@@ -1976,38 +1984,43 @@ class _HomePageController extends GetxController with RouteAware {
 
   Future<void> _syncNow() async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Syncing data...'),
-        backgroundColor: Color(0xFF3FA9F5),
-      ),
-    );
-    try {
-      final siteId = _selectedSiteId;
-      if (siteId != null && siteId.isNotEmpty) {
-        await _syncEmployeesFromApiToLocalDb(siteId);
+    
+    final siteId = _selectedSiteId;
+    if (siteId != null && siteId.isNotEmpty) {
+      await SyncService.syncAllWithDialog(
+        context,
+        siteId: siteId,
+        onStatusUpdate: (status) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(status),
+                backgroundColor: status.toLowerCase().contains('error') 
+                    ? Colors.red 
+                    : Colors.blue,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        },
+      );
+      
+      // Refresh local data after sync
+      if (mounted) {
         await _loadFromLocalDb(siteId);
         await _fetchAndCacheSiteTimeLogs();
-        await _syncPendingHrisQueue();
       }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Sync completed successfully.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Sync failed: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No site selected for sync'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
   }
 
-}
-
 // Particle animation is provided by lib/animations/rising_fade_particle.dart
+}

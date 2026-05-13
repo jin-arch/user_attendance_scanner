@@ -1,0 +1,251 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'local_db.dart';
+
+class SyncService {
+  static const String _baseUrl = 'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php';
+  static const String _apiUsername = 'devuser';
+  static const String _apiPassword = '12456789!';
+
+  /// Sync all data with options dialog
+  static Future<void> syncAllWithDialog(
+    BuildContext context, {
+    String? siteId,
+    Function(String)? onStatusUpdate,
+  }) async {
+    final result = await showDialog<SyncOption>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0A2240),
+          title: const Text(
+            'Sync Options',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildSyncOption(
+                icon: Icons.people,
+                title: 'Employee List',
+                subtitle: 'Sync employee database from server',
+                onTap: () => Navigator.of(context).pop(SyncOption.employeeList),
+              ),
+              const SizedBox(height: 12),
+              _buildSyncOption(
+                icon: Icons.history,
+                title: 'Employee Logs',
+                subtitle: 'Sync time logs from server',
+                onTap: () => Navigator.of(context).pop(SyncOption.employeeLogs),
+              ),
+              const SizedBox(height: 12),
+              _buildSyncOption(
+                icon: Icons.sync,
+                title: 'Sync All',
+                subtitle: 'Sync both employees and logs',
+                onTap: () => Navigator.of(context).pop(SyncOption.all),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF3FA9F5)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    try {
+      onStatusUpdate?.call('Starting sync...');
+      
+      switch (result) {
+        case SyncOption.employeeList:
+          await _syncEmployeeList(siteId: siteId, onStatusUpdate: onStatusUpdate);
+          break;
+        case SyncOption.employeeLogs:
+          await _syncEmployeeLogs(siteId: siteId, onStatusUpdate: onStatusUpdate);
+          break;
+        case SyncOption.all:
+          await _syncEmployeeList(siteId: siteId, onStatusUpdate: onStatusUpdate);
+          await _syncEmployeeLogs(siteId: siteId, onStatusUpdate: onStatusUpdate);
+          break;
+      }
+
+      onStatusUpdate?.call('Sync completed successfully!');
+      _showSuccessMessage(context, 'Data synchronized successfully!');
+    } catch (e) {
+      onStatusUpdate?.call('Sync failed: $e');
+      _showErrorMessage(context, 'Sync failed: $e');
+    }
+  }
+
+  static Widget _buildSyncOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A3A5C),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: const Color(0xFF3FA9F5),
+              size: 24,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Future<void> _syncEmployeeList({
+    String? siteId,
+    Function(String)? onStatusUpdate,
+  }) async {
+    final resolvedSiteId = siteId ?? await LocalDb.getSelectedSiteId();
+    if (resolvedSiteId == null || resolvedSiteId.isEmpty) {
+      throw Exception('No site selected');
+    }
+
+    onStatusUpdate?.call('Fetching employee list from server...');
+
+    final url = Uri.parse('$_baseUrl/get/employees');
+    final headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'FAST-Attendance/1.0',
+      'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
+    };
+
+    final response = await http.get(
+      Uri.parse('$url?site_id=$resolvedSiteId'),
+      headers: headers,
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch employees: ${response.statusCode}');
+    }
+
+    final responseData = json.decode(response.body);
+    if (!responseData['success']) {
+      throw Exception('Server error: ${responseData['message']}');
+    }
+
+    final employees = (responseData['data'] as List).cast<Map<String, dynamic>>();
+    onStatusUpdate?.call('Saving ${employees.length} employees to local database...');
+
+    await LocalDb.saveEmployeesForSite(resolvedSiteId, employees);
+  }
+
+  static Future<void> _syncEmployeeLogs({
+    String? siteId,
+    Function(String)? onStatusUpdate,
+  }) async {
+    final resolvedSiteId = siteId ?? await LocalDb.getSelectedSiteId();
+    if (resolvedSiteId == null || resolvedSiteId.isEmpty) {
+      throw Exception('No site selected');
+    }
+
+    onStatusUpdate?.call('Fetching employee logs from server...');
+
+    final url = Uri.parse('$_baseUrl/get/timelogs');
+    final headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'FAST-Attendance/1.0',
+      'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
+    };
+
+    final response = await http.get(
+      Uri.parse('$url?site_id=$resolvedSiteId'),
+      headers: headers,
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch logs: ${response.statusCode}');
+    }
+
+    final responseData = json.decode(response.body);
+    if (!responseData['success']) {
+      throw Exception('Server error: ${responseData['message']}');
+    }
+
+    final logs = (responseData['data'] as List).cast<Map<String, dynamic>>();
+    onStatusUpdate?.call('Saving ${logs.length} log entries to local database...');
+
+    await LocalDb.saveAttendanceLogsForSite(resolvedSiteId, logs);
+  }
+
+  static void _showSuccessMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  static void _showErrorMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+}
+
+enum SyncOption {
+  employeeList,
+  employeeLogs,
+  all,
+}

@@ -376,7 +376,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
         break;
       case 'alreadyTimedIn':
         title = 'ALREADY TIMED IN';
-        subtitle = 'You have already timed in. Wait 5 minutes to time out.';
+        subtitle = 'You have already timed in for today.';
         buttonText = 'Close';
         buttonColor = const Color(0xFFA3C9FF);
         iconBgColor = const Color(0xFFA3C9FF).withValues(alpha: 0.3);
@@ -963,7 +963,6 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     double w, {
     required String label,
     bool active = false,
-    VoidCallback? onTap,
   }) {
     final radius = BorderRadius.circular(w * 0.018);
     return Container(
@@ -1350,7 +1349,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                         ),
                       );
                     },
-                    separatorBuilder: (_, __) => const SizedBox.shrink(),
+                    separatorBuilder: (_, _) => const SizedBox.shrink(),
                     itemCount: rows.length,
                   ),
           ),

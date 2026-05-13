@@ -89,18 +89,20 @@ class DatabaseController extends GetxController {
   
   // Filter and search logic
   List<Map<String, dynamic>> get filteredEmployees {
-    final unique = uniqueEmployees;
-    if (searchQuery.value.isEmpty) return unique;
-    return unique.where((emp) {
-      final empId = (emp['employee_id'] ?? '').toString().toLowerCase();
-      final empName = (emp['employee_name'] ?? '').toString().toLowerCase();
-      return empId.contains(searchQuery.value) || empName.contains(searchQuery.value);
+    if (searchQuery.isEmpty) return uniqueEmployees;
+    return uniqueEmployees.where((emp) {
+      final name = (emp['employee_name'] as String? ?? '').toLowerCase();
+      final id = (emp['employee_id'] as String? ?? '').toLowerCase();
+      return name.contains(searchQuery.value) || id.contains(searchQuery.value);
     }).toList();
   }
   
-  void clearSearch() {
-    searchController.clear();
-    searchQuery.value = '';
+  void setStatus(String status) {
+    if (status.toLowerCase().contains('error')) {
+      errorMessage.value = status;
+    } else {
+      errorMessage.value = '';
+    }
   }
   
   // Get statistics

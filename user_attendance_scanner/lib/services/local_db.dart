@@ -981,6 +981,36 @@ class LocalDb {
     return entries;
   }
 
+  /// Save employees from API to local database using batch insert
+  static Future<void> saveEmployeesForSite(String siteId, List<Map<String, dynamic>> employees) async {
+    final database = await db;
+    
+    // Clear existing employees for this site to avoid duplicates
+    await database.delete(
+      'employees',
+      where: 'site_id = ?',
+      whereArgs: [siteId],
+    );
+    
+    // Use batch insert for better performance
+    final batch = database.batch();
+    
+    for (final employee in employees) {
+      batch.insert('employees', {
+        'employee_id': employee['employee_id'],
+        'employee_name': employee['employee_name'],
+        'site_id': siteId,
+        'template': employee['template'] ?? employee['raw_data'],
+        'fid': employee['fid'] ?? employee['finger_id'],
+        'created_at': employee['created_at'] ?? DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    }
+    
+    final results = await batch.commit();
+    debugPrint('[LOCAL_DB] Saved ${results.length} employees for site $siteId');
+  }
+
   /// Save attendance logs from API to local database using batch insert
   static Future<void> saveAttendanceLogsForSite(String siteId, List<Map<String, dynamic>> logs) async {
     final database = await db;
@@ -1415,8 +1445,7 @@ class LocalDb {
     final database = await db;
     final rows = await database.query(
       'site_preferences',
-      where: 'id = ?',
-      whereArgs: const [1],
+      orderBy: 'last_updated DESC',
       limit: 1,
     );
 
@@ -1427,6 +1456,12 @@ class LocalDb {
 
     debugPrint('[SITE_PREFS] Retrieved selected site: ${rows.first['selected_site_id']}');
     return rows.first;
+  }
+
+  /// Get currently selected site ID
+  static Future<String?> getSelectedSiteId() async {
+    final selectedSite = await getSelectedSite();
+    return selectedSite?['selected_site_id']?.toString();
   }
 
   /// Batch insert operation: save selected site and sync with employee data

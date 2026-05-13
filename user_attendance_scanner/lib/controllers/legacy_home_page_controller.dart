@@ -394,6 +394,12 @@ class LegacyHomePageController extends GetxController {
           final timeOutAfternoon =
               existingTimelog['timeOutAfternoon']?.toString();
 
+          // Additional check: If user has any time in today without corresponding time out
+          if ((!isBlankAttendanceValue(timeInMorning) && isBlankAttendanceValue(timeOutMorning)) || 
+              (!isBlankAttendanceValue(existingTimelog['timeInAfternoon']) && isBlankAttendanceValue(timeOutAfternoon))) {
+            return 'ALREADY IN';
+          }
+
           if (!isBlankAttendanceValue(timeInMorning) &&
               isBlankAttendanceValue(timeOutMorning)) {
             final timeInDateTime = _parseTodayTime(timeInMorning, now);
@@ -459,11 +465,16 @@ class LegacyHomePageController extends GetxController {
   bool isBlankAttendanceValue(dynamic value) {
     if (value == null) return true;
     final text = value.toString().trim();
-    return text.isEmpty ||
-        text == 'null' ||
-        text == '00:00:00' ||
-        text == '0' ||
-        text.toUpperCase() == 'N/A';
+    return text.isEmpty || 
+           text == '00:00:00' || 
+           text == '00:00' || 
+           text == '0' || 
+           text == '-' || 
+           text.toLowerCase() == 'null' ||
+           text.toLowerCase() == 'n/a' ||
+           text.toLowerCase() == 'na' ||
+           text.toLowerCase() == 'none' ||
+           text.toLowerCase() == 'empty';
   }
 
   DateTime? _parseTodayTime(String? rawTime, DateTime now) {

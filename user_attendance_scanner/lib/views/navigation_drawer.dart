@@ -118,7 +118,7 @@ class NavigationDrawer extends StatelessWidget {
                     size: 24,
                   ),
                   title: const Text(
-                    'Update Fingerprint',
+                    'Enrollment',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
@@ -377,23 +378,37 @@ class LogsController extends GetxController {
     }
   }
 
-  /// Wait for finger on scanner, then perform continuous scanning
+  /// Wait for finger on scanner, then perform scanning only when finger is detected
   Future<void> _waitForFingerAndScan() async {
-    debugPrint('[LOGS_CONTROLLER] Ready for continuous fingerprint scan...');
-    setStatus('Place finger on scanner - continuous scanning active');
+    debugPrint('[LOGS_CONTROLLER] Ready for fingerprint scan...');
+    setStatus('Place finger on scanner');
 
     try {
       // Activate scanning mode on the device
       debugPrint('[LOGS_CONTROLLER] Activating scanner...');
       await _deviceService.startScanningMode();
-      debugPrint('[LOGS_CONTROLLER] Scanner activated - continuous scanning enabled');
+      debugPrint('[LOGS_CONTROLLER] Scanner activated - waiting for finger');
 
-      // Keep scanning continuously until a match is found
+      // Wait for finger detection instead of continuous scanning
       while (!isAuthenticated.value && isDeviceConnected.value && siteId != null) {
         try {
+          // First check if finger is present
+          final hasFinger = await _checkFingerPresence();
+          if (!hasFinger) {
+            // No finger detected, wait and check again
+            await Future.delayed(const Duration(milliseconds: 500));
+            continue;
+          }
+
+          // Finger detected - now perform scan
+          debugPrint('[LOGS_CONTROLLER] Finger detected - performing scan...');
           isScanning.value = true;
+          setStatus('Scanning fingerprint...');
+          
           await _performFingerprintScan();
+          
           isScanning.value = false;
+          setStatus('Place finger on scanner');
 
           // If match found, exit loop
           if (isAuthenticated.value) {
@@ -401,24 +416,48 @@ class LogsController extends GetxController {
             break;
           }
 
-          // No match - immediately continue scanning without delay
-          debugPrint('[LOGS_CONTROLLER] No match detected - continuing continuous scan...');
-          // Clear any error messages and keep scanning
+          // No match - wait before next attempt
+          debugPrint('[LOGS_CONTROLLER] No match detected - waiting for next finger placement...');
+          // Clear any error messages
           if (errorMessage.value.isNotEmpty) {
             errorMessage.value = '';
           }
+          // Wait for finger to be removed and placed again
+          await Future.delayed(const Duration(milliseconds: 2000));
         } catch (e) {
           debugPrint('[LOGS_CONTROLLER] Scan attempt error: $e');
           isScanning.value = false;
-          // Clear error and continue scanning immediately
+          setStatus('Place finger on scanner');
+          // Clear error and add delay before continuing
           errorMessage.value = '';
-          debugPrint('[LOGS_CONTROLLER] Continuing continuous scan after error...');
+          debugPrint('[LOGS_CONTROLLER] Waiting before retry after error...');
+          await Future.delayed(const Duration(milliseconds: 2000));
         }
       }
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Scan mode error: $e');
       errorMessage.value = 'Scanner error: $e';
       setStatus('Place finger on scanner...');
+      isScanning.value = false;
+    }
+  }
+
+  /// Check if finger is present on the scanner
+  Future<bool> _checkFingerPresence() async {
+    try {
+      // Try to get a quick template to check if finger is present
+      final template = await _deviceService.scanFingerprint();
+      
+      // If no template or invalid template, assume no finger
+      if (template == null || !_isValidFingerprintTemplate(template)) {
+        return false;
+      }
+      
+      // Template detected - finger is present
+      return true;
+    } catch (e) {
+      debugPrint('[LOGS_CONTROLLER] Finger presence check error: $e');
+      return false;
     }
   }
   
@@ -439,8 +478,9 @@ class LogsController extends GetxController {
       final template = await _deviceService.scanFingerprint();
       debugPrint('[LOGS_CONTROLLER] Fingerprint template received: ${template != null}');
 
-      if (template != null) {
+      if (template != null && _isValidFingerprintTemplate(template)) {
         // DON'T change status - keep it blue
+        debugPrint('[LOGS_CONTROLLER] Valid fingerprint detected - processing...');
         debugPrint('[LOGS_CONTROLLER] Loading employees for site: $siteId');
 
         // Get all employees for matching
@@ -476,7 +516,7 @@ class LogsController extends GetxController {
           // Keep status blue for failed authentication
         }
       } else {
-        debugPrint('[LOGS_CONTROLLER] ✗ No fingerprint template received');
+        debugPrint('[LOGS_CONTROLLER] ✗ No valid fingerprint template received - ignoring noise');
         // Don't set error message to avoid stopping continuous scan
         // errorMessage.value = 'No fingerprint detected';
         // DON'T change status - keep it blue
@@ -489,6 +529,41 @@ class LogsController extends GetxController {
       // DON'T change status - keep it blue
     }
     debugPrint('[LOGS_CONTROLLER] ===== FINGERPRINT SCAN END =====');
+  }
+
+  /// Validate fingerprint template to filter out noise and invalid data
+  bool _isValidFingerprintTemplate(Uint8List template) {
+    // Check template size - valid templates should have reasonable size
+    if (template.isEmpty || template.length < 100) {
+      return false;
+    }
+    
+    // Check for all zeros (empty/no data)
+    bool hasNonZero = false;
+    for (int i = 0; i < template.length; i++) {
+      if (template[i] != 0) {
+        hasNonZero = true;
+        break;
+      }
+    }
+    if (!hasNonZero) return false;
+    
+    // Check for repeated patterns (noise)
+    if (template.length > 10) {
+      int sameCount = 1;
+      for (int i = 1; i < template.length; i++) {
+        if (template[i] == template[i-1]) {
+          sameCount++;
+          if (sameCount > template.length * 0.8) {
+            return false; // Too much repetition, likely noise
+          }
+        } else {
+          sameCount = 1;
+        }
+      }
+    }
+    
+    return true;
   }
   
   Future<void> loadLogs() async {
@@ -1072,6 +1147,87 @@ class LogsController extends GetxController {
       setStatus('Error fetching time logs from server');
     } finally {
       isLoading.value = false;
+    }
+  }
+
+  // Send individual log entry to server
+  Future<void> sendLogToServer(Map<String, dynamic> log) async {
+    try {
+      debugPrint('[LOGS_CONTROLLER] ===== SEND LOG TO SERVER START =====');
+      debugPrint('[LOGS_CONTROLLER] Sending log: ${log['employee_id']} - ${log['employee_name']} - ${log['type']} - ${log['timestamp']}');
+      
+      if (siteId == null || siteId!.isEmpty) {
+        errorMessage.value = 'No site selected';
+        return;
+      }
+
+      setStatus('Sending log to server...');
+      
+      // Prepare the log data for API
+      final logData = {
+        'employee_id': log['employee_id'],
+        'employee_name': log['employee_name'],
+        'type': log['type'],
+        'timestamp': log['timestamp'],
+        'time_only': log['time_only'],
+        'period': log['period'],
+        'site_id': siteId,
+        'raw_data': log['raw_data'],
+      };
+
+      final url = Uri.parse(
+        'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/post/timelog',
+      );
+      
+      final headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'FAST-Attendance/1.0',
+        'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
+      };
+
+      debugPrint('[LOGS_CONTROLLER] Sending to URL: $url');
+      debugPrint('[LOGS_CONTROLLER] Log data: $logData');
+
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: json.encode(logData),
+      ).timeout(const Duration(seconds: 15));
+
+      debugPrint('[LOGS_CONTROLLER] Response Status: ${response.statusCode}');
+      debugPrint('[LOGS_CONTROLLER] Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = json.decode(response.body);
+        debugPrint('[LOGS_CONTROLLER] Server response: $responseData');
+        
+        // Check if the response indicates success
+        if (responseData['success'] == true || responseData['status'] == 'success') {
+          setStatus('Log sent to server successfully');
+          debugPrint('[LOGS_CONTROLLER] ✓ Log sent successfully');
+        } else {
+          errorMessage.value = 'Server returned error: ${responseData['message'] ?? 'Unknown error'}';
+          debugPrint('[LOGS_CONTROLLER] ✗ Server error: ${responseData['message']}');
+        }
+      } else {
+        errorMessage.value = 'Failed to send log: HTTP ${response.statusCode}';
+        debugPrint('[LOGS_CONTROLLER] ✗ HTTP error: ${response.statusCode}');
+        debugPrint('[LOGS_CONTROLLER] Response: ${response.body}');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[LOGS_CONTROLLER] ✗ Error sending log to server: $e');
+      debugPrint('[LOGS_CONTROLLER] Stack trace: $stackTrace');
+      errorMessage.value = 'Failed to send log: $e';
+      setStatus('Error sending log to server');
+    } finally {
+      debugPrint('[LOGS_CONTROLLER] ===== SEND LOG TO SERVER END =====');
+      // Clear status message after a delay
+      Future.delayed(const Duration(seconds: 3), () {
+        if (statusMessage.value.contains('Sending')) {
+          setStatus('');
+        }
+      });
     }
   }
 

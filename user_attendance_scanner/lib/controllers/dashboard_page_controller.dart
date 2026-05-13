@@ -192,7 +192,10 @@ class DashboardPageController extends GetxController {
     }
 
     _scanTimer?.cancel();
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _scanTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      // Only scan if device is connected and scanning is active
+      if (!isScanning()) return;
+      
       _captureAndMatch(
         device: device,
         isScanning: isScanning,
@@ -625,6 +628,10 @@ class DashboardPageController extends GetxController {
 
     print('[DASHBOARD_TIMELOG] Raw strings: inM="$rawInMorning", outM="$rawOutMorning", inA="$rawInAfternoon", outA="$rawOutAfternoon"');
     print('[DASHBOARD_TIMELOG] _isBlank checks: inM=${_isBlank(rawInMorning)}, outM=${_isBlank(rawOutMorning)}, inA=${_isBlank(rawInAfternoon)}, outA=${_isBlank(rawOutAfternoon)}');
+    
+    // Additional debug: Check all possible time field names
+    print('[DASHBOARD_TIMELOG] All todayCache keys: ${todayCache?.keys.toList()}');
+    print('[DASHBOARD_TIMELOG] todayCache full data: $todayCache');
 
     final existingInMorning = _isBlank(rawInMorning) ? null : rawInMorning;
     final existingOutMorning = _isBlank(rawOutMorning) ? null : rawOutMorning;
@@ -652,6 +659,13 @@ class DashboardPageController extends GetxController {
         print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (within 5 min cooldown)');
         throw Exception('ALREADY_IN');
       }
+    }
+
+    // Additional check: If user has any time in today without corresponding time out
+    if ((existingInMorning != null && existingOutMorning == null) || 
+        (existingInAfternoon != null && existingOutAfternoon == null)) {
+      print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (has time in without time out)');
+      throw Exception('ALREADY_IN');
     }
 
     print('[DASHBOARD_TIMELOG] Decision path check: existingInMorning=$existingInMorning, existingOutMorning=$existingOutMorning');
@@ -715,7 +729,16 @@ class DashboardPageController extends GetxController {
 
   bool _isBlank(String value) {
     final text = value.trim();
-    return text.isEmpty || text == '00:00:00' || text == '0' || text.toLowerCase() == 'null';
+    return text.isEmpty || 
+           text == '00:00:00' || 
+           text == '00:00' || 
+           text == '0' || 
+           text == '-' || 
+           text.toLowerCase() == 'null' ||
+           text.toLowerCase() == 'n/a' ||
+           text.toLowerCase() == 'na' ||
+           text.toLowerCase() == 'none' ||
+           text.toLowerCase() == 'empty';
   }
 
   String _pickFirst(Map<String, dynamic> row, List<String> keys) {

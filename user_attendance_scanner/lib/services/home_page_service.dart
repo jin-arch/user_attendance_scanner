@@ -467,13 +467,18 @@ class HomePageService extends GetxService {
     controller.setScanning(true);
     debugPrint('[SCAN_LOOP] Starting scan loop...');
     
-    scanTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
+    scanTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
       if (!controller.isScanning.value || !_device.isConnected) return;
       
       try {
         final template = await _device.captureFingerprint();
         if (template != null && template.isNotEmpty) {
-          await _processFingerprintTemplate(template);
+          // Additional validation before processing
+          if (_isValidScanningState()) {
+            await _processFingerprintTemplate(template);
+          } else {
+            debugPrint('[SCAN_LOOP] Scanner not in valid state - ignoring template');
+          }
         }
       } catch (e) {
         debugPrint('[SCAN_LOOP] Capture error: $e');
@@ -491,11 +496,17 @@ class HomePageService extends GetxService {
   Future<void> _processFingerprintTemplate(Uint8List template) async {
     if (!isActiveRoute.value || isProcessingTemplate.value) return;
     
+    // Validate template before processing
+    if (!_isValidFingerprintTemplate(template)) {
+      debugPrint('[SCAN] Invalid fingerprint template - ignoring noise');
+      return;
+    }
+    
     final now = DateTime.now();
     if (lastTemplateHandledAt.value != null) {
       final diff = now.difference(lastTemplateHandledAt.value!);
-      if (diff.inMilliseconds < 1000) {
-        return; // Debounce rapid scans
+      if (diff.inMilliseconds < 2000) {
+        return; // Increased debounce to 2 seconds
       }
     }
     
@@ -521,6 +532,70 @@ class HomePageService extends GetxService {
     } finally {
       isProcessingTemplate.value = false;
     }
+  }
+
+  /// Validate fingerprint template to filter out noise and invalid data
+  bool _isValidFingerprintTemplate(Uint8List template) {
+    // Check template size - valid templates should have reasonable size
+    if (template.isEmpty || template.length < 100) {
+      return false;
+    }
+    
+    // Check for all zeros (empty/no data)
+    bool hasNonZero = false;
+    for (int i = 0; i < template.length; i++) {
+      if (template[i] != 0) {
+        hasNonZero = true;
+        break;
+      }
+    }
+    if (!hasNonZero) return false;
+    
+    // Check for repeated patterns (noise)
+    if (template.length > 10) {
+      int sameCount = 1;
+      for (int i = 1; i < template.length; i++) {
+        if (template[i] == template[i-1]) {
+          sameCount++;
+          if (sameCount > template.length * 0.8) {
+            return false; // Too much repetition, likely noise
+          }
+        } else {
+          sameCount = 1;
+        }
+      }
+    }
+    
+    return true;
+  }
+
+  /// Validate scanner state before processing templates
+  bool _isValidScanningState() {
+    // Check if device is still connected
+    if (!_device.isConnected) {
+      debugPrint('[SCAN_STATE] Device not connected');
+      return false;
+    }
+    
+    // Check if scanning is still active
+    if (!controller.isScanning.value) {
+      debugPrint('[SCAN_STATE] Scanning not active');
+      return false;
+    }
+    
+    // Check if route is still active
+    if (!isActiveRoute.value) {
+      debugPrint('[SCAN_STATE] Route not active');
+      return false;
+    }
+    
+    // Check if not currently processing a template
+    if (isProcessingTemplate.value) {
+      debugPrint('[SCAN_STATE] Already processing template');
+      return false;
+    }
+    
+    return true;
   }
 
   Future<void> _processRecognizedEmployee(EmployeeEntry employee) async {

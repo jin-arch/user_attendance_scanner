@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../controllers/logs_controller.dart';
+import '../services/sync_service.dart';
 
 class LogsPage extends StatelessWidget {
   const LogsPage({super.key, this.siteId});
@@ -48,7 +49,22 @@ class LogsPage extends StatelessWidget {
               ),
               IconButton(
                 icon: const Icon(Icons.refresh, color: Colors.white),
-                onPressed: controller.refreshLogs,
+                onPressed: () {
+                  controller.loadLogs();
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.sync, color: Colors.white),
+                onPressed: () async {
+                  await SyncService.syncAllWithDialog(
+                    context,
+                    siteId: siteId,
+                    onStatusUpdate: (status) {
+                      controller.setStatus(status);
+                    },
+                  );
+                  controller.loadLogs();
+                },
               ),
             ],
           ),
@@ -255,22 +271,42 @@ class LogsPage extends StatelessWidget {
                                     // Generate unique key for this log entry
                                     final logKey = '${log['employee_id']}_${log['timestamp']}_${log['type']}';
 
-                                    return Obx(() {
-                                      final inCooldown = controller.isLogInCooldown(logKey);
-
-                                      return ListTile(
+                                    return Dismissible(
+                                      key: Key(logKey),
+                                      direction: DismissDirection.endToStart,
+                                      background: Container(
+                                        color: Colors.green,
+                                        alignment: Alignment.centerRight,
+                                        padding: EdgeInsets.only(right: w * 0.04),
+                                        child: const Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.send, color: Colors.white, size: 24),
+                                            Text(
+                                              'Send to Server',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      confirmDismiss: (direction) async {
+                                        // Show confirmation dialog but never dismiss (always return false)
+                                        await _showSendToServerDialog(context, controller, log);
+                                        return false; // Never remove the item
+                                      },
+                                      child: ListTile(
                                             leading: CircleAvatar(
-                                              backgroundColor: inCooldown
-                                                  ? Colors.grey
-                                                  : isTimeIn
-                                                      ? Colors.green
-                                                      : Colors.orange,
+                                              backgroundColor: isTimeIn
+                                                  ? Colors.green
+                                                  : Colors.orange,
                                               child: Icon(
-                                                inCooldown
-                                                    ? Icons.timer_off
-                                                    : isTimeIn
-                                                        ? Icons.login
-                                                        : Icons.logout,
+                                                isTimeIn
+                                                    ? Icons.login
+                                                    : Icons.logout,
                                                 color: Colors.white,
                                               ),
                                             ),
@@ -281,10 +317,8 @@ class LogsPage extends StatelessWidget {
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               softWrap: false,
-                                              style: TextStyle(
-                                                color: inCooldown
-                                                    ? Colors.grey
-                                                    : Colors.white,
+                                              style: const TextStyle(
+                                                color: Colors.white,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),
@@ -297,9 +331,7 @@ class LogsPage extends StatelessWidget {
                                                   overflow: TextOverflow.ellipsis,
                                                   softWrap: false,
                                                   style: TextStyle(
-                                                    color: inCooldown
-                                                        ? Colors.grey.withOpacity(0.5)
-                                                        : Colors.white.withOpacity(0.7),
+                                                    color: Colors.white.withOpacity(0.7),
                                                   ),
                                                 ),
                                                 if (log['period'] != null)
@@ -309,22 +341,8 @@ class LogsPage extends StatelessWidget {
                                                     overflow: TextOverflow.ellipsis,
                                                     softWrap: false,
                                                     style: TextStyle(
-                                                      color: inCooldown
-                                                          ? Colors.grey.withOpacity(0.4)
-                                                          : Colors.white.withOpacity(0.6),
+                                                      color: Colors.white.withOpacity(0.6),
                                                       fontSize: 12,
-                                                    ),
-                                                  ),
-                                                if (inCooldown)
-                                                  Text(
-                                                    'Hidden - ${controller.formatCooldownTime(logKey)}',
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                    softWrap: false,
-                                                    style: const TextStyle(
-                                                      color: Colors.red,
-                                                      fontSize: 11,
-                                                      fontWeight: FontWeight.w600,
                                                     ),
                                                   ),
                                               ],
@@ -341,60 +359,38 @@ class LogsPage extends StatelessWidget {
                                                     overflow: TextOverflow.ellipsis,
                                                     softWrap: false,
                                                     style: TextStyle(
-                                                      color: inCooldown
-                                                          ? Colors.grey
-                                                          : isTimeIn
-                                                              ? Colors.green
-                                                              : Colors.orange,
+                                                      color: isTimeIn
+                                                          ? Colors.green
+                                                          : Colors.orange,
                                                       fontWeight: FontWeight.bold,
                                                     ),
                                                   ),
-                                                  if (!inCooldown)
-                                                    Text(
-                                                      controller.formatDate(log['timestamp']),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      softWrap: false,
-                                                      style: TextStyle(
-                                                        color: Colors.white.withOpacity(0.5),
-                                                        fontSize: 11,
-                                                      ),
+                                                  Text(
+                                                    controller.formatDate(log['timestamp']),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: Colors.white.withOpacity(0.5),
+                                                      fontSize: 11,
                                                     ),
-                                                  if (!inCooldown)
-                                                    Text(
-                                                      (log['time_only'] as String?) ??
-                                                          controller.formatTimestamp(log['timestamp']),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      softWrap: false,
-                                                      style: TextStyle(
-                                                        color: Colors.white.withOpacity(0.7),
-                                                        fontSize: 12,
-                                                      ),
-                                                    )
-                                                  else
-                                                    Text(
-                                                      controller.formatCooldownTime(logKey),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      softWrap: false,
-                                                      style: const TextStyle(
-                                                        color: Colors.red,
-                                                        fontSize: 10,
-                                                        fontWeight: FontWeight.w600,
-                                                      ),
+                                                  ),
+                                                  Text(
+                                                    (log['time_only'] as String?) ??
+                                                        controller.formatTimestamp(log['timestamp']),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: Colors.white.withOpacity(0.7),
+                                                      fontSize: 12,
                                                     ),
+                                                  ),
                                                 ],
                                               ),
                                             ),
-                                            onTap: inCooldown
-                                                ? null
-                                                : () {
-                                                    // Start cooldown when log is tapped
-                                                    controller.startLogCooldown(logKey);
-                                                  },
-                                      );
-                                    });
+                                      ),
+                                    );
                                   },
                                 ),
                               if (controller.isLoading.value)
@@ -421,6 +417,92 @@ class LogsPage extends StatelessWidget {
     );
   }
 
+  Future<bool> _showSendToServerDialog(BuildContext context, LogsController controller, Map<String, dynamic> log) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0A2240),
+          title: const Text(
+            'Send to Server',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Send this log entry to server?',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Employee: ${log['employee_name'] ?? 'Unknown'}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+              Text(
+                'ID: ${log['employee_id'] ?? 'N/A'}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+              Text(
+                'Type: ${log['type'] ?? 'Unknown'}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+              Text(
+                'Time: ${log['time_only'] ?? 'N/A'}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  color: Color(0xFF3FA9F5),
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+              ),
+              child: const Text(
+                'Send',
+                style: TextStyle(
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
   Widget _buildFilterChip(LogsController controller, String label) {
     final isSelected = controller.selectedFilter.value == label;
     return ChoiceChip(
@@ -437,3 +519,4 @@ class LogsPage extends StatelessWidget {
     );
   }
 }
+
