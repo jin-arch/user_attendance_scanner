@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import '../routes/app_routes.dart';
 import 'logs_page.dart';
 import 'database_page.dart';
+import 'employee_database_page.dart';
 
 class NavigationDrawer extends StatelessWidget {
   const NavigationDrawer({
@@ -163,7 +164,51 @@ class NavigationDrawer extends StatelessWidget {
                     );
                   },
                 ),
-                
+
+                // Employee Database Button (Pending Attendance Records)
+                ListTile(
+                  leading: const Icon(
+                    Icons.people_outline,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                  title: const Text(
+                    'Pending Records',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontFamily: 'Poppins',
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Offline attendance queue',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      fontSize: 12,
+                      fontFamily: 'Poppins',
+                    ),
+                  ),
+                  onTap: () {
+                    Get.back<void>();
+                    if (selectedSiteId != null && selectedSiteId!.isNotEmpty) {
+                      Get.to<void>(
+                        () => EmployeeDatabasePage(
+                          siteId: selectedSiteId!,
+                          siteName: 'Current Site',
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please select a site first'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                ),
+
                 // Database Button
                 ListTile(
                   leading: const Icon(
