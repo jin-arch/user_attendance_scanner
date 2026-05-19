@@ -710,7 +710,7 @@ class EnrollmentPage extends StatelessWidget {
     return Container(
       width: w * 0.20,
       padding: EdgeInsets.symmetric(
-        horizontal: w * 0.020,
+        horizontal: w * 0.016,
         vertical: h * 0.020,
       ),
       decoration: BoxDecoration(
@@ -745,8 +745,8 @@ class EnrollmentPage extends StatelessWidget {
             onTap: controller.cancelIdentificationMode,
             child: Container(
               padding: EdgeInsets.symmetric(
-                horizontal: w * 0.016,
-                vertical: h * 0.012,
+                horizontal: w * 0.012,
+                vertical: h * 0.010,
               ),
               decoration: BoxDecoration(
                 color: const Color(0xFF244D86),
@@ -755,15 +755,19 @@ class EnrollmentPage extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.keyboard, color: Colors.white, size: w * 0.014),
-                  SizedBox(width: w * 0.008),
-                  Text(
-                    'ENTER ID MANUALLY',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: w * 0.011,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                  Icon(Icons.keyboard, color: Colors.white, size: w * 0.013),
+                  SizedBox(width: w * 0.006),
+                  Flexible(
+                    child: Text(
+                      'ENTER ID',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: w * 0.010,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ],

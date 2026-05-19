@@ -73,22 +73,25 @@ class EnrollmentController extends GetxController {
 
   @override
   void onClose() {
-    idController.removeListener(_onFormChanged);
-    usernameController.removeListener(_onFormChanged);
-    idController.dispose();
-    usernameController.dispose();
-    _stopScanLoop();
-    _device.clearCachedCapture();
+    try {
+      idController.removeListener(_onFormChanged);
+      usernameController.removeListener(_onFormChanged);
+      idController.dispose();
+      usernameController.dispose();
+      _stopScanLoop();
+      _device.clearCachedCapture();
 
-    deviceInitialized.dispose();
-    isScanning.dispose();
-    lastFingerprintImage.dispose();
-    showForm.dispose();
-    selfieImageBytes.dispose();
-    isIdentifyingEmployee.dispose();
-    leftThumbScans.dispose();
-    rightThumbScans.dispose();
-
+      deviceInitialized.dispose();
+      isScanning.dispose();
+      lastFingerprintImage.dispose();
+      showForm.dispose();
+      selfieImageBytes.dispose();
+      isIdentifyingEmployee.dispose();
+      leftThumbScans.dispose();
+      rightThumbScans.dispose();
+    } catch (e) {
+      debugPrint('[ENROLLMENT] Error in onClose: $e');
+    }
     super.onClose();
   }
 
@@ -236,9 +239,13 @@ class EnrollmentController extends GetxController {
   }
 
   void _stopScanLoop() {
-    _scanTimer?.cancel();
-    _scanTimer = null;
-    isScanning.value = false;
+    try {
+      _scanTimer?.cancel();
+      _scanTimer = null;
+      isScanning.value = false;
+    } catch (e) {
+      debugPrint('[ENROLLMENT] Error stopping scan loop: $e');
+    }
   }
 
   Future<void> _onFingerprintCaptured(Uint8List template) async {

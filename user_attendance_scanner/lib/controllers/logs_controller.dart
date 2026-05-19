@@ -69,9 +69,13 @@ class LogsController extends GetxController {
 
   @override
   void onClose() {
-    searchController.dispose();
-    _cooldownCheckTimer?.cancel();
-    _afkTimer?.cancel();
+    try {
+      searchController.dispose();
+      _cooldownCheckTimer?.cancel();
+      _afkTimer?.cancel();
+    } catch (e) {
+      debugPrint('[LOGS_CONTROLLER] Error in onClose: $e');
+    }
     super.onClose();
   }
   
@@ -150,7 +154,7 @@ class LogsController extends GetxController {
   /// Start periodic timer to check and update cooldowns
   void _startCooldownCheckTimer() {
     _cooldownCheckTimer?.cancel();
-    _cooldownCheckTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _cooldownCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       // Check if any cooldowns have expired
       final expiredKeys = <String>[];
       for (final entry in logCooldownMap.entries) {

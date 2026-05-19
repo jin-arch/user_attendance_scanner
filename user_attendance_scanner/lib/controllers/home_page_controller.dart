@@ -59,8 +59,12 @@ class HomePageController extends GetxController {
 
   @override
   void onClose() {
-    _clockTimer?.cancel();
-    _syncTimer?.cancel();
+    try {
+      _clockTimer?.cancel();
+      _syncTimer?.cancel();
+    } catch (e) {
+      debugPrint('[HOME] Error in onClose: $e');
+    }
     super.onClose();
   }
 

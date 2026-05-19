@@ -41,32 +41,7 @@ class LogsPage extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.download, color: Colors.white),
-                onPressed: controller.fetchAndSaveTimeLogsFromApi,
-                tooltip: 'Fetch time logs from server',
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                onPressed: () {
-                  controller.loadLogs();
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.sync, color: Colors.white),
-                onPressed: () async {
-                  await SyncService.syncAllWithDialog(
-                    context,
-                    siteId: siteId,
-                    onStatusUpdate: (status) {
-                      controller.setStatus(status);
-                    },
-                  );
-                  controller.loadLogs();
-                },
-              ),
-            ],
+            
           ),
           body: Container(
             decoration: const BoxDecoration(

@@ -62,7 +62,7 @@ class DashboardPageController extends GetxController {
     });
 
     _afkTimer?.cancel();
-    _afkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _afkTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final lastActivity = _lastActivityTime;
       if (lastActivity == null) return;
       final elapsed = DateTime.now().difference(lastActivity).inSeconds;
@@ -74,12 +74,16 @@ class DashboardPageController extends GetxController {
   }
 
   void stopSession() {
-    _afkTimer?.cancel();
-    _afkTimer = null;
-    _clockTimer?.cancel();
-    _clockTimer = null;
-    _scanTimer?.cancel();
-    _scanTimer = null;
+    try {
+      _afkTimer?.cancel();
+      _afkTimer = null;
+      _clockTimer?.cancel();
+      _clockTimer = null;
+      _scanTimer?.cancel();
+      _scanTimer = null;
+    } catch (e) {
+      print('[DASHBOARD] Error stopping session: $e');
+    }
   }
 
   void resetAfkTimer() {
@@ -192,9 +196,16 @@ class DashboardPageController extends GetxController {
     }
 
     _scanTimer?.cancel();
-    _scanTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _scanTimer = Timer.periodic(const Duration(milliseconds: 2000), (_) {
       // Only scan if device is connected and scanning is active
       if (!isScanning()) return;
+      
+      // Prevent duplicate scans within 2 seconds
+      final now = DateTime.now();
+      if (_lastTemplateHandledAt != null && 
+          now.difference(_lastTemplateHandledAt!).inMilliseconds < 2000) {
+        return;
+      }
       
       _captureAndMatch(
         device: device,
@@ -257,6 +268,7 @@ class DashboardPageController extends GetxController {
     if (result.template != null) {
       _scanTimer?.cancel();
       _scanTimer = null;
+      _lastTemplateHandledAt = DateTime.now();
       onTemplateReady(result.template!);
     }
   }
@@ -322,7 +334,8 @@ class DashboardPageController extends GetxController {
     print('[DASHBOARD_LOAD] ===== LOADING HISTORY =====');
     print('[DASHBOARD_LOAD] siteId="$siteId" employeeId="$employeeId"');
 
-    await LocalDb.debugDumpAllTimelogs();
+    // Commented out debug dump to improve performance
+    // await LocalDb.debugDumpAllTimelogs();
 
     final history = await LocalDb.getTimelogHistoryForEmployee(
       siteId: siteId,
@@ -331,9 +344,10 @@ class DashboardPageController extends GetxController {
     );
 
     print('[DASHBOARD_LOAD] Loaded ${history.length} rows for employeeId="$employeeId" on siteId="$siteId"');
-    for (final row in history) {
-      print('[DASHBOARD_LOAD] Row raw: $row');
-    }
+    // Commented out row-by-row debug printing to improve performance
+    // for (final row in history) {
+    //   print('[DASHBOARD_LOAD] Row raw: $row');
+    // }
 
     return history;
   }
@@ -550,11 +564,9 @@ class DashboardPageController extends GetxController {
         return 'ALREADY OUT - Come back tomorrow';
       }
       if (errorMsg.contains('ALREADY_IN')) {
-        print('[DASHBOARD_RECORD] Returning: ALREADY IN');
-        return 'ALREADY IN';
+        return 'ALREADY IN - Wait 5 minutes';
       }
-      print('[DASHBOARD_RECORD] Returning: TIME IN UNSUCCESSFUL');
-      return 'TIME IN UNSUCCESSFUL';
+      return 'ERROR: $errorMsg';
     }
   }
 
@@ -563,176 +575,177 @@ class DashboardPageController extends GetxController {
     required String siteId,
     required DateTime now,
   }) async {
-    final date = DateTimeFormats.dateOnly(now);
-    final time = DateTimeFormats.timeOnly(now);
+    try {
+      final date = DateTimeFormats.dateOnly(now);
+      final time = DateTimeFormats.timeOnly(now);
 
-    print('[TIMELOG] ===== START employeeId=$employeeId siteId=$siteId date=$date =====');
+      print('[TIMELOG] ===== START employeeId=$employeeId siteId=$siteId date=$date =====');
 
-    await LocalDb.debugDumpAllTimelogs();
+      // Commented out debug dump to improve performance
+      // await LocalDb.debugDumpAllTimelogs();
 
-    final cached = await LocalDb.getLatestTimelogForEmployee(
-      siteId: siteId,
-      employeeId: employeeId,
-    );
+      final cached = await LocalDb.getLatestTimelogForEmployee(
+        siteId: siteId,
+        employeeId: employeeId,
+      );
 
-    print('[TIMELOG] cached from DB: ${cached != null ? "FOUND" : "NULL"}');
-    if (cached != null) {
-      print('[TIMELOG] cached keys: ${cached.keys}');
-      print('[TIMELOG] cached full data: $cached');
-      print('[TIMELOG] timeInMorning value: "${cached['timeInMorning']}"');
-    }
+      print('[TIMELOG] cached from DB: ${cached != null ? "FOUND" : "NULL"}');
+      // Commented out verbose debug printing to improve performance
+      // if (cached != null) {
+      //   print('[TIMELOG] cached keys: ${cached.keys}');
+      //   print('[TIMELOG] cached full data: $cached');
+      //   print('[TIMELOG] timeInMorning value: "${cached['timeInMorning']}"');
+      // }
 
-    final cachedDate = cached?['timeLogDate']?.toString() ?? cached?['timelog']?.toString() ?? '';
-    final isToday = cachedDate == date;
-    print('[TIMELOG] cachedDate=$cachedDate, today=$date, isToday=$isToday');
+      final cachedDate = cached?['timeLogDate']?.toString() ?? cached?['timelog']?.toString() ?? '';
+      final isToday = cachedDate == date;
+      print('[TIMELOG] cachedDate=$cachedDate, today=$date, isToday=$isToday');
 
-    final todayCache = isToday ? cached : null;
+      final todayCache = isToday ? cached : null;
 
-    if (cached != null && !isToday) {
-      final recentTimeIn = cached['timeInMorning']?.toString();
-      if (recentTimeIn != null && recentTimeIn.isNotEmpty && recentTimeIn != '00:00:00') {
-        print('[TIMELOG] FALLBACK: Found recent timeInMorning, checking if within 5 minutes');
-        final recentDate = cached['timeLogDate']?.toString() ?? cached['timelog']?.toString() ?? '';
-        if (recentDate.isNotEmpty) {
-          try {
-            final recentDateTime = DateTime.tryParse('${recentDate}T$recentTimeIn');
-            if (recentDateTime != null) {
-              final diffMinutes = now.difference(recentDateTime).inMinutes;
-              print('[TIMELOG] FALLBACK: diffMinutes=$diffMinutes');
-              if (diffMinutes < 30) {
-                print('[TIMELOG] FALLBACK: THROWING ALREADY_IN (recent scan within 30 min)');
-                throw Exception('ALREADY_IN');
+      if (cached != null && !isToday) {
+        final recentTimeIn = cached['timeInMorning']?.toString();
+        if (recentTimeIn != null && recentTimeIn.isNotEmpty && recentTimeIn != '00:00:00') {
+          print('[TIMELOG] FALLBACK: Found recent timeInMorning, checking if within 5 minutes');
+          final recentDate = cached['timeLogDate']?.toString() ?? cached['timelog']?.toString() ?? '';
+          if (recentDate.isNotEmpty) {
+            try {
+              final recentDateTime = DateTime.tryParse('${recentDate}T$recentTimeIn');
+              if (recentDateTime != null) {
+                final diffMinutes = now.difference(recentDateTime).inMinutes;
+                print('[TIMELOG] FALLBACK: diffMinutes=$diffMinutes');
+                if (diffMinutes < 30) {
+                  print('[TIMELOG] FALLBACK: THROWING ALREADY_IN (recent scan within 30 min)');
+                  throw Exception('ALREADY_IN');
+                }
               }
+            } catch (e) {
+              print('[TIMELOG] FALLBACK: Error parsing recent time: $e');
             }
-          } catch (e) {
-            print('[TIMELOG] FALLBACK: Error parsing recent time: $e');
           }
         }
       }
-    }
 
-    final timeLogId = (todayCache?['timelogID'] ?? todayCache?['remark'] ?? '').toString();
-    final remarks = (todayCache?['remarks'] ?? todayCache?['remark'] ?? '').toString();
-    final schedule = (todayCache?['schedule'] ?? todayCache?['schedCode'] ?? '').toString();
+      final timeLogId = (todayCache?['timelogID'] ?? todayCache?['remark'] ?? '').toString();
+      final remarks = (todayCache?['remarks'] ?? todayCache?['remark'] ?? '').toString();
+      final schedule = (todayCache?['schedule'] ?? todayCache?['schedCode'] ?? '').toString();
 
-    print('[DASHBOARD_TIMELOG] Raw cached values (today only):');
-    print('  timeInMorning: ${todayCache?['timeInMorning']}');
-    print('  timeOutMorning: ${todayCache?['timeOutMorning']}');
-    print('  timeInAfternoon: ${todayCache?['timeInAfternoon']}');
-    print('  timeOutAfternoon: ${todayCache?['timeOutAfternoon']}');
+      // Commented out verbose debug printing to improve performance
+      // print('[DASHBOARD_TIMELOG] Raw cached values (today only):');
+      // print('  timeInMorning: ${todayCache?['timeInMorning']}');
+      // print('  timeOutMorning: ${todayCache?['timeOutMorning']}');
+      // print('  timeInAfternoon: ${todayCache?['timeInAfternoon']}');
+      // print('  timeOutAfternoon: ${todayCache?['timeOutAfternoon']}');
 
-    final rawInMorning = todayCache?['timeInMorning']?.toString() ?? '';
-    final rawOutMorning = todayCache?['timeOutMorning']?.toString() ?? '';
-    final rawInAfternoon = todayCache?['timeInAfternoon']?.toString() ?? '';
-    final rawOutAfternoon = todayCache?['timeOutAfternoon']?.toString() ?? '';
+      final rawInMorning = todayCache?['timeInMorning']?.toString() ?? '';
+      final rawOutMorning = todayCache?['timeOutMorning']?.toString() ?? '';
+      final rawInAfternoon = todayCache?['timeInAfternoon']?.toString() ?? '';
+      final rawOutAfternoon = todayCache?['timeOutAfternoon']?.toString() ?? '';
 
-    print('[DASHBOARD_TIMELOG] Raw strings: inM="$rawInMorning", outM="$rawOutMorning", inA="$rawInAfternoon", outA="$rawOutAfternoon"');
-    print('[DASHBOARD_TIMELOG] _isBlank checks: inM=${_isBlank(rawInMorning)}, outM=${_isBlank(rawOutMorning)}, inA=${_isBlank(rawInAfternoon)}, outA=${_isBlank(rawOutAfternoon)}');
-    
-    // Additional debug: Check all possible time field names
-    print('[DASHBOARD_TIMELOG] All todayCache keys: ${todayCache?.keys.toList()}');
-    print('[DASHBOARD_TIMELOG] todayCache full data: $todayCache');
+      // Commented out verbose debug printing to improve performance
+      // print('[DASHBOARD_TIMELOG] Raw strings: inM="$rawInMorning", outM="$rawOutMorning", inA="$rawInAfternoon", outA="$rawOutAfternoon"');
+      // print('[DASHBOARD_TIMELOG] _isBlank checks: inM=${_isBlank(rawInMorning)}, outM=${_isBlank(rawOutMorning)}, inA=${_isBlank(rawInAfternoon)}, outA=${_isBlank(rawOutAfternoon)}');
+      // 
+      // // Additional debug: Check all possible time field names
+      // print('[DASHBOARD_TIMELOG] All todayCache keys: ${todayCache?.keys.toList()}');
+      // print('[DASHBOARD_TIMELOG] todayCache full data: $todayCache');
 
-    final existingInMorning = _isBlank(rawInMorning) ? null : rawInMorning;
-    final existingOutMorning = _isBlank(rawOutMorning) ? null : rawOutMorning;
-    final existingInAfternoon = _isBlank(rawInAfternoon) ? null : rawInAfternoon;
-    final existingOutAfternoon = _isBlank(rawOutAfternoon) ? null : rawOutAfternoon;
+      final existingInMorning = _isBlank(rawInMorning) ? null : rawInMorning;
+      final existingOutMorning = _isBlank(rawOutMorning) ? null : rawOutMorning;
+      final existingInAfternoon = _isBlank(rawInAfternoon) ? null : rawInAfternoon;
+      final existingOutAfternoon = _isBlank(rawOutAfternoon) ? null : rawOutAfternoon;
 
-    print('[DASHBOARD_TIMELOG] Parsed existing values: inM=$existingInMorning, outM=$existingOutMorning, inA=$existingInAfternoon, outA=$existingOutAfternoon');
+      // Commented out verbose debug printing to improve performance
+      // print('[DASHBOARD_TIMELOG] Parsed existing values: inM=$existingInMorning, outM=$existingOutMorning, inA=$existingInAfternoon, outA=$existingOutAfternoon');
 
-    if (existingOutMorning != null || existingOutAfternoon != null) {
-      print('[DASHBOARD_TIMELOG] THROWING ALREADY_OUT_TODAY');
-      throw Exception('ALREADY_OUT_TODAY');
-    }
-
-    DateTime? lastTimeInForCooldown;
-    if (existingInMorning != null && existingOutMorning == null) {
-      lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInMorning');
-    } else if (existingInAfternoon != null && existingOutAfternoon == null) {
-      lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInAfternoon');
-    }
-
-    if (lastTimeInForCooldown != null) {
-      final diffMinutes = now.difference(lastTimeInForCooldown).inMinutes;
-      print('[DASHBOARD_TIMELOG] Time since last time-in: $diffMinutes minutes');
-      if (diffMinutes < 5) {
-        print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (within 5 min cooldown)');
-        throw Exception('ALREADY_IN');
+      if (existingOutMorning != null || existingOutAfternoon != null) {
+        print('[DASHBOARD_TIMELOG] THROWING ALREADY_OUT_TODAY');
+        throw Exception('ALREADY_OUT_TODAY');
       }
-    }
 
-    // Additional check: If user has any time in today without corresponding time out
-    if ((existingInMorning != null && existingOutMorning == null) || 
-        (existingInAfternoon != null && existingOutAfternoon == null)) {
-      print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (has time in without time out)');
-      throw Exception('ALREADY_IN');
-    }
+      DateTime? lastTimeInForCooldown;
+      if (existingInMorning != null && existingOutMorning == null) {
+        lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInMorning');
+      } else if (existingInAfternoon != null && existingOutAfternoon == null) {
+        lastTimeInForCooldown = DateTime.tryParse('${date}T$existingInAfternoon');
+      }
 
-    print('[DASHBOARD_TIMELOG] Decision path check: existingInMorning=$existingInMorning, existingOutMorning=$existingOutMorning');
+      if (lastTimeInForCooldown != null) {
+        final diffMinutes = now.difference(lastTimeInForCooldown).inMinutes;
+        print('[DASHBOARD_TIMELOG] Time since last time-in: $diffMinutes minutes');
+        if (diffMinutes < 5) {
+          print('[DASHBOARD_TIMELOG] THROWING ALREADY_IN (within 5 min cooldown)');
+          throw Exception('ALREADY_IN');
+        }
+      }
 
-    if (existingInMorning == null) {
-      print('[DASHBOARD_TIMELOG] DECISION: Returning IN_AM');
+      // Commented out verbose debug printing to improve performance
+      // print('[DASHBOARD_TIMELOG] Decision path check: existingInMorning=$existingInMorning, existingOutMorning=$existingOutMorning');
+
+      if (existingInMorning == null) {
+        print('[DASHBOARD_TIMELOG] DECISION: Returning IN_AM');
+        return _PendingTimeLog(
+          timeLogId: timeLogId,
+          timeLogDate: date,
+          remarks: remarks,
+          schedule: schedule,
+          code: 'IN_AM',
+          timeInMorning: time,
+          timeOutMorning: existingOutMorning,
+          timeInAfternoon: existingInAfternoon,
+          timeOutAfternoon: existingOutAfternoon,
+        );
+      }
+      if (existingOutMorning == null) {
+        print('[DASHBOARD_TIMELOG] Decision: Returning OUT_AM because existingOutMorning is null');
+        return _PendingTimeLog(
+          timeLogId: timeLogId,
+          timeLogDate: date,
+          remarks: remarks,
+          schedule: schedule,
+          code: 'OUT_AM',
+          timeInMorning: existingInMorning,
+          timeOutMorning: time,
+          timeInAfternoon: existingInAfternoon,
+          timeOutAfternoon: existingOutAfternoon,
+        );
+      }
+      if (existingInAfternoon == null) {
+        print('[DASHBOARD_TIMELOG] Returning IN_PM');
+        return _PendingTimeLog(
+          timeLogId: timeLogId,
+          timeLogDate: date,
+          remarks: remarks,
+          schedule: schedule,
+          code: 'IN_PM',
+          timeInMorning: existingInMorning,
+          timeOutMorning: existingOutMorning,
+          timeInAfternoon: time,
+          timeOutAfternoon: existingOutAfternoon,
+        );
+      }
+
+      print('[DASHBOARD_TIMELOG] Returning OUT_PM');
       return _PendingTimeLog(
         timeLogId: timeLogId,
         timeLogDate: date,
         remarks: remarks,
         schedule: schedule,
-        code: 'IN_AM',
-        timeInMorning: time,
+        code: 'OUT_PM',
+        timeInMorning: existingInMorning,
         timeOutMorning: existingOutMorning,
         timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
+        timeOutAfternoon: time,
       );
+    } catch (e) {
+      print('[TIMELOG] ERROR in _buildPendingTimeLog: $e');
+      rethrow;
     }
-    if (existingOutMorning == null) {
-      print('[DASHBOARD_TIMELOG] Decision: Returning OUT_AM because existingOutMorning is null');
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'OUT_AM',
-        timeInMorning: existingInMorning,
-        timeOutMorning: time,
-        timeInAfternoon: existingInAfternoon,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-    if (existingInAfternoon == null) {
-      print('[DASHBOARD_TIMELOG] Returning IN_PM');
-      return _PendingTimeLog(
-        timeLogId: timeLogId,
-        timeLogDate: date,
-        remarks: remarks,
-        schedule: schedule,
-        code: 'IN_PM',
-        timeInMorning: existingInMorning,
-        timeOutMorning: existingOutMorning,
-        timeInAfternoon: time,
-        timeOutAfternoon: existingOutAfternoon,
-      );
-    }
-
-    print('[DASHBOARD_TIMELOG] Returning OUT_PM');
-    return _PendingTimeLog(
-      timeLogId: timeLogId,
-      timeLogDate: date,
-      remarks: remarks,
-      schedule: schedule,
-      code: 'OUT_PM',
-      timeInMorning: existingInMorning,
-      timeOutMorning: existingOutMorning,
-      timeInAfternoon: existingInAfternoon,
-      timeOutAfternoon: time,
-    );
   }
 
   bool _isBlank(String value) {
     final text = value.trim();
     return text.isEmpty || 
-           text == '00:00:00' || 
-           text == '00:00' || 
-           text == '0' || 
            text == '-' || 
            text.toLowerCase() == 'null' ||
            text.toLowerCase() == 'n/a' ||
