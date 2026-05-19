@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:user_attendance_scanner/views/dashboard_page.dart';
 import '../animations/dashboard_rising_fade_particle.dart';
 import '../controllers/enrollment_controller.dart';
+import '../controllers/offline_mode_controller.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
 
 class EnrollmentPage extends StatelessWidget {
@@ -50,24 +51,46 @@ class EnrollmentPage extends StatelessWidget {
       }
     };
 
+    // Pause inactivity timer while on enrollment page
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        final offlineModeController = Get.find<OfflineModeController>();
+        offlineModeController.setInDashboardOrEnrollment(true);
+      } catch (e) {
+        debugPrint('[ENROLLMENT] OfflineModeController not found: $e');
+      }
+    });
+
     final size = MediaQuery.sizeOf(context);
     final w = size.width;
     final h = size.height;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      resizeToAvoidBottomInset: true,
-      body: Container(
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/Main BG.png'),
-            fit: BoxFit.cover,
+    return PopScope(
+      onPopInvoked: (didPop) {
+        if (didPop) {
+          // Resume inactivity timer when leaving enrollment page
+          try {
+            final offlineModeController = Get.find<OfflineModeController>();
+            offlineModeController.setInDashboardOrEnrollment(false);
+          } catch (e) {
+            debugPrint('[ENROLLMENT] OfflineModeController not found on pop: $e');
+          }
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        resizeToAvoidBottomInset: true,
+        body: Container(
+          decoration: const BoxDecoration(
+            image: DecorationImage(
+              image: AssetImage('assets/images/Main BG.png'),
+              fit: BoxFit.cover,
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.all(w * 0.020),
-            child: Stack(
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.all(w * 0.020),
+              child: Stack(
               children: [
                 // Particle FX layer
                 Positioned.fill(
@@ -1143,6 +1166,7 @@ class EnrollmentPage extends StatelessWidget {
             ],
           ),
         ],
+      ),
       ),
     );
   }

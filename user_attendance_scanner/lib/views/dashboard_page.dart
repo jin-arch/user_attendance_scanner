@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import '../animations/dashboard_rising_fade_particle.dart';
 import '../constants/date_time_formats.dart';
 import '../controllers/dashboard_page_controller.dart';
+import '../controllers/offline_mode_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
 import '../routes/app_routes.dart';
 import '../routes/route_observer.dart';
@@ -106,17 +107,26 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   @override
   void initState() {
     super.initState();
-    
+
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
     _dashboardController = Get.find<DashboardPageController>();
-    
+
+    // Pause inactivity timer while on dashboard
+    try {
+      final offlineModeController = Get.find<OfflineModeController>();
+      offlineModeController.setInDashboardOrEnrollment(true);
+    } catch (e) {
+      // OfflineModeController might not be initialized yet
+      debugPrint('[DASHBOARD] OfflineModeController not found: $e');
+    }
+
     // Update siteId in controller if available
     if (widget.siteId != null) {
       // Re-initialize controller with siteId if needed
       // For now, we'll use a different approach - pass siteId to methods directly
     }
-    
+
     _dashboardController.setRouteActive(true);
     _dashboardController.attachAndroidTemplateCallback(
       device: _device,
@@ -247,6 +257,15 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       routeObserver.unsubscribe(this);
     }
     _dashboardController.stopSession();
+
+    // Resume inactivity timer when leaving dashboard
+    try {
+      final offlineModeController = Get.find<OfflineModeController>();
+      offlineModeController.setInDashboardOrEnrollment(false);
+    } catch (e) {
+      debugPrint('[DASHBOARD] OfflineModeController not found on dispose: $e');
+    }
+
     super.dispose();
   }
 

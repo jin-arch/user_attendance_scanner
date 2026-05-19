@@ -11,6 +11,7 @@ import '../services/local_db.dart';
 import '../services/site_repository_impl.dart';
 import '../controllers/home_page_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
+import '../controllers/offline_mode_controller.dart';
 import '../controllers/home_page_bridge.dart';
 import '../services/device_service.dart';
 import '../services/employee_repository.dart';
@@ -21,6 +22,7 @@ import '../models/site_model.dart';
 import '../utils/color_with_values_compat.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../routes/route_observer.dart';
+import '../widgets/offline_mode_selection_modal.dart';
 import 'loading_page.dart';
 import 'success_loading_page.dart';
 import 'dashboard_page.dart';
@@ -108,6 +110,9 @@ class _HomePageController extends GetxController with RouteAware {
 
   final ZKTecoUSB _device = ZKTecoUSB();
   late final LegacyHomePageController _controller;
+  late final OfflineModeController _offlineModeController;
+  bool _isInitialModeSelection = true;
+  bool _modeSelectionShown = false;
 
   // Scan loop state
   Timer? _scanTimer;
@@ -141,6 +146,7 @@ class _HomePageController extends GetxController with RouteAware {
 
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
+    _offlineModeController = Get.put(OfflineModeController());
 
     _loadDeviceSiteMap();
 
@@ -182,6 +188,8 @@ class _HomePageController extends GetxController with RouteAware {
     // Try to auto-connect if already have site selected
     _autoConnectIfSiteSelected();
 
+    // Setup offline mode listener for WiFi detection
+    _setupOfflineModeListener();
   }
 
   /// Load previously saved site preference from database
@@ -515,6 +523,17 @@ class _HomePageController extends GetxController with RouteAware {
       'Selected site: ${_siteNameById(selected) ?? selected}',
     );
 
+    // Initialize offline mode with selected site
+    _offlineModeController.setSiteId(selected);
+
+    // Step 2.5 - Show mode selection modal (Online/Offline)
+    if (!mounted) return;
+    if (_isInitialModeSelection) {
+      _isInitialModeSelection = false;
+      await _showModeSelectionDialogAwaitable();
+      if (!mounted) return;
+    }
+
     // Step 3 - NOW show the loading screen while connecting + syncing data
     if (!mounted) return;
     final progress = ValueNotifier<double>(0.0);
@@ -831,8 +850,72 @@ class _HomePageController extends GetxController with RouteAware {
     _setLoadingProgress(progress, 0.82);
   }
 
-  
-  Widget build(BuildContext context) {
+  void _setupOfflineModeListener() {
+    _offlineModeController.showModeSelector.listen((show) {
+      if (show && !_modeSelectionShown) {
+        _modeSelectionShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _selectedSiteId != null) {
+            _showModeSelectionModal();
+          }
+        });
+      }
+    });
+  }
+
+  void _showModeSelectionModal() {
+    if (!mounted || _context == null) return;
+
+    showDialog<void>(
+      context: _context!,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return OfflineModeSelectionModal(
+          onOnlineSelected: () {
+            _offlineModeController.startOnlineMode();
+            _modeSelectionShown = false;
+            Navigator.pop(dialogContext);
+          },
+          onOfflineSelected: () {
+            _offlineModeController.startOfflineMode();
+            _modeSelectionShown = false;
+            Navigator.pop(dialogContext);
+          },
+          hasWiFi: _offlineModeController.hasWiFi.value,
+          siteNameDisplay: _selectedSiteId,
+        );
+      },
+    );
+  }
+
+  void _recordInteraction() {
+    _offlineModeController.recordInteraction();
+  }
+
+  Future<void> _showModeSelectionDialogAwaitable() async {
+    if (!mounted || _context == null || _selectedSiteId == null) return;
+
+    return showDialog<void>(
+      context: _context!,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return OfflineModeSelectionModal(
+          onOnlineSelected: () {
+            _offlineModeController.startOnlineMode();
+            Navigator.pop(dialogContext);
+          },
+          onOfflineSelected: () {
+            _offlineModeController.startOfflineMode();
+            Navigator.pop(dialogContext);
+          },
+          hasWiFi: _offlineModeController.hasWiFi.value,
+          siteNameDisplay: _selectedSiteId,
+        );
+      },
+    );
+  }
+
+
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
 
