@@ -18,6 +18,11 @@ abstract class DeviceService {
   
   /// Match fingerprint template against employee database
   Future<ScanResult> matchFingerprint(Uint8List template, List<Employee> employees);
+
+  /// Identify finger against templates registered on the device (home-page flow).
+  Future<({int? fingerId, String? fidRaw})> identifyOnDevice({
+    Uint8List? capturedTemplate,
+  });
   
   /// Register employee fingerprint on device
   Future<bool> registerFingerprint(int fingerId, Uint8List template);

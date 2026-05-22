@@ -5,6 +5,7 @@ class Employee {
   final String id;
   final String name;
   final String siteId;
+  final int? fid;
   final Uint8List? fingerTemplate;
   final DateTime? enrolledAt;
 
@@ -12,6 +13,7 @@ class Employee {
     required this.id,
     required this.name,
     required this.siteId,
+    this.fid,
     this.fingerTemplate,
     this.enrolledAt,
   });
@@ -32,6 +34,9 @@ class Employee {
       id: json['employee_id']?.toString() ?? json['id']?.toString() ?? '',
       name: json['employee_name']?.toString() ?? json['name']?.toString() ?? '',
       siteId: json['site_id']?.toString() ?? '',
+      fid: json['fid'] is int
+          ? json['fid'] as int
+          : int.tryParse(json['fid']?.toString() ?? ''),
       fingerTemplate: parsedTemplate,
       enrolledAt: json['enrolled_at'] != null
           ? DateTime.tryParse(json['enrolled_at']?.toString() ?? '')
@@ -53,6 +58,7 @@ class Employee {
     String? id,
     String? name,
     String? siteId,
+    int? fid,
     Uint8List? fingerTemplate,
     DateTime? enrolledAt,
   }) {
@@ -60,6 +66,7 @@ class Employee {
       id: id ?? this.id,
       name: name ?? this.name,
       siteId: siteId ?? this.siteId,
+      fid: fid ?? this.fid,
       fingerTemplate: fingerTemplate ?? this.fingerTemplate,
       enrolledAt: enrolledAt ?? this.enrolledAt,
     );

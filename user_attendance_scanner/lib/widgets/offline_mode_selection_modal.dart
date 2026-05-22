@@ -24,7 +24,6 @@ class OfflineModeSelectionModal extends StatelessWidget {
       onWillPop: () async => false,
       child: Dialog(
         backgroundColor: Colors.transparent,
-        barrierDismissible: false,
         child: Container(
           constraints: BoxConstraints(maxWidth: w * 0.50),
           decoration: BoxDecoration(

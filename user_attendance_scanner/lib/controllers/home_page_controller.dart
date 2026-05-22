@@ -86,6 +86,20 @@ class HomePageController extends GetxController {
       isLoadingSites.value = true;
       errorMessage.value = '';
       
+      // OFFLINE-FIRST: Try cached sites first
+      final cachedSites = await _siteRepository.getCachedSites();
+      if (cachedSites.isNotEmpty) {
+        debugPrint('[HOME_CONTROLLER] Loaded ${cachedSites.length} sites from OFFLINE cache');
+        sites.value = cachedSites;
+        
+        if (selectedSite.value == null) {
+          await selectSite(cachedSites.first);
+        }
+        return;
+      }
+      
+      // Fallback to API if cache is empty
+      debugPrint('[HOME_CONTROLLER] Cache empty, fetching from API');
       final fetchedSites = await _siteRepository.fetchSites();
       sites.value = fetchedSites;
       
@@ -94,6 +108,7 @@ class HomePageController extends GetxController {
       }
     } catch (e) {
       errorMessage.value = 'Failed to load sites: $e';
+      debugPrint('[HOME_CONTROLLER] Error loading sites: $e');
       // Try cached sites as fallback
       final cachedSites = await _siteRepository.getCachedSites();
       sites.value = cachedSites;

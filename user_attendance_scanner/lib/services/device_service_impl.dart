@@ -55,7 +55,12 @@ class DeviceServiceImpl implements DeviceService {
         // used when saving employees locally.
         final res = await _device.identifyFingerprint();
         if (res.found && res.fid != null) {
-          final matched = employees.where((e) => _computeFid(e.id).toString() == res.fid).toList();
+          final fidText = res.fid!.trim();
+          final matched = employees.where((e) {
+            final enrolledFid = e.fid?.toString();
+            if (enrolledFid != null && enrolledFid == fidText) return true;
+            return _computeFid(e.id).toString() == fidText;
+          }).toList();
           if (matched.isNotEmpty) {
             final confidence = res.score == null ? null : (res.score! / 100.0).clamp(0.0, 1.0);
             return ScanResult.success(
@@ -104,6 +109,56 @@ class DeviceServiceImpl implements DeviceService {
     final digits = employeeId.replaceAll(RegExp(r'\D'), '');
     final normalized = digits.length > 8 ? digits.substring(digits.length - 8) : digits;
     return int.tryParse(normalized) ?? (employeeId.hashCode.abs() % 999997 + 1);
+  }
+
+  /// Same FID parsing used by the home scanner.
+  static int? parseFingerId(String? rawFid) {
+    if (rawFid == null) return null;
+    final normalized = rawFid.trim();
+    if (normalized.isEmpty) return null;
+
+    final direct = int.tryParse(normalized);
+    if (direct != null) return direct;
+
+    if (normalized.contains('.')) {
+      final beforeDot = normalized.split('.').first.trim();
+      final parsed = int.tryParse(beforeDot);
+      if (parsed != null) return parsed;
+    }
+
+    final digitsMatch = RegExp(r'\d+').firstMatch(normalized);
+    if (digitsMatch != null) {
+      return int.tryParse(digitsMatch.group(0)!);
+    }
+    return null;
+  }
+
+  @override
+  Future<({int? fingerId, String? fidRaw})> identifyOnDevice({
+    Uint8List? capturedTemplate,
+  }) async {
+    if (!isConnected) {
+      return (fingerId: null, fidRaw: null);
+    }
+
+    if (ZKTecoUSB.isAndroidPlatform) {
+      final res = await _device.identifyFingerprint();
+      if (res.found && res.fid != null) {
+        final fidRaw = res.fid!.trim();
+        return (fingerId: parseFingerId(fidRaw), fidRaw: fidRaw);
+      }
+      return (fingerId: null, fidRaw: null);
+    }
+
+    if (capturedTemplate != null) {
+      final res = _device.identifyTemplate(capturedTemplate);
+      if (res.fingerId != null) {
+        final fidRaw = res.fingerId.toString();
+        return (fingerId: res.fingerId, fidRaw: fidRaw);
+      }
+    }
+
+    return (fingerId: null, fidRaw: null);
   }
 
   @override

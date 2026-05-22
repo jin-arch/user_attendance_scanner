@@ -36,7 +36,7 @@ class DatabaseController extends GetxController {
   
   Future<void> loadEmployees() async {
     debugPrint('[DATABASE_CONTROLLER] Loading employees for siteId: $siteId');
-    
+
     if (siteId == null || siteId!.isEmpty) {
       debugPrint('[DATABASE_CONTROLLER] No site ID provided');
       errorMessage.value = 'No site selected';
@@ -47,8 +47,10 @@ class DatabaseController extends GetxController {
     errorMessage.value = '';
     isLoading.value = true;
     try {
+      // OFFLINE-FIRST: Load employees from local database ONLY
+      debugPrint('[DATABASE_CONTROLLER] Loading from OFFLINE database (offline-first)');
       final employeesData = await LocalDb.getEmployeesBySite(siteId!);
-      debugPrint('[DATABASE_CONTROLLER] Loaded ${employeesData.length} employees');
+      debugPrint('[DATABASE_CONTROLLER] Loaded ${employeesData.length} employees from offline DB');
 
       employees.assignAll(employeesData);
     } catch (e) {
@@ -146,7 +148,7 @@ class DatabaseController extends GetxController {
     try {
       // Delete all fingerprints for this employee
       final employeeFingerprints = getEmployeeFingerprints(employeeId);
-      for (final fingerprint in employeeFingerprints) {
+      for (final _ in employeeFingerprints) {
         await LocalDb.deleteEmployee(
           employeeId,
           siteId!,

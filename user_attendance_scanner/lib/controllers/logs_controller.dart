@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element, unused_local_variable, dead_code
+
 import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
@@ -7,7 +9,14 @@ import 'package:http/http.dart' as http;
 import '../services/local_db.dart';
 import '../models/employee_model.dart';
 import '../services/device_service.dart';
+import '../services/device_service_impl.dart';
 import '../services/employee_repository.dart';
+import '../services/scanner_registry_service.dart';
+class _ScannerEmployee {
+  const _ScannerEmployee({required this.id, required this.name});
+  final String id;
+  final String name;
+}
 
 class LogsController extends GetxController {
   // Dependencies
@@ -49,11 +58,16 @@ class LogsController extends GetxController {
   // Site ID for filtering
   final String? siteId;
 
+  /// Same in-memory maps as home page scanner (fid -> employee).
+  final Map<int, _ScannerEmployee> _scannerEmployeeByFid = {};
+  final Map<String, _ScannerEmployee> _scannerEmployeeByFidText = {};
+
   LogsController({this.siteId});
   
   // AFK timeout tracking
   Timer? _afkTimer;
   static const int _afkTimeoutSeconds = 60; // 1 minute inactivity timeout
+  DateTime? _lastAfkInteractionAt;
 
   @override
   void onInit() {
@@ -82,7 +96,7 @@ class LogsController extends GetxController {
   void _setupSearchListener() {
     searchController.addListener(() {
       searchQuery.value = searchController.text.toLowerCase();
-      _resetAfkTimer(); // Reset AFK on user input
+      onUserInteraction(); // Reset AFK on user input
     });
   }
 
@@ -99,6 +113,16 @@ class LogsController extends GetxController {
 
   void _resetAfkTimer() {
     _startAfkTimer();
+  }
+
+  void onUserInteraction() {
+    final now = DateTime.now();
+    final last = _lastAfkInteractionAt;
+    if (last != null && now.difference(last).inMilliseconds < 400) {
+      return;
+    }
+    _lastAfkInteractionAt = now;
+    _resetAfkTimer();
   }
 
   /// Start cooldown timer for a specific log entry
@@ -195,6 +219,9 @@ class LogsController extends GetxController {
       isDeviceConnected.value = await _deviceService.connect();
       if (isDeviceConnected.value) {
         debugPrint('[LOGS_CONTROLLER] Device connected successfully');
+        if (siteId != null && siteId!.isNotEmpty) {
+          await _loadEmployeesForSite();
+        }
       }
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Device connection failed: $e');
@@ -207,9 +234,8 @@ class LogsController extends GetxController {
     await Future.delayed(const Duration(milliseconds: 1000));
 
     if (siteId != null && siteId!.isNotEmpty) {
-      // Data already fetched and saved to SQL when site was selected
-      // Just start fingerprint scanning - no need to re-fetch from API
       debugPrint('[LOGS_CONTROLLER] Site selected: $siteId, starting fingerprint scan');
+      await _loadEmployeesForSite();
       await startFingerprintAuthentication();
     } else {
       errorMessage.value = 'No site selected for authentication';
@@ -228,23 +254,84 @@ class LogsController extends GetxController {
     }
   }
 
-  /// Check if employee has enrolled thumb mark
+  String _normalizeEmployeeId(String employeeId) =>
+      employeeId.trim().toLowerCase();
+
+  List<Employee> _dedupeEmployeesById(List<Employee> employees) {
+    final byId = <String, Employee>{};
+    for (final employee in employees) {
+      final key = _normalizeEmployeeId(employee.id);
+      if (key.isEmpty) continue;
+
+      final existing = byId[key];
+      if (existing == null) {
+        byId[key] = employee;
+        continue;
+      }
+
+      final hasTemplate = employee.fingerTemplate != null &&
+          employee.fingerTemplate!.isNotEmpty;
+      final existingHasTemplate = existing.fingerTemplate != null &&
+          existing.fingerTemplate!.isNotEmpty;
+      if (hasTemplate && !existingHasTemplate) {
+        byId[key] = employee;
+      }
+    }
+    return byId.values.toList();
+  }
+
+  Employee? _findEmployeeById(List<Employee> employees, String employeeId) {
+    final target = _normalizeEmployeeId(employeeId);
+    for (final employee in employees) {
+      if (_normalizeEmployeeId(employee.id) == target) {
+        return employee;
+      }
+    }
+    return null;
+  }
+
+  /// Check if employee has enrolled thumb mark (any fingerprint row for that ID).
   Future<bool> _employeeHasThumbMark(String employeeId) async {
     try {
-      final employees = await _employeeRepository.getEmployeesForSite(siteId!);
-      final employee = employees.firstWhere(
-        (e) => e.id == employeeId,
-        orElse: () => Employee(id: '', name: '', siteId: siteId!),
+      final employees =
+          _dedupeEmployeesById(await _employeeRepository.getEmployeesForSite(siteId!));
+      return employees.any(
+        (e) =>
+            _normalizeEmployeeId(e.id) == _normalizeEmployeeId(employeeId) &&
+            e.fingerTemplate != null &&
+            e.fingerTemplate!.isNotEmpty,
       );
-      return employee.fingerTemplate != null && employee.fingerTemplate!.isNotEmpty;
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Error checking thumb mark: $e');
       return false;
     }
   }
 
+  Future<void> _completeFingerprintAuthentication(Employee employee) async {
+    authenticatedEmployee.value = employee;
+    isAuthenticated.value = true;
+    employeeIdSearch.value = employee.id;
+    errorMessage.value = '';
+
+    debugPrint(
+      '[LOGS_CONTROLLER] Fingerprint auth complete: ${employee.id} - ${employee.name}',
+    );
+    setStatus('Welcome, ${employee.name}! Loading time logs...');
+    await loadLogs();
+
+    if (logs.isNotEmpty) {
+      setStatus('Loaded ${logs.length} time logs for ${employee.name}');
+    } else if (isAuthenticated.value) {
+      setStatus('Authenticated - no time logs found for ${employee.name}');
+    }
+    _resetAfkTimer();
+  }
+
   /// Authenticate by Employee ID - show only that employee's logs
-  Future<void> authenticateByEmployeeId(String employeeId) async {
+  Future<void> authenticateByEmployeeId(
+    String employeeId, {
+    bool skipThumbCheck = false,
+  }) async {
     if (employeeId.trim().isEmpty) {
       errorMessage.value = 'Please enter a valid employee ID';
       return;
@@ -264,78 +351,57 @@ class LogsController extends GetxController {
         return;
       }
 
-      // Check if employee has enrolled thumb mark
-      setStatus('Verifying employee biometric data...');
-      debugPrint('[AUTH] Checking if employee has thumb mark...');
-      final hasThumbMark = await _employeeHasThumbMark(employeeId.trim());
-      debugPrint('[AUTH] Has thumb mark: $hasThumbMark');
+      if (!skipThumbCheck) {
+        setStatus('Verifying employee biometric data...');
+        debugPrint('[AUTH] Checking if employee has thumb mark...');
+        final hasThumbMark = await _employeeHasThumbMark(employeeId.trim());
+        debugPrint('[AUTH] Has thumb mark: $hasThumbMark');
 
-      if (!hasThumbMark) {
-        errorMessage.value = 'Employee ID $employeeId has no enrolled thumb mark. Please enroll first.';
-        authenticatedEmployee.value = null;
-        isAuthenticated.value = false;
-        logs.clear();
-        setStatus('Employee not enrolled');
-        debugPrint('[AUTH] ERROR: Employee not enrolled');
-        return;
+        if (!hasThumbMark) {
+          errorMessage.value =
+              'Employee ID $employeeId has no enrolled thumb mark. Please enroll first.';
+          authenticatedEmployee.value = null;
+          isAuthenticated.value = false;
+          logs.clear();
+          setStatus('Employee not enrolled');
+          debugPrint('[AUTH] ERROR: Employee not enrolled');
+          return;
+        }
       }
 
-      // Get employee name from API or local DB
-      debugPrint('[AUTH] Fetching employee name...');
+      // Get employee from LOCAL DATABASE FIRST (offline-first approach)
+      debugPrint('[AUTH] Fetching employee from offline database...');
       String empName = 'Employee $employeeId';
+      Employee? localEmployee;
 
       try {
-        // Try to get from API first
-        final apiResponse = await http.get(
-          Uri.parse(
-            'https://fastdevs-api.com/HRIS_BIOMETRICS/biometricsapi/api/index.php/get/employee/perSite?siteID=$siteId',
-          ),
-          headers: {
-            'Accept': 'application/json',
-            'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
-          },
-        ).timeout(const Duration(seconds: 10));
-
-        if (apiResponse.statusCode == 200) {
-          final data = json.decode(apiResponse.body);
-          List<dynamic> employees = [];
-
-          if (data is List) {
-            employees = data;
-          } else if (data is Map && data['data'] is List) {
-            employees = data['data'];
-          }
-
-          for (final emp in employees) {
-            final id = emp['employee_id']?.toString() ?? emp['id']?.toString() ?? '';
-            if (id == employeeId.trim()) {
-              empName = emp['employee_name']?.toString() ??
-                       emp['name']?.toString() ??
-                       'Employee $employeeId';
-              debugPrint('[AUTH] Found employee name from API: $empName');
-              break;
-            }
-          }
+        final employees = _dedupeEmployeesById(
+          await _employeeRepository.getEmployeesForSite(siteId!),
+        );
+        localEmployee = _findEmployeeById(employees, employeeId.trim());
+        if (localEmployee != null) {
+          empName = localEmployee.name;
+          debugPrint('[AUTH] Found employee from local DB: $empName');
         }
       } catch (e) {
-        debugPrint('[AUTH] Could not fetch from API: $e');
+        debugPrint('[AUTH] Could not fetch from local DB: $e');
       }
 
-      // Set authenticated user (don't fail if no logs exist yet)
-      authenticatedEmployee.value = Employee(
-        id: employeeId.trim(),
-        name: empName,
-        siteId: siteId!,
-      );
+      authenticatedEmployee.value = localEmployee ??
+          Employee(
+            id: employeeId.trim(),
+            name: empName,
+            siteId: siteId!,
+          );
       isAuthenticated.value = true;
 
       debugPrint('[AUTH] ✅ Employee authenticated: $empName');
       debugPrint('[AUTH] ===== EMPLOYEE AUTHENTICATION END =====');
 
-      // Now load logs (will fetch from API if needed)
+      // Now load logs (will fetch from LOCAL DB FIRST)
       setStatus('Loading employee time logs...');
       await loadLogs();
-      
+
       // Set status to green after successful authentication and log loading
       if (isAuthenticated.value && logs.isNotEmpty) {
         setStatus('Time logs loaded successfully');
@@ -396,21 +462,11 @@ class LogsController extends GetxController {
       // Wait for finger detection instead of continuous scanning
       while (!isAuthenticated.value && isDeviceConnected.value && siteId != null) {
         try {
-          // First check if finger is present
-          final hasFinger = await _checkFingerPresence();
-          if (!hasFinger) {
-            // No finger detected, wait and check again
-            await Future.delayed(const Duration(milliseconds: 500));
-            continue;
-          }
-
-          // Finger detected - now perform scan
-          debugPrint('[LOGS_CONTROLLER] Finger detected - performing scan...');
           isScanning.value = true;
           setStatus('Scanning fingerprint...');
-          
+
           await _performFingerprintScan();
-          
+
           isScanning.value = false;
           setStatus('Place finger on scanner');
 
@@ -465,59 +521,105 @@ class LogsController extends GetxController {
     }
   }
   
+  /// Load employees into device + fid maps (same flow as home page scanner).
   Future<void> _loadEmployeesForSite() async {
+    if (siteId == null || siteId!.isEmpty) return;
+
     try {
-      // This would load employees for the current site
-      // For now, we'll assume employees are loaded elsewhere
+      debugPrint('[LOGS_SCAN] Loading employees for site: $siteId');
+      final rows = await LocalDb.getEmployeesBySite(siteId!);
+      _scannerEmployeeByFid.clear();
+      _scannerEmployeeByFidText.clear();
+
+      if (isDeviceConnected.value && Get.isRegistered<ScannerRegistryService>()) {
+        await Get.find<ScannerRegistryService>().reloadSiteFromLocalDb(siteId!);
+      }
+
+      for (final row in rows) {
+        final fid = row['fid'] as int?;
+        final empId = row['employee_id']?.toString().trim() ?? '';
+        final empName = row['employee_name']?.toString().trim();
+        if (fid == null || empId.isEmpty) continue;
+
+        final entry = _ScannerEmployee(id: empId, name: empName ?? empId);
+        _scannerEmployeeByFid[fid] = entry;
+        _scannerEmployeeByFidText[fid.toString()] = entry;
+      }
+
+      debugPrint(
+        '[LOGS_SCAN] Scanner maps ready: ${_scannerEmployeeByFid.length} (rows=${rows.length})',
+      );
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Failed to load employees: $e');
     }
   }
-  
-    
+
+  _ScannerEmployee? _lookupScannerEmployee({String? fidRaw, int? fingerId}) {
+    return (fidRaw != null ? _scannerEmployeeByFidText[fidRaw.trim()] : null) ??
+        (fingerId != null ? _scannerEmployeeByFid[fingerId] : null) ??
+        (fingerId != null
+            ? _scannerEmployeeByFidText[fingerId.toString()]
+            : null);
+  }
+
   Future<void> _performFingerprintScan() async {
     try {
       debugPrint('[LOGS_CONTROLLER] ===== FINGERPRINT SCAN START =====');
-      // DON'T change status - keep it blue
+
+      if (_scannerEmployeeByFid.isEmpty) {
+        await _loadEmployeesForSite();
+      }
+
+      if (_scannerEmployeeByFid.isEmpty) {
+        debugPrint('[LOGS_SCAN] No enrolled employees in scanner DB');
+        return;
+      }
+
       final template = await _deviceService.scanFingerprint();
       debugPrint('[LOGS_CONTROLLER] Fingerprint template received: ${template != null}');
 
       if (template != null && _isValidFingerprintTemplate(template)) {
-        // DON'T change status - keep it blue
-        debugPrint('[LOGS_CONTROLLER] Valid fingerprint detected - processing...');
-        debugPrint('[LOGS_CONTROLLER] Loading employees for site: $siteId');
+        debugPrint('[LOGS_CONTROLLER] Valid fingerprint - identifying on device...');
 
-        // Get all employees for matching
-        final employees = await _employeeRepository.getEmployeesForSite(siteId!);
-        debugPrint('[LOGS_CONTROLLER] Loaded ${employees.length} employees');
+        final identification = await _deviceService.identifyOnDevice(
+          capturedTemplate: template,
+        );
+        debugPrint(
+          '[LOGS_SCAN] identify result fidRaw=${identification.fidRaw} fingerId=${identification.fingerId}',
+        );
 
-        debugPrint('[LOGS_CONTROLLER] Matching fingerprint...');
-        final scanResult = await _deviceService.matchFingerprint(template, employees);
-        debugPrint('[LOGS_CONTROLLER] Match result: success=${scanResult.isSuccess}, employee=${scanResult.employee?.id}');
+        var matched = _lookupScannerEmployee(
+          fidRaw: identification.fidRaw,
+          fingerId: identification.fingerId,
+        );
 
-        if (scanResult.isSuccess && scanResult.employee != null) {
-          debugPrint('[LOGS_CONTROLLER] ✓ Fingerprint matched: ${scanResult.employee!.id} - ${scanResult.employee!.name}');
+        if (matched == null) {
+          debugPrint('[LOGS_SCAN] Employee not found, reloading scanner DB...');
+          await _loadEmployeesForSite();
+          matched = _lookupScannerEmployee(
+            fidRaw: identification.fidRaw,
+            fingerId: identification.fingerId,
+          );
+        }
 
-          // Auto-populate employee ID in search field
-          employeeIdSearch.value = scanResult.employee!.id;
-          debugPrint('[LOGS_CONTROLLER] Auto-populated employee ID: ${scanResult.employee!.id}');
-
-          authenticatedEmployee.value = scanResult.employee;
-          isAuthenticated.value = true;
-          // Change status to green (ready) after successful authentication
-          setStatus('Welcome, ${scanResult.employee!.name}! Time logs ready');
-
-          debugPrint('[LOGS_CONTROLLER] Authenticating by employee ID: ${scanResult.employee!.id}');
-          // Auto-load logs via authenticate function
-          await authenticateByEmployeeId(scanResult.employee!.id);
-
-          _resetAfkTimer(); // Reset AFK timeout on successful scan
+        if (matched != null) {
+          debugPrint(
+            '[LOGS_SCAN] ✓ Matched employee: ${matched.id} - ${matched.name}',
+          );
+          await _completeFingerprintAuthentication(
+            Employee(
+              id: matched.id,
+              name: matched.name,
+              siteId: siteId!,
+              fid: identification.fingerId ??
+                  DeviceServiceImpl.parseFingerId(identification.fidRaw),
+            ),
+          );
           debugPrint('[LOGS_CONTROLLER] ✓ Fingerprint authentication complete');
         } else {
-          debugPrint('[LOGS_CONTROLLER] ✗ Fingerprint not matched: ${scanResult.errorMessage}');
-          // Don't set error message to avoid stopping continuous scan
-          // errorMessage.value = scanResult.errorMessage ?? 'Fingerprint not recognized';
-          // Keep status blue for failed authentication
+          debugPrint(
+            '[LOGS_SCAN] ✗ FID ${identification.fidRaw ?? identification.fingerId} not in employee map',
+          );
         }
       } else {
         debugPrint('[LOGS_CONTROLLER] ✗ No valid fingerprint template received - ignoring noise');
@@ -597,39 +699,43 @@ class LogsController extends GetxController {
     errorMessage.value = '';
     isLoading.value = true;
     try {
-      // First, try to get logs from local database (cached when site was selected)
-      debugPrint('[LOGS_CONTROLLER] Trying local database first...');
+      // OFFLINE-FIRST: Load logs from local database ONLY
+      debugPrint('[LOGS_CONTROLLER] Loading from OFFLINE database (offline-first approach)...');
       final localLogs = await LocalDb.getAttendanceLogsForEmployee(
         authenticatedEmployee.value!.id,
         siteId!,
       );
-      debugPrint('[LOGS_CONTROLLER] Local DB returned ${localLogs.length} logs');
+      debugPrint('[LOGS_CONTROLLER] Offline DB returned ${localLogs.length} logs');
 
       if (localLogs.isNotEmpty) {
-        logs.assignAll(localLogs);
-        debugPrint('[LOGS_CONTROLLER] ✅ Loaded ${localLogs.length} logs from local database');
-        setStatus('Loaded ${localLogs.length} time logs - ready');
+        final enriched = localLogs.map((log) {
+          final copy = Map<String, dynamic>.from(log);
+          copy['employee_id'] ??= authenticatedEmployee.value!.id;
+          copy['employee_name'] ??= authenticatedEmployee.value!.name;
+          return copy;
+        }).toList();
+
+        final deduped = <String, Map<String, dynamic>>{};
+        for (final log in enriched) {
+          final key =
+              '${log['timestamp']}_${log['type']}_${log['period']}_${log['time_only']}';
+          deduped.putIfAbsent(key, () => log);
+        }
+
+        logs.assignAll(deduped.values.toList());
+        debugPrint(
+          '[LOGS_CONTROLLER] ✅ Loaded ${logs.length} logs from OFFLINE database (${localLogs.length} raw)',
+        );
+        setStatus('Loaded ${logs.length} time logs (offline)');
+        debugPrint('[LOGS_CONTROLLER] ===== LOAD LOGS END =====');
         return;
       }
 
-      // If no local logs, try fetching from API
-      debugPrint('[LOGS_CONTROLLER] No local logs, trying API...');
-      setStatus('Fetching time logs from server...');
-      final apiLogs = await _fetchLogsFromApi(siteId!);
-      debugPrint('[LOGS_CONTROLLER] API returned ${apiLogs.length} logs');
-
-      final filteredApiLogs = _filterLogsByEmployee(apiLogs);
-      debugPrint('[LOGS_CONTROLLER] After filtering: ${filteredApiLogs.length} logs for employee ${authenticatedEmployee.value?.id}');
-
-      if (filteredApiLogs.isNotEmpty) {
-        logs.assignAll(filteredApiLogs);
-        debugPrint('[LOGS_CONTROLLER] ✅ Loaded ${filteredApiLogs.length} logs from API');
-        setStatus('Loaded ${filteredApiLogs.length} time logs - ready');
-      } else {
-        debugPrint('[LOGS_CONTROLLER] ⚠️ No logs found for employee ${authenticatedEmployee.value?.id}');
-        setStatus('Authenticated - no time logs found');
-        logs.clear();
-      }
+      // If no local logs, show empty state (don't fetch from API to prevent mixing data)
+      debugPrint('[LOGS_CONTROLLER] ⚠️ No logs found in offline database');
+      setStatus('Authenticated - no time logs found');
+      logs.clear();
+      debugPrint('[LOGS_CONTROLLER] ===== LOAD LOGS END (NO LOCAL DATA) =====');
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Error loading logs: $e');
       errorMessage.value = 'Error loading logs: $e';
@@ -759,7 +865,7 @@ class LogsController extends GetxController {
         // Fetch employees from local database for name lookup
         late List<Employee> localEmployees;
         try {
-          localEmployees = await _employeeRepository.getEmployeesForSite(siteId!);
+          localEmployees = await _employeeRepository.getEmployeesForSite(siteId);
           debugPrint('[LOGS_CONTROLLER] Loaded ${localEmployees.length} employees from local DB for name lookup');
         } catch (e) {
           debugPrint('[LOGS_CONTROLLER] Failed to load local employees: $e');
@@ -926,7 +1032,7 @@ class LogsController extends GetxController {
           employees = data['data'];
           debugPrint('[LOGS_CONTROLLER] Response is Map with data wrapper, ${employees.length} items');
         } else if (data is Map) {
-          debugPrint('[LOGS_CONTROLLER] Response is Map with keys: ${(data as Map).keys.toList()}');
+          debugPrint('[LOGS_CONTROLLER] Response is Map with keys: ${(data).keys.toList()}');
           employees = data['data'] ?? data['employees'] ?? data['records'] ?? [];
         }
 
@@ -954,7 +1060,7 @@ class LogsController extends GetxController {
                       emp['first_name']?.toString() ??
                       '';
 
-          debugPrint('[LOGS_CONTROLLER] Processing: id="$id", name="$name", all_keys=${(emp as Map).keys.toList()}');
+          debugPrint('[LOGS_CONTROLLER] Processing: id="$id", name="$name", all_keys=${(emp).keys.toList()}');
 
           if (id.isNotEmpty && name.isNotEmpty) {
             final normalizedId = id.trim().toLowerCase();

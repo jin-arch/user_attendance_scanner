@@ -1,8 +1,11 @@
+// ignore_for_file: unused_field
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../services/connectivity_service.dart';
 import '../services/inactivity_timer_service.dart';
 import '../services/offline_mode_sync_service.dart';
+import '../services/pending_sync_service.dart';
 
 class OfflineModeController extends GetxController {
   final _connectivityService = ConnectivityService();
@@ -25,13 +28,26 @@ class OfflineModeController extends GetxController {
 
   void _initConnectivity() {
     _connectivityService.onConnectivityChanged.listen((result) {
+      final wasWiFi = hasWiFi.value;
       hasWiFi.value = result.name == 'wifi';
-      debugPrint('[OFFLINE_MODE] WiFi status: ${hasWiFi.value}');
+      debugPrint('[OFFLINE_MODE] WiFi status: ${hasWiFi.value} (was: $wasWiFi)');
 
+      // Show mode selector if WiFi is detected in offline mode
       if (hasWiFi.value && isOfflineMode.value) {
         _offlineModeSyncService.resetModeSelector();
         showModeSelector.value = true;
         debugPrint('[OFFLINE_MODE] WiFi detected - showing mode selector');
+      }
+
+      // Also show mode selector if WiFi is lost while in online mode
+      if (!hasWiFi.value && !isOfflineMode.value && wasWiFi) {
+        _offlineModeSyncService.resetModeSelector();
+        showModeSelector.value = true;
+        debugPrint('[OFFLINE_MODE] WiFi lost in online mode - showing mode selector');
+      }
+
+      if (hasWiFi.value && !isOfflineMode.value) {
+        _syncPendingInBackground();
       }
     });
 
@@ -73,6 +89,25 @@ class OfflineModeController extends GetxController {
     _inactivityTimerService.stop();
     showModeSelector.value = false;
     debugPrint('[OFFLINE_MODE] Started online mode');
+    _syncPendingInBackground();
+  }
+
+  void _syncPendingInBackground() {
+    if (_selectedSiteId.isEmpty) return;
+    if (!Get.isRegistered<PendingSyncService>()) return;
+
+    Future.microtask(() async {
+      try {
+        final result = await Get.find<PendingSyncService>().syncAllPending(
+          siteId: _selectedSiteId,
+        );
+        debugPrint(
+          '[OFFLINE_MODE] Auto-sync pending: synced=${result.synced} failed=${result.failed}',
+        );
+      } catch (e) {
+        debugPrint('[OFFLINE_MODE] Auto-sync pending failed: $e');
+      }
+    });
   }
 
   void recordInteraction() {

@@ -9,7 +9,6 @@ import '../controllers/offline_mode_controller.dart';
 import '../controllers/legacy_home_page_controller.dart';
 import '../routes/app_routes.dart';
 import '../routes/route_observer.dart';
-import '../utils/color_with_values_compat.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
 import '../zkfp/zkteco_usb.dart';
 part '../animations/dashboard_page_content_widget.dart';
@@ -64,8 +63,6 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   late final LegacyHomePageController _controller;
   late final DashboardPageController _dashboardController;
   bool _routeSubscribed = false;
-  
-  bool get _isPortalMode => widget.onPortalTap != null;
 
   // Dashboard is display + actions (Portal + Enroll Now). Fingerprint scanning/identify
   // happens on HomePage (scan) and EnrollmentPage (enroll/reset).
@@ -570,76 +567,82 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
 
     final outerRadius = BorderRadius.circular(w * 0.035);
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      // Navigation bar removed - auto-return to home after AFK timeout
-      body: Container(
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/Main BG.png'),
-            fit: BoxFit.cover,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _resetAfkTimer(),
+      onPointerMove: (_) => _resetAfkTimer(),
+      onPointerSignal: (_) => _resetAfkTimer(),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        // Navigation bar removed - auto-return to home after AFK timeout
+        body: Container(
+          decoration: const BoxDecoration(
+            image: DecorationImage(
+              image: AssetImage('assets/images/Main BG.png'),
+              fit: BoxFit.cover,
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.all(w * 0.005),
-            child: ClipRRect(
-              borderRadius: outerRadius,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Image.asset(
-                      'assets/images/Main BG.png',
-                      fit: BoxFit.cover,
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.all(w * 0.005),
+              child: ClipRRect(
+                borderRadius: outerRadius,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Image.asset(
+                        'assets/images/Main BG.png',
+                        fit: BoxFit.cover,
+                      ),
                     ),
-                  ),
-                  Positioned.fill(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final cw = constraints.maxWidth;
-                        final ch = constraints.maxHeight;
-                        final ps = (cw * 0.06).clamp(32.0, 56.0);
-                        return Stack(
-                          children: [
-                            _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
-                            _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
-                            _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
-                            _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
-                            _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
-                            _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
-                            _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
-                            _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
-                            _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
-                            _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
-                            _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
-                            _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
-                            _particle(cw, ch, 0.15, 0.85, ps * 0.7, 0.12),
-                            _particle(cw, ch, 0.95, 0.12, ps * 0.8, 0.55),
-                            _particle(cw, ch, 0.33, 0.11, ps * 0.6, 0.77),
-                            _particle(cw, ch, 0.60, 0.88, ps * 1.0, 0.41),
-                            _particle(cw, ch, 0.81, 0.22, ps * 0.5, 0.63),
-                            _particle(cw, ch, 0.44, 0.59, ps * 0.9, 0.29),
-                            _particle(cw, ch, 0.21, 0.66, ps * 0.8, 0.84),
-                            _particle(cw, ch, 0.57, 0.33, ps * 0.7, 0.18),
-                          ],
-                        );
-                      },
+                    Positioned.fill(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final cw = constraints.maxWidth;
+                          final ch = constraints.maxHeight;
+                          final ps = (cw * 0.06).clamp(32.0, 56.0);
+                          return Stack(
+                            children: [
+                              _particle(cw, ch, 0.08, 0.15, ps * 1.2, 0),
+                              _particle(cw, ch, 0.12, 0.08, ps * 0.5, 0.3),
+                              _particle(cw, ch, 0.18, 0.5, ps * 0.9, 0.6),
+                              _particle(cw, ch, 0.75, 0.45, ps * 1.1, 0.2),
+                              _particle(cw, ch, 0.5, 0.2, ps * 0.55, 0.5),
+                              _particle(cw, ch, 0.08, 0.7, ps * 1.0, 0.8),
+                              _particle(cw, ch, 0.28, 0.35, ps * 0.45, 0.15),
+                              _particle(cw, ch, 0.72, 0.3, ps * 0.9, 0.45),
+                              _particle(cw, ch, 0.38, 0.78, ps * 0.6, 0.7),
+                              _particle(cw, ch, 0.88, 0.6, ps * 1.15, 0.25),
+                              _particle(cw, ch, 0.05, 0.42, ps * 0.5, 0.9),
+                              _particle(cw, ch, 0.62, 0.48, ps * 0.75, 0.35),
+                              _particle(cw, ch, 0.15, 0.85, ps * 0.7, 0.12),
+                              _particle(cw, ch, 0.95, 0.12, ps * 0.8, 0.55),
+                              _particle(cw, ch, 0.33, 0.11, ps * 0.6, 0.77),
+                              _particle(cw, ch, 0.60, 0.88, ps * 1.0, 0.41),
+                              _particle(cw, ch, 0.81, 0.22, ps * 0.5, 0.63),
+                              _particle(cw, ch, 0.44, 0.59, ps * 0.9, 0.29),
+                              _particle(cw, ch, 0.21, 0.66, ps * 0.8, 0.84),
+                              _particle(cw, ch, 0.57, 0.33, ps * 0.7, 0.18),
+                            ],
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: w * 0.02,
-                      vertical: h * 0.025,
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: w * 0.02,
+                        vertical: h * 0.025,
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(flex: 3, child: _buildTopRow(w, h)),
+                          SizedBox(height: h * 0.022),
+                          Expanded(flex: 2, child: _buildBottomTable(w, h)),
+                        ],
+                      ),
                     ),
-                    child: Column(
-                      children: [
-                        Expanded(flex: 3, child: _buildTopRow(w, h)),
-                        SizedBox(height: h * 0.022),
-                        Expanded(flex: 2, child: _buildBottomTable(w, h)),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1066,7 +1069,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
       final now = widget.matchedAt ?? DateTime.now();
       final todayDate = DateTimeFormats.dateLongUpper(now);
       final todayKey = DateTimeFormats.dateKey(now);
-      final rows = _dashboardController.rows.value;
+      final rows = _dashboardController.rows;
       final todayRow = rows.firstWhere(
         (row) => _rowDateKey(row) == todayKey,
         orElse: () => rows.isNotEmpty
@@ -1252,7 +1255,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     );
 
     return Obx(() {
-      final rows = _dashboardController.rows.value;
+      final rows = _dashboardController.rows;
       final loadingRows = _dashboardController.isLoadingRows.value;
 
       return Container(

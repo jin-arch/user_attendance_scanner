@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../services/local_db.dart';
+import 'dashboard_page_controller.dart';
 
 /// Legacy controller to maintain backward compatibility with existing home_page.dart
 class LegacyHomePageController extends GetxController {
@@ -18,8 +19,6 @@ class LegacyHomePageController extends GetxController {
       '${_apiBaseUrl}get/timelog/lastweek/perSite?siteID=';
   static const String _apiUsername = 'devuser';
   static const String _apiPassword = '12456789!';
-  static const int _timeOutCooldownMinutes = 5;
-
   final Rx<DateTime> now = DateTime.now().obs;
   final RxBool biometricConnected = false.obs;
   final RxBool isSearching = false.obs;
@@ -369,86 +368,18 @@ class LegacyHomePageController extends GetxController {
     return text.isEmpty || text == 'null';
   }
 
+  /// Delegates to [DashboardPageController] so scan flow uses the same
+  /// offline-first timelog rules (time in once per day, then time out).
   Future<String?> recordAttendance({
     required String siteId,
     required String employeeId,
   }) async {
     try {
-      final now = DateTime.now();
-      final today = now.toIso8601String().split('T')[0];
-      final timeStr = formatTimeOnly(now);
-
-      final existingTimelog = await LocalDb.getLatestTimelogForEmployee(
-        siteId: siteId,
+      final dashboard = Get.find<DashboardPageController>();
+      return await dashboard.recordAttendance(
         employeeId: employeeId,
-      );
-
-      if (existingTimelog != null) {
-        final timelogDate = existingTimelog['timeLogDate']?.toString() ??
-            existingTimelog['timelog_date']?.toString() ??
-            existingTimelog['timelog']?.toString();
-
-        if (timelogDate != null && timelogDate.startsWith(today)) {
-          final timeInMorning = existingTimelog['timeInMorning']?.toString();
-          final timeOutMorning = existingTimelog['timeOutMorning']?.toString();
-          final timeOutAfternoon =
-              existingTimelog['timeOutAfternoon']?.toString();
-
-          // Additional check: If user has any time in today without corresponding time out
-          if ((!isBlankAttendanceValue(timeInMorning) && isBlankAttendanceValue(timeOutMorning)) || 
-              (!isBlankAttendanceValue(existingTimelog['timeInAfternoon']) && isBlankAttendanceValue(timeOutAfternoon))) {
-            return 'ALREADY IN';
-          }
-
-          if (!isBlankAttendanceValue(timeInMorning) &&
-              isBlankAttendanceValue(timeOutMorning)) {
-            final timeInDateTime = _parseTodayTime(timeInMorning, now);
-
-            if (timeInDateTime != null &&
-                now.difference(timeInDateTime).inMinutes >=
-                    _timeOutCooldownMinutes) {
-              await LocalDb.saveTimelog(
-                siteId: siteId,
-                employeeId: employeeId,
-                timelogData: {
-                  'timelogID':
-                      existingTimelog['timelogID'] ?? 'tl_${now.millisecondsSinceEpoch}',
-                  'timelog': timeStr,
-                  'timeLogDate': today,
-                  'timeInMorning': timeInMorning,
-                  'timeOutMorning': timeStr,
-                  'remarks': 'AUTO TIMEOUT',
-                  'schedule': 'AUTO',
-                  'code': 'SUCCESS',
-                },
-              );
-              return 'TIME OUT';
-            }
-            return 'ALREADY IN';
-          }
-
-          if (!isBlankAttendanceValue(timeOutMorning) ||
-              !isBlankAttendanceValue(timeOutAfternoon)) {
-            return 'ALREADY OUT - Come back tomorrow';
-          }
-        }
-      }
-
-      await LocalDb.saveTimelog(
         siteId: siteId,
-        employeeId: employeeId,
-        timelogData: {
-          'timelogID': 'tl_${now.millisecondsSinceEpoch}',
-          'timelog': timeStr,
-          'timeLogDate': today,
-          'timeInMorning': timeStr,
-          'remarks': 'SUCCESS',
-          'schedule': 'AUTO',
-          'code': 'SUCCESS',
-        },
       );
-
-      return 'TIME IN';
     } catch (e) {
       debugPrint('recordAttendance error: $e');
       return 'TIME IN UNSUCCESSFUL';
@@ -462,50 +393,4 @@ class LegacyHomePageController extends GetxController {
     return '$h:$m:$s';
   }
 
-  bool isBlankAttendanceValue(dynamic value) {
-    if (value == null) return true;
-    final text = value.toString().trim();
-    return text.isEmpty || 
-           text == '00:00:00' || 
-           text == '00:00' || 
-           text == '0' || 
-           text == '-' || 
-           text.toLowerCase() == 'null' ||
-           text.toLowerCase() == 'n/a' ||
-           text.toLowerCase() == 'na' ||
-           text.toLowerCase() == 'none' ||
-           text.toLowerCase() == 'empty';
-  }
-
-  DateTime? _parseTodayTime(String? rawTime, DateTime now) {
-    if (isBlankAttendanceValue(rawTime)) return null;
-    final text = rawTime!.trim();
-    final upper = text.toUpperCase();
-    final hasPm = upper.contains('PM');
-    final hasAm = upper.contains('AM');
-    final normalized = upper.replaceAll(RegExp(r'[^0-9:]'), '');
-    final parts = normalized
-        .split(':')
-        .where((segment) => segment.isNotEmpty)
-        .toList();
-    if (parts.length < 2) return null;
-
-    var hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    final second = parts.length > 2 ? int.tryParse(parts[2]) ?? 0 : 0;
-    if (hour == null || minute == null) return null;
-
-    if (hasPm && hour < 12) hour += 12;
-    if (hasAm && hour == 12) hour = 0;
-    if (hour < 0 ||
-        hour > 23 ||
-        minute < 0 ||
-        minute > 59 ||
-        second < 0 ||
-        second > 59) {
-      return null;
-    }
-
-    return DateTime(now.year, now.month, now.day, hour, minute, second);
-  }
 }

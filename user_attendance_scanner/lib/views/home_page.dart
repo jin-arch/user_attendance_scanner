@@ -1,3 +1,5 @@
+// ignore_for_file: unused_import, unused_field, unused_element, unused_local_variable, dead_code
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -18,6 +20,8 @@ import '../services/employee_repository.dart';
 import '../services/attendance_repository.dart';
 import '../services/site_repository.dart';
 import '../services/sync_service.dart';
+import '../services/scanner_registry_service.dart';
+import '../services/pending_sync_service.dart';
 import '../models/site_model.dart';
 import '../utils/color_with_values_compat.dart';
 import '../zkfp/zkteco_usb.dart';
@@ -58,16 +62,12 @@ class _ScanResult {
     required this.timestamp,
     this.errorMessage,
     this.type = _ScanResultType.fingerprintNotRecognized,
-    this.employeeName,
-    this.attendanceType,
   });
 
   final bool success;
   final DateTime timestamp;
   final String? errorMessage;
   final _ScanResultType type;
-  final String? employeeName;
-  final String? attendanceType;
 }
 
 enum _HomeUiMode { scanner, portal }
@@ -526,15 +526,7 @@ class _HomePageController extends GetxController with RouteAware {
     // Initialize offline mode with selected site
     _offlineModeController.setSiteId(selected);
 
-    // Step 2.5 - Show mode selection modal (Online/Offline)
-    if (!mounted) return;
-    if (_isInitialModeSelection) {
-      _isInitialModeSelection = false;
-      await _showModeSelectionDialogAwaitable();
-      if (!mounted) return;
-    }
-
-    // Step 3 - NOW show the loading screen while connecting + syncing data
+    // Step 2.5 - Show loading screen while connecting + syncing data
     if (!mounted) return;
     final progress = ValueNotifier<double>(0.0);
     final syncFuture = _connectAndSync(progress: progress);
@@ -552,6 +544,15 @@ class _HomePageController extends GetxController with RouteAware {
     } finally {
       progress.dispose();
     }
+    if (!mounted) return;
+
+    // Step 3 - NOW show mode selection modal (Online/Offline) after data is loaded
+    if (_isInitialModeSelection) {
+      _isInitialModeSelection = false;
+      await _showModeSelectionDialogAwaitable();
+      if (!mounted) return;
+    }
+
     if (mounted) _startScanLoop();
   }
 
@@ -852,10 +853,10 @@ class _HomePageController extends GetxController with RouteAware {
 
   void _setupOfflineModeListener() {
     _offlineModeController.showModeSelector.listen((show) {
-      if (show && !_modeSelectionShown) {
-        _modeSelectionShown = true;
+      if (show) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _selectedSiteId != null) {
+          if (mounted && _selectedSiteId != null && !_modeSelectionShown) {
+            _modeSelectionShown = true;
             _showModeSelectionModal();
           }
         });
@@ -873,11 +874,13 @@ class _HomePageController extends GetxController with RouteAware {
         return OfflineModeSelectionModal(
           onOnlineSelected: () {
             _offlineModeController.startOnlineMode();
+            _offlineModeController.dismissModeSelector();
             _modeSelectionShown = false;
             Navigator.pop(dialogContext);
           },
           onOfflineSelected: () {
             _offlineModeController.startOfflineMode();
+            _offlineModeController.dismissModeSelector();
             _modeSelectionShown = false;
             Navigator.pop(dialogContext);
           },
@@ -885,7 +888,10 @@ class _HomePageController extends GetxController with RouteAware {
           siteNameDisplay: _selectedSiteId,
         );
       },
-    );
+    ).then((_) {
+      // Reset flag when modal is dismissed (by back button or outside interaction)
+      _modeSelectionShown = false;
+    });
   }
 
   void _recordInteraction() {
@@ -915,7 +921,7 @@ class _HomePageController extends GetxController with RouteAware {
     );
   }
 
-
+  Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
 
@@ -1460,6 +1466,9 @@ class _HomePageController extends GetxController with RouteAware {
         await _loadFromLocalDb(siteId);
         await _fetchAndCacheSiteTimeLogs();
         await _syncPendingHrisQueue();
+        if (Get.isRegistered<PendingSyncService>()) {
+          await Get.find<PendingSyncService>().syncAllPending(siteId: siteId);
+        }
       } catch (e) {
         debugPrint('_startLiveDbSync tick: $e');
       } finally {
@@ -1482,7 +1491,10 @@ class _HomePageController extends GetxController with RouteAware {
       
       _employeeDb.clear();
       _employeeDbByFid.clear();
-      int registered = 0;
+
+      if (Get.isRegistered<ScannerRegistryService>()) {
+        await Get.find<ScannerRegistryService>().reloadSiteFromLocalDb(siteId);
+      }
 
       for (final row in rows) {
         final fid = row['fid'] as int;
@@ -1496,15 +1508,12 @@ class _HomePageController extends GetxController with RouteAware {
           continue;
         }
 
-        debugPrint('[LOAD_EMPLOYEES] Processing employee: fid=$fid, id=$empId, name=$empName');
-        await _device.registerFingerprint(fid, templateBytes);
         final entry = _EmployeeEntry(id: empId, name: empName ?? empId);
         _employeeDb[fid] = entry;
         _employeeDbByFid[fid.toString()] = entry;
-        registered++;
       }
 
-      debugPrint('[LOAD_EMPLOYEES] Successfully registered $registered employees');
+      debugPrint('[LOAD_EMPLOYEES] Loaded ${_employeeDb.length} employees into scan maps');
       if (!mounted) return;
     } catch (e) {
       if (!mounted) return;
@@ -1626,11 +1635,21 @@ class _HomePageController extends GetxController with RouteAware {
       );
       if (!mounted) return;
       
-      if (attendanceType == 'TIME IN' || attendanceType == 'TIME OUT' || attendanceType == 'QUEUED OFFLINE') {
-        final String resultTypeStr = attendanceType == 'TIME OUT' 
-            ? 'timeOutSuccess' 
-            : 'timeInSuccess';
-        final String displayAttendanceType = attendanceType == 'QUEUED OFFLINE' ? 'Time In (Queued)' : (attendanceType ?? 'Time In');
+      final isTimeOut = attendanceType == 'TIME OUT' ||
+          attendanceType == 'QUEUED TIME OUT';
+      final isSuccess = attendanceType == 'TIME IN' ||
+          attendanceType == 'TIME OUT' ||
+          attendanceType == 'QUEUED TIME IN' ||
+          attendanceType == 'QUEUED TIME OUT';
+
+      if (isSuccess) {
+        final String resultTypeStr =
+            isTimeOut ? 'timeOutSuccess' : 'timeInSuccess';
+        final String displayAttendanceType = attendanceType == 'QUEUED TIME IN'
+            ? 'Time In (Queued)'
+            : attendanceType == 'QUEUED TIME OUT'
+                ? 'Time Out (Queued)'
+                : (attendanceType ?? 'Time In');
         final DateTime now = DateTime.now();
         
         await Get.to<void>(
@@ -1648,12 +1667,8 @@ class _HomePageController extends GetxController with RouteAware {
                   matchedAt: now,
                   siteId: _selectedSiteId,
                   resultType: resultTypeStr,
-                  timeIn: attendanceType == 'TIME OUT'
-                      ? null
-                      : _controller.formatTimeOnly(now),
-                  timeOut: attendanceType == 'TIME OUT'
-                      ? _controller.formatTimeOnly(now)
-                      : null,
+                  timeIn: isTimeOut ? null : _controller.formatTimeOnly(now),
+                  timeOut: isTimeOut ? _controller.formatTimeOnly(now) : null,
                 ),
               )?.then((_) {
                 if (!mounted) return;
@@ -1674,7 +1689,8 @@ class _HomePageController extends GetxController with RouteAware {
       }
       
       String resultTypeStr;
-      if (attendanceType == 'ALREADY IN') {
+      if (attendanceType != null &&
+          attendanceType.toUpperCase().contains('ALREADY IN')) {
         resultTypeStr = 'alreadyTimedIn';
       } else if (attendanceType == 'ALREADY OUT - Come back tomorrow') {
         resultTypeStr = 'alreadyTimedOut';
@@ -2105,5 +2121,5 @@ class _HomePageController extends GetxController with RouteAware {
     }
   }
 
-// Particle animation is provided by lib/animations/rising_fade_particle.dart
+  // Particle animation is provided by lib/animations/rising_fade_particle.dart
 }

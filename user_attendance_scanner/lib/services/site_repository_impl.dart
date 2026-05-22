@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import '../models/site_model.dart';
 import 'site_repository.dart';
 import 'local_db.dart';
@@ -11,6 +12,19 @@ class SiteRepositoryImpl implements SiteRepository {
 
   @override
   Future<List<Site>> fetchSites() async {
+    // OFFLINE-FIRST: Try to get from local cache first
+    try {
+      final cachedSites = await LocalDb.getSitesFromCache();
+      if (cachedSites.isNotEmpty) {
+        debugPrint('[SITE_REPO] Returning ${cachedSites.length} sites from OFFLINE cache');
+        return cachedSites.map((json) => Site.fromJson(json)).toList();
+      }
+    } catch (e) {
+      debugPrint('[SITE_REPO] Error reading from cache: $e');
+    }
+
+    // Fallback to API if cache is empty
+    debugPrint('[SITE_REPO] Cache empty, fetching from API');
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 20);
 
@@ -25,7 +39,12 @@ class SiteRepositoryImpl implements SiteRepository {
         final Map<String, dynamic> data = jsonDecode(responseBody);
 
         final List sitesData = data['data'] ?? [];
-        return sitesData.map((json) => Site.fromJson(json)).toList();
+        final sites = sitesData.map((json) => Site.fromJson(json)).toList();
+        
+        // Save to cache for future use
+        await LocalDb.saveSitesToCache(sitesData.cast<Map<String, dynamic>>());
+        
+        return sites;
       } else {
         throw Exception('Failed to fetch sites: ${response.statusCode}');
       }
@@ -38,23 +57,40 @@ class SiteRepositoryImpl implements SiteRepository {
 
   @override
   Future<List<Site>> getCachedSites() async {
-    // Retrieve cached sites from local database (placeholder for future use)
-    // For now, return empty list - sites are persisted but not cached here
-    return [];
+    // OFFLINE-FIRST: Retrieve cached sites from local database
+    try {
+      final cachedSites = await LocalDb.getSitesFromCache();
+      return cachedSites.map((json) => Site.fromJson(json)).toList();
+    } catch (e) {
+      debugPrint('[SITE_REPO] Error getting cached sites: $e');
+      return [];
+    }
   }
 
   @override
   Future<void> cacheSites(List<Site> sites) async {
-    // Sites are automatically persisted when selected
+    // Convert sites to Map format and save to cache
+    final sitesData = sites.map((site) => {
+      'site_id': site.id,
+      'site_name': site.name,
+    }).toList();
+    await LocalDb.saveSitesToCache(sitesData);
   }
 
   @override
   Future<Site?> getSiteById(String siteId) async {
-    final sites = await fetchSites();
+    // OFFLINE-FIRST: Try to get from cache first
+    final cachedSites = await getCachedSites();
     try {
-      return sites.firstWhere((site) => site.id == siteId);
+      return cachedSites.firstWhere((site) => site.id == siteId);
     } catch (e) {
-      return null;
+      // Fallback to API if not in cache
+      final sites = await fetchSites();
+      try {
+        return sites.firstWhere((site) => site.id == siteId);
+      } catch (e) {
+        return null;
+      }
     }
   }
 

@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../constants/date_time_formats.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
+import '../services/offline_mode_sync_service.dart';
 
 class DashboardPageController extends GetxController {
+  final _offlineModeSyncService = OfflineModeSyncService();
   final now = DateTime.now().obs;
   final profilePhoto = Rxn<Uint8List>();
   final alreadyTimedIn = false.obs;
@@ -553,6 +557,18 @@ class DashboardPageController extends GetxController {
         },
       );
 
+      final wasQueued = await _submitOrQueuePendingAttendance(
+        employeeId: employeeId,
+        siteId: siteId,
+        pending: pending,
+      );
+
+      if (wasQueued) {
+        return pending.code.startsWith('IN')
+            ? 'QUEUED TIME IN'
+            : 'QUEUED TIME OUT';
+      }
+
       await Future.delayed(const Duration(milliseconds: 500));
 
       print('[DASHBOARD_RECORD] SUCCESS: code=${pending.code}');
@@ -584,49 +600,24 @@ class DashboardPageController extends GetxController {
       // Commented out debug dump to improve performance
       // await LocalDb.debugDumpAllTimelogs();
 
-      final cached = await LocalDb.getLatestTimelogForEmployee(
+      // Offline-first: only today's row drives in/out (never yesterday's latest row).
+      final todayCache = await LocalDb.getTimelogForEmployeeOnDate(
         siteId: siteId,
         employeeId: employeeId,
+        date: date,
       );
 
-      print('[TIMELOG] cached from DB: ${cached != null ? "FOUND" : "NULL"}');
-      // Commented out verbose debug printing to improve performance
-      // if (cached != null) {
-      //   print('[TIMELOG] cached keys: ${cached.keys}');
-      //   print('[TIMELOG] cached full data: $cached');
-      //   print('[TIMELOG] timeInMorning value: "${cached['timeInMorning']}"');
-      // }
+      print('[TIMELOG] today cache from offline DB: ${todayCache != null ? "FOUND" : "NULL"}');
 
-      final cachedDate = cached?['timeLogDate']?.toString() ?? cached?['timelog']?.toString() ?? '';
-      final isToday = cachedDate == date;
-      print('[TIMELOG] cachedDate=$cachedDate, today=$date, isToday=$isToday');
-
-      final todayCache = isToday ? cached : null;
-
-      if (cached != null && !isToday) {
-        final recentTimeIn = cached['timeInMorning']?.toString();
-        if (recentTimeIn != null && recentTimeIn.isNotEmpty && recentTimeIn != '00:00:00') {
-          print('[TIMELOG] FALLBACK: Found recent timeInMorning, checking if within 5 minutes');
-          final recentDate = cached['timeLogDate']?.toString() ?? cached['timelog']?.toString() ?? '';
-          if (recentDate.isNotEmpty) {
-            try {
-              final recentDateTime = DateTime.tryParse('${recentDate}T$recentTimeIn');
-              if (recentDateTime != null) {
-                final diffMinutes = now.difference(recentDateTime).inMinutes;
-                print('[TIMELOG] FALLBACK: diffMinutes=$diffMinutes');
-                if (diffMinutes < 30) {
-                  print('[TIMELOG] FALLBACK: THROWING ALREADY_IN (recent scan within 30 min)');
-                  throw Exception('ALREADY_IN');
-                }
-              }
-            } catch (e) {
-              print('[TIMELOG] FALLBACK: Error parsing recent time: $e');
-            }
-          }
-        }
+      var timeLogId = (todayCache?['timelogID'] ??
+              todayCache?['timeLogID'] ??
+              todayCache?['remark'] ??
+              '')
+          .toString()
+          .trim();
+      if (timeLogId.isEmpty) {
+        timeLogId = 'tl_${now.millisecondsSinceEpoch}';
       }
-
-      final timeLogId = (todayCache?['timelogID'] ?? todayCache?['remark'] ?? '').toString();
       final remarks = (todayCache?['remarks'] ?? todayCache?['remark'] ?? '').toString();
       final schedule = (todayCache?['schedule'] ?? todayCache?['schedCode'] ?? '').toString();
 
@@ -743,10 +734,111 @@ class DashboardPageController extends GetxController {
     }
   }
 
+  Future<bool> _submitOrQueuePendingAttendance({
+    required String employeeId,
+    required String siteId,
+    required _PendingTimeLog pending,
+  }) async {
+    if (_offlineModeSyncService.isOfflineMode()) {
+      await _queuePendingAttendance(
+        employeeId: employeeId,
+        siteId: siteId,
+        timestamp: _pendingAttendanceTimestamp(pending),
+        pending: pending,
+      );
+      return true;
+    }
+
+    try {
+      await LocalDb.submitAttendanceSync(
+        siteId: siteId,
+        employeeId: employeeId,
+        timeLogId: pending.timeLogId,
+        timeLog: pending.timeLogDate,
+        remarks: pending.remarks,
+        schedule: pending.schedule,
+        code: pending.code,
+        timeInMorning: pending.timeInMorning,
+        timeOutMorning: pending.timeOutMorning,
+        timeInAfternoon: pending.timeInAfternoon,
+        timeOutAfternoon: pending.timeOutAfternoon,
+      );
+      return false;
+    } catch (e) {
+      debugPrint('[DASHBOARD_RECORD] Submit failed, queueing offline: $e');
+      await _queuePendingAttendance(
+        employeeId: employeeId,
+        siteId: siteId,
+        timestamp: _pendingAttendanceTimestamp(pending),
+        pending: pending,
+      );
+      return true;
+    }
+  }
+
+  Future<void> _queuePendingAttendance({
+    required String employeeId,
+    required String siteId,
+    required DateTime timestamp,
+    required _PendingTimeLog pending,
+  }) async {
+    await LocalDb.queueAttendance(
+      employeeId: employeeId,
+      siteId: siteId,
+      attendanceTime: timestamp.toIso8601String(),
+      payloadJson: jsonEncode({
+        'timeLogId': pending.timeLogId,
+        'timeLogDate': pending.timeLogDate,
+        'remarks': pending.remarks,
+        'schedule': pending.schedule,
+        'code': pending.code,
+        'timeInMorning': pending.timeInMorning,
+        'timeOutMorning': pending.timeOutMorning,
+        'timeInAfternoon': pending.timeInAfternoon,
+        'timeOutAfternoon': pending.timeOutAfternoon,
+      }),
+    );
+    debugPrint(
+      '[DASHBOARD_RECORD] Queued pending attendance employee=$employeeId site=$siteId ts=$timestamp',
+    );
+  }
+
+  DateTime _pendingAttendanceTimestamp(_PendingTimeLog pending) {
+    String? time;
+    switch (pending.code) {
+      case 'IN_AM':
+        time = pending.timeInMorning;
+        break;
+      case 'OUT_AM':
+        time = pending.timeOutMorning;
+        break;
+      case 'IN_PM':
+        time = pending.timeInAfternoon;
+        break;
+      case 'OUT_PM':
+        time = pending.timeOutAfternoon;
+        break;
+      default:
+        time = pending.timeInMorning ??
+            pending.timeOutMorning ??
+            pending.timeInAfternoon ??
+            pending.timeOutAfternoon;
+        break;
+    }
+
+    final parsed = time != null && time.isNotEmpty
+        ? DateTime.tryParse('${pending.timeLogDate}T$time')
+        : null;
+    return parsed ?? DateTime.now();
+  }
+
   bool _isBlank(String value) {
     final text = value.trim();
-    return text.isEmpty || 
-           text == '-' || 
+    return text.isEmpty ||
+           text == '00:00:00' ||
+           text == '00:00' ||
+           text == '0' ||
+           text == '-' ||
            text.toLowerCase() == 'null' ||
            text.toLowerCase() == 'n/a' ||
            text.toLowerCase() == 'na' ||

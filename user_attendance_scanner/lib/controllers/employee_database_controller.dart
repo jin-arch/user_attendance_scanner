@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../services/local_db.dart';
+import '../services/offline_mode_sync_service.dart';
+import '../services/pending_sync_service.dart';
 
 class EmployeeDatabaseController extends GetxController {
   final RxList<Map<String, dynamic>> employeesWithPending =
@@ -15,13 +17,13 @@ class EmployeeDatabaseController extends GetxController {
 
   String _siteId = '';
 
-  @override
-  void onInit() {
-    super.onInit();
-  }
-
   void setSiteId(String siteId) {
     _siteId = siteId;
+  }
+
+  void initializeForSite(String siteId) {
+    setSiteId(siteId);
+    loadEmployeesWithPendingRecords();
   }
 
   Future<void> loadEmployeesWithPendingRecords() async {
@@ -63,10 +65,17 @@ class EmployeeDatabaseController extends GetxController {
         siteId: _siteId,
       );
 
-      selectedEmployeePending.assignAll(pending);
+      final uniqueByQueueId = <int, Map<String, dynamic>>{};
+      for (final row in pending) {
+        final id = row['id'] as int? ?? 0;
+        if (id > 0) {
+          uniqueByQueueId[id] = row;
+        }
+      }
+      selectedEmployeePending.assignAll(uniqueByQueueId.values.toList());
 
       debugPrint(
-          '[EMPLOYEE_DB] Loaded ${pending.length} pending records for $employeeId');
+          '[EMPLOYEE_DB] Loaded ${selectedEmployeePending.length} pending records for $employeeId');
     } catch (e) {
       errorMessage.value = 'Error loading records: $e';
       debugPrint('[EMPLOYEE_DB] Error: $e');
@@ -98,11 +107,15 @@ class EmployeeDatabaseController extends GetxController {
         return;
       }
 
-      // TODO: Implement API call to upload records
-      // For now, just mark as synced locally
-      await LocalDb.markMultipleAttendanceSynced(ids);
+      if (Get.isRegistered<PendingSyncService>() &&
+          OfflineModeSyncService().isOnlineMode()) {
+        await Get.find<PendingSyncService>().syncAllPending(siteId: _siteId);
+      } else {
+        errorMessage.value = 'Switch to online mode to upload pending records';
+        return;
+      }
 
-      debugPrint('[EMPLOYEE_DB] Uploaded ${ids.length} records for $employeeId');
+      debugPrint('[EMPLOYEE_DB] Uploaded pending for $employeeId');
 
       // Reload data
       await loadPendingRecordsForEmployee(
@@ -139,11 +152,15 @@ class EmployeeDatabaseController extends GetxController {
         return;
       }
 
-      // TODO: Implement API call to upload all records
-      // For now, just mark as synced locally
-      await LocalDb.markMultipleAttendanceSynced(ids);
+      if (Get.isRegistered<PendingSyncService>() &&
+          OfflineModeSyncService().isOnlineMode()) {
+        await Get.find<PendingSyncService>().syncAllPending(siteId: _siteId);
+      } else {
+        errorMessage.value = 'Switch to online mode to upload pending records';
+        return;
+      }
 
-      debugPrint('[EMPLOYEE_DB] Uploaded ${ids.length} total records');
+      debugPrint('[EMPLOYEE_DB] Uploaded all pending records');
 
       // Reload data
       await loadEmployeesWithPendingRecords();

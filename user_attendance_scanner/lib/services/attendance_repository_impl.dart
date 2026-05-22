@@ -67,12 +67,22 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
   @override
   Future<void> markAttendanceAsSynced(List<Attendance> attendanceList) async {
     try {
-      // Mark attendance records as synced by removing from queue
-      // (This assumes they were successfully synced to the server)
+      // Mark attendance records as synced by updating the queue
+      final pendingRows = await LocalDb.getPendingAttendanceQueue();
+      
       for (final attendance in attendanceList) {
-        // Implementation would depend on having an ID field in attendance queue
-        // For now, we'll implement a basic approach
-        debugPrint('Marking attendance as synced: ${attendance.employeeId} at ${attendance.timestamp}');
+        // Find matching pending record and mark as synced
+        for (final row in pendingRows) {
+          final rowEmployeeId = row['employee_id']?.toString() ?? '';
+          final rowTime = row['attendance_time']?.toString() ?? '';
+          
+          if (rowEmployeeId == attendance.employeeId && 
+              rowTime == attendance.timestamp.toIso8601String()) {
+            await LocalDb.markAttendanceSynced(row['id'] as int);
+            debugPrint('[ATTENDANCE_REPO] Marked attendance as synced: ${attendance.employeeId} at ${attendance.timestamp}');
+            break;
+          }
+        }
       }
     } catch (e) {
       throw Exception('Failed to mark attendance as synced: $e');
@@ -82,7 +92,59 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
   @override
   Future<void> syncPendingAttendanceToApi() async {
     try {
-      await LocalDb.syncPendingHrisQueue();
+      // Get pending attendance records from queue
+      final pendingAttendance = await getPendingAttendance();
+      
+      if (pendingAttendance.isEmpty) {
+        debugPrint('[ATTENDANCE_REPO] No pending attendance to sync');
+        return;
+      }
+      
+      debugPrint('[ATTENDANCE_REPO] Syncing ${pendingAttendance.length} pending attendance records to API');
+      
+      // Sync each pending attendance record to API
+      for (final attendance in pendingAttendance) {
+        try {
+          // Submit attendance to API using LocalDb methods
+          final timestamp = attendance.timestamp;
+          final timeLogDate = '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
+          final timeLog = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
+          
+          // Determine if it's time in or time out
+          final isTimeIn = attendance.type.displayName.toLowerCase().contains('in');
+          
+          if (isTimeIn) {
+            await LocalDb.submitAttendanceTimeIn(
+              passedID: null,
+              timeLogId: DateTime.now().millisecondsSinceEpoch.toString(),
+              remarks: 'Biometric Attendance',
+              timeLog: timeLogDate,
+              timeInMorning: timeLog,
+              timeInAfternoon: null,
+              code: attendance.employeeId,
+            );
+          } else {
+            await LocalDb.submitAttendanceTimeOut(
+              passedID: null,
+              timeLogId: DateTime.now().millisecondsSinceEpoch.toString(),
+              remarks: 'Biometric Attendance',
+              timeLog: timeLogDate,
+              timeOutMorning: timeLog,
+              timeOutAfternoon: null,
+              code: attendance.employeeId,
+            );
+          }
+          
+          // Mark as synced
+          await markAttendanceAsSynced([attendance]);
+          debugPrint('[ATTENDANCE_REPO] Successfully synced attendance for ${attendance.employeeId}');
+        } catch (e) {
+          debugPrint('[ATTENDANCE_REPO] Failed to sync attendance for ${attendance.employeeId}: $e');
+          // Continue with next record even if one fails
+        }
+      }
+      
+      debugPrint('[ATTENDANCE_REPO] Completed syncing pending attendance');
     } catch (e) {
       throw Exception('Failed to sync pending attendance to API: $e');
     }

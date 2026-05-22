@@ -5,6 +5,8 @@ import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
+import '../services/offline_mode_sync_service.dart';
+import '../services/scanner_registry_service.dart';
 
 class EnrollmentController extends GetxController {
   final ZKTecoUSB _device = ZKTecoUSB();
@@ -395,6 +397,39 @@ class EnrollmentController extends GetxController {
           siteId: site,
           photo: selfieImageBytes.value!,
         );
+      }
+
+      final offlineMode = OfflineModeSyncService();
+      if (offlineMode.isOfflineMode()) {
+        await LocalDb.queueFingerprintUpdate(
+          employeeId: empId,
+          siteId: site,
+        );
+        debugPrint('[ENROLLMENT] Queued fingerprint update (offline)');
+      } else {
+        try {
+          final thumbs = await LocalDb.getEmployeeThumbTemplatesForApi(
+            employeeId: empId,
+            siteId: site,
+          );
+          if (thumbs != null) {
+            await LocalDb.updateEmployeeThumbDetails(
+              employeeId: empId,
+              leftFingerThumb: thumbs.$1,
+              rightFingerThumb: thumbs.$2,
+            );
+          }
+        } catch (e) {
+          debugPrint('[ENROLLMENT] Online thumb sync failed, queueing: $e');
+          await LocalDb.queueFingerprintUpdate(
+            employeeId: empId,
+            siteId: site,
+          );
+        }
+      }
+
+      if (Get.isRegistered<ScannerRegistryService>()) {
+        await Get.find<ScannerRegistryService>().reloadSiteFromLocalDb(site);
       }
 
       _clearEnrollmentData();

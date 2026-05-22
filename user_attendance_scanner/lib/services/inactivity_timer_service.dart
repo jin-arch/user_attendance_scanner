@@ -1,3 +1,5 @@
+// ignore_for_file: unused_field
+
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
@@ -78,8 +80,8 @@ class InactivityTimerService {
 
   bool get hasExpired => timerExpired.value;
 
-  Future<void> dispose() async {
+  void dispose() {
     stop();
-    await timerExpired.dispose();
+    timerExpired.dispose();
   }
 }

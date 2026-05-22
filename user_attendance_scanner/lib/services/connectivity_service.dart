@@ -1,4 +1,5 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 class ConnectivityService {
   static final ConnectivityService _instance = ConnectivityService._internal();
@@ -42,8 +43,4 @@ class ConnectivityService {
       return ConnectivityResult.none;
     }
   }
-}
-
-void debugPrint(String message) {
-  print(message);
 }

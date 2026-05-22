@@ -1,3 +1,5 @@
+// ignore_for_file: unused_local_variable
+
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -167,6 +169,7 @@ class EnrollmentPage extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -1166,7 +1169,6 @@ class EnrollmentPage extends StatelessWidget {
             ],
           ),
         ],
-      ),
       ),
     );
   }

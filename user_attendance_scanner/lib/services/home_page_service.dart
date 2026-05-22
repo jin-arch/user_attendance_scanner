@@ -191,6 +191,28 @@ class HomePageService extends GetxService {
   }
 
   Future<List<SiteOption>> fetchSites() async {
+    // OFFLINE-FIRST: Try to get from local cache first
+    try {
+      final cachedSites = await LocalDb.getSitesFromCache();
+      if (cachedSites.isNotEmpty) {
+        debugPrint('[HOME_SERVICE] Returning ${cachedSites.length} sites from OFFLINE cache');
+        final siteList = cachedSites
+            .map((site) {
+              final name = site['site_name']?.toString() ?? '';
+              final id = site['site_id']?.toString() ?? '';
+              if (name.isEmpty || id.isEmpty) return null;
+              return SiteOption(id: id, name: name);
+            })
+            .whereType<SiteOption>()
+            .toList();
+        if (siteList.isNotEmpty) return siteList;
+      }
+    } catch (e) {
+      debugPrint('[HOME_SERVICE] Error reading from cache: $e');
+    }
+
+    // Fallback to API if cache is empty
+    debugPrint('[HOME_SERVICE] Cache empty, fetching from API');
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 20);
     try {
@@ -243,6 +265,11 @@ class HomePageService extends GetxService {
           })
           .whereType<SiteOption>()
           .toList();
+
+      // Save to cache for future use
+      if (siteList.isNotEmpty) {
+        await LocalDb.saveSitesToCache(list);
+      }
 
       // If API returns no sites, add fallback sample sites
       if (siteList.isEmpty) {

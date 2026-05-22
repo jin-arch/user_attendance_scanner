@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import '../models/employee_model.dart';
 import 'employee_repository.dart';
 import '../services/local_db.dart';
@@ -65,11 +66,20 @@ class EmployeeRepositoryImpl implements EmployeeRepository {
   @override
   Future<List<Employee>> syncEmployeesFromApi(String siteId) async {
     try {
-      // This would call the existing sync logic from home_page.dart
-      // For now, just return the local employees
+      // Fetch employees from API
+      final apiEmployees = await LocalDb.fetchEmployeesBySiteFromApi(siteId);
+      
+      // Save to local database (this will merge with existing data)
+      await LocalDb.saveEmployeesForSite(siteId, apiEmployees);
+      
+      debugPrint('[EMPLOYEE_REPO] Synced ${apiEmployees.length} employees from API to local DB');
+      
+      // Return the merged local employees
       return await getEmployeesForSite(siteId);
     } catch (e) {
-      throw Exception('Failed to sync employees from API: $e');
+      debugPrint('[EMPLOYEE_REPO] Error syncing employees from API: $e');
+      // Return local employees even if sync fails
+      return await getEmployeesForSite(siteId);
     }
   }
 

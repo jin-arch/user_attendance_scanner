@@ -10,6 +10,8 @@ import '../services/site_repository_impl.dart';
 import '../services/employee_repository_impl.dart';
 import '../services/attendance_repository_impl.dart';
 import '../services/device_service_impl.dart';
+import '../services/pending_sync_service.dart';
+import '../services/scanner_registry_service.dart';
 import '../controllers/home_page_bridge.dart';
 
 class AppBinding extends Bindings {
@@ -17,6 +19,8 @@ class AppBinding extends Bindings {
   void dependencies() {
     // Register dependencies
     Get.lazyPut<DeviceService>(() => DeviceServiceImpl(), fenix: true);
+    Get.lazyPut<ScannerRegistryService>(() => ScannerRegistryService(), fenix: true);
+    Get.lazyPut<PendingSyncService>(() => PendingSyncService(), fenix: true);
     Get.lazyPut<SiteRepository>(() => SiteRepositoryImpl(), fenix: true);
     Get.lazyPut<EmployeeRepository>(() => EmployeeRepositoryImpl(), fenix: true);
     Get.lazyPut<AttendanceRepository>(() => AttendanceRepositoryImpl(), fenix: true);
