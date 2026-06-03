@@ -28,15 +28,22 @@ class LoadingPageController extends GetxController {
   void onInit() {
     super.onInit();
 
-    if (progressListenable != null) {
+    progress.value = 0;
+    _lastProgress = 0.0;
+
+    final progressSource = progressListenable;
+    if (progressSource != null) {
+      if (progressSource is ValueNotifier<double>) {
+        progressSource.value = 0.0;
+      }
       _progressListener = () {
-        final value = progressListenable!.value;
+        final value = progressSource.value;
         final clamped = value.clamp(0.0, 1.0).toDouble();
         if (clamped <= _lastProgress) return;
         _lastProgress = clamped;
         _setProgress((clamped * 100).round().clamp(0, 100));
       };
-      progressListenable!.addListener(_progressListener!);
+      progressSource.addListener(_progressListener!);
       _progressListener!();
     } else {
       _startFallbackProgress();
@@ -48,7 +55,14 @@ class LoadingPageController extends GetxController {
   Future<void> _run() async {
     try {
       if (loadFuture != null) {
-        await loadFuture;
+        await loadFuture!.timeout(
+          const Duration(minutes: 3),
+          onTimeout: () {
+            debugPrint(
+              'LoadingPage loadFuture timed out after 3 minutes — continuing',
+            );
+          },
+        );
       } else {
         await Future.delayed(const Duration(milliseconds: 1200));
       }
@@ -59,6 +73,19 @@ class LoadingPageController extends GetxController {
     if (isClosed) return;
 
     _workComplete = true;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+
+    // Wait until external progress reports 100% (data sync finished).
+    if (progressListenable != null) {
+      const maxWait = Duration(minutes: 3);
+      final deadline = DateTime.now().add(maxWait);
+      while (progress.value < 100 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (isClosed) return;
+      }
+    }
+
     await _completeProgress();
   }
 

@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
 import '../models/attendance_model.dart';
 import 'attendance_repository.dart';
 import '../services/local_db.dart';
+import 'pending_sync_service.dart';
 
 class AttendanceRepositoryImpl implements AttendanceRepository {
   @override
@@ -20,6 +22,12 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
         '[ATTENDANCE_QUEUE] queued type=${attendance.type.displayName} employee=${attendance.employeeName}(${attendance.employeeId}) '
         'site=${attendance.siteId} ts=${attendance.timestamp.toIso8601String()}',
       );
+
+      if (Get.isRegistered<PendingSyncService>()) {
+        Get.find<PendingSyncService>()
+            .syncAllPending(siteId: attendance.siteId)
+            .catchError((_) => (synced: 0, failed: 0));
+      }
     } catch (e) {
       throw Exception('Failed to save attendance: $e');
     }
@@ -92,59 +100,14 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
   @override
   Future<void> syncPendingAttendanceToApi() async {
     try {
-      // Get pending attendance records from queue
-      final pendingAttendance = await getPendingAttendance();
-      
-      if (pendingAttendance.isEmpty) {
-        debugPrint('[ATTENDANCE_REPO] No pending attendance to sync');
-        return;
+      if (!Get.isRegistered<PendingSyncService>()) {
+        Get.put(PendingSyncService());
       }
-      
-      debugPrint('[ATTENDANCE_REPO] Syncing ${pendingAttendance.length} pending attendance records to API');
-      
-      // Sync each pending attendance record to API
-      for (final attendance in pendingAttendance) {
-        try {
-          // Submit attendance to API using LocalDb methods
-          final timestamp = attendance.timestamp;
-          final timeLogDate = '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
-          final timeLog = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
-          
-          // Determine if it's time in or time out
-          final isTimeIn = attendance.type.displayName.toLowerCase().contains('in');
-          
-          if (isTimeIn) {
-            await LocalDb.submitAttendanceTimeIn(
-              passedID: null,
-              timeLogId: DateTime.now().millisecondsSinceEpoch.toString(),
-              remarks: 'Biometric Attendance',
-              timeLog: timeLogDate,
-              timeInMorning: timeLog,
-              timeInAfternoon: null,
-              code: attendance.employeeId,
-            );
-          } else {
-            await LocalDb.submitAttendanceTimeOut(
-              passedID: null,
-              timeLogId: DateTime.now().millisecondsSinceEpoch.toString(),
-              remarks: 'Biometric Attendance',
-              timeLog: timeLogDate,
-              timeOutMorning: timeLog,
-              timeOutAfternoon: null,
-              code: attendance.employeeId,
-            );
-          }
-          
-          // Mark as synced
-          await markAttendanceAsSynced([attendance]);
-          debugPrint('[ATTENDANCE_REPO] Successfully synced attendance for ${attendance.employeeId}');
-        } catch (e) {
-          debugPrint('[ATTENDANCE_REPO] Failed to sync attendance for ${attendance.employeeId}: $e');
-          // Continue with next record even if one fails
-        }
-      }
-      
-      debugPrint('[ATTENDANCE_REPO] Completed syncing pending attendance');
+      final result =
+          await Get.find<PendingSyncService>().syncAllPending();
+      debugPrint(
+        '[ATTENDANCE_REPO] Pending sync done synced=${result.synced} failed=${result.failed}',
+      );
     } catch (e) {
       throw Exception('Failed to sync pending attendance to API: $e');
     }

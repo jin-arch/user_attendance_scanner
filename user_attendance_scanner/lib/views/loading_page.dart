@@ -23,7 +23,7 @@ class LoadingPage extends StatelessWidget {
   final ValueListenable<double>? progressListenable;
 
   static const String _particleAsset = 'assets/icons/square-particles-fx.svg';
-  static const String _fingerprintAsset = 'assets/images/HIRSLogo-default.png';
+  static const String _fingerprintAsset = 'assets/images/final_logo.png';
 
   @override
   Widget build(BuildContext context) {

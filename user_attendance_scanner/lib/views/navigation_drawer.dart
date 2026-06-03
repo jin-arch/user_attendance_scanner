@@ -11,13 +11,23 @@ class NavigationDrawer extends StatelessWidget {
   const NavigationDrawer({
     super.key,
     this.selectedSiteId,
+    this.resolveSelectedSite,
     this.onNavigate,
     this.onSync,
   });
 
   final String? selectedSiteId;
+  final Future<({String? siteId, String? siteName})> Function()?
+      resolveSelectedSite;
   final Function(String)? onNavigate;
   final Future<void> Function()? onSync;
+
+  Future<({String? siteId, String? siteName})> _resolveSite() async {
+    if (resolveSelectedSite != null) {
+      return resolveSelectedSite!();
+    }
+    return (siteId: selectedSiteId, siteName: null);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -127,12 +137,22 @@ class NavigationDrawer extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Get.back<void>();
+                    final site = await _resolveSite();
+                    if (site.siteId == null || site.siteId!.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please select a site first'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
                     Get.toNamed<void>(
                       AppRoutes.enrollment,
                       arguments: <String, dynamic>{
-                        'siteId': selectedSiteId,
+                        'siteId': site.siteId,
                         'isEditMode': true,
                       },
                     );
@@ -155,11 +175,21 @@ class NavigationDrawer extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Get.back<void>();
+                    final site = await _resolveSite();
+                    if (site.siteId == null || site.siteId!.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please select a site first'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
                     Get.to<void>(
                       () => LogsPage(
-                        siteId: selectedSiteId,
+                        siteId: site.siteId,
                       ),
                     );
                   },
@@ -189,23 +219,24 @@ class NavigationDrawer extends StatelessWidget {
                       fontFamily: 'Poppins',
                     ),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Get.back<void>();
-                    if (selectedSiteId != null && selectedSiteId!.isNotEmpty) {
-                      Get.to<void>(
-                        () => EmployeeDatabasePage(
-                          siteId: selectedSiteId!,
-                          siteName: 'Current Site',
-                        ),
-                      );
-                    } else {
+                    final site = await _resolveSite();
+                    if (site.siteId == null || site.siteId!.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Please select a site first'),
                           backgroundColor: Colors.red,
                         ),
                       );
+                      return;
                     }
+                    Get.to<void>(
+                      () => EmployeeDatabasePage(
+                        siteId: site.siteId!,
+                        siteName: site.siteName ?? 'Current Site',
+                      ),
+                    );
                   },
                 ),
 
@@ -225,11 +256,21 @@ class NavigationDrawer extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Get.back<void>();
+                    final site = await _resolveSite();
+                    if (site.siteId == null || site.siteId!.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please select a site first'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
                     Get.to<void>(
                       () => DatabasePage(
-                        siteId: selectedSiteId,
+                        siteId: site.siteId,
                       ),
                     );
                   },

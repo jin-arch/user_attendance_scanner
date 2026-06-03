@@ -1,6 +1,5 @@
 // ignore_for_file: deprecated_member_use
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -69,41 +68,10 @@ class LogsPage extends StatelessWidget {
                         children: [
                           Padding(
                             padding: R.screenPadding(context),
-                            child: R.isNarrow(context)
-                                ? Column(
-                                    children: [
-                                      _logsSearchField(
-                                        context,
-                                        controller,
-                                        isEmployeeId: false,
-                                      ),
-                                      SizedBox(height: R.hp(context, 0.01, max: 10)),
-                                      _logsSearchField(
-                                        context,
-                                        controller,
-                                        isEmployeeId: true,
-                                      ),
-                                    ],
-                                  )
-                                : Row(
-                                    children: [
-                                      Expanded(
-                                        child: _logsSearchField(
-                                          context,
-                                          controller,
-                                          isEmployeeId: false,
-                                        ),
-                                      ),
-                                      SizedBox(width: R.wp(context, 0.01, max: 10)),
-                                      Expanded(
-                                        child: _logsSearchField(
-                                          context,
-                                          controller,
-                                          isEmployeeId: true,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                              child: _logsSearchField(
+                                context,
+                                controller,
+                              ),
                           ),
                           if (statusMessage.isNotEmpty)
                             Padding(
@@ -175,195 +143,201 @@ class LogsPage extends StatelessWidget {
                           ),
                           const Divider(color: Color(0xFF3E7DDD)),
                           Expanded(
-                            child: Stack(
-                              children: [
-                                if (filteredLogs.isEmpty)
-                                  Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        if (isScanning)
-                                          const Icon(
-                                            Icons.fingerprint,
-                                            size: 48,
-                                            color: Color(0xFF3FA9F5),
-                                          )
-                                        else
-                                          Icon(
-                                            Icons.history,
-                                            size: 48,
-                                            color: Colors.white.withOpacity(0.6),
-                                          ),
-                                        SizedBox(height: w * 0.02),
-                                        Text(
-                                          isScanning
-                                              ? 'Scanning fingerprint...'
-                                              : controller.isAuthenticated.value
-                                                  ? 'No time logs found'
-                                                  : 'Place your finger on the scanner to authenticate',
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(0.6),
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        if (!isScanning && !controller.isAuthenticated.value)
-                                          SizedBox(height: w * 0.01),
-                                        if (!isScanning && !controller.isAuthenticated.value)
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                controller.onUserInteraction();
+                                return false;
+                              },
+                              child: Stack(
+                                children: [
+                                  if (filteredLogs.isEmpty)
+                                    Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          if (isScanning)
+                                            const Icon(
+                                              Icons.fingerprint,
+                                              size: 48,
+                                              color: Color(0xFF3FA9F5),
+                                            )
+                                          else
+                                            Icon(
+                                              Icons.history,
+                                              size: 48,
+                                              color: Colors.white.withOpacity(0.6),
+                                            ),
+                                          SizedBox(height: w * 0.02),
                                           Text(
-                                            'The scanner is ready - simply place your finger to view your time logs',
+                                            isScanning
+                                                ? 'Scanning fingerprint...'
+                                                : controller.isAuthenticated.value
+                                                    ? 'No time logs found'
+                                                    : 'Place your finger on the scanner to authenticate',
                                             style: TextStyle(
-                                              color: Colors.white.withOpacity(0.4),
-                                              fontSize: 12,
+                                              color: Colors.white.withOpacity(0.6),
+                                              fontSize: 16,
                                             ),
                                           ),
-                                      ],
-                                    ),
-                                  )
-                                else
-                                  ListView.builder(
-                                    itemCount: filteredLogs.length,
-                                    itemBuilder: (context, index) {
-                                      final log = filteredLogs[index];
-                                      final type = (log['type'] ?? '').toString().toLowerCase();
-                                      final isTimeIn = type.contains('in');
-
-                                      debugPrint('[LOGS_PAGE] Log $index: emp=${log['employee_id']}, name=${log['employee_name']}, type=${log['type']}, timestamp=${log['timestamp']}, time_only=${log['time_only']}');
-
-                                      // Generate unique key for this log entry
-                                      final logKey = '${log['employee_id']}_${log['timestamp']}_${log['type']}';
-
-                                      return Dismissible(
-                                        key: Key(logKey),
-                                        direction: DismissDirection.endToStart,
-                                        background: Container(
-                                          color: Colors.green,
-                                          alignment: Alignment.centerRight,
-                                          padding: EdgeInsets.only(right: w * 0.04),
-                                          child: const Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Icon(Icons.send, color: Colors.white, size: 24),
-                                              Text(
-                                                'Send to Server',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
+                                          if (!isScanning && !controller.isAuthenticated.value)
+                                            SizedBox(height: w * 0.01),
+                                          if (!isScanning && !controller.isAuthenticated.value)
+                                            Text(
+                                              'The scanner is ready - simply place your finger to view your time logs',
+                                              style: TextStyle(
+                                                color: Colors.white.withOpacity(0.4),
+                                                fontSize: 12,
                                               ),
-                                            ],
-                                          ),
-                                        ),
-                                        confirmDismiss: (direction) async {
-                                          // Show confirmation dialog but never dismiss (always return false)
-                                          await _showSendToServerDialog(context, controller, log);
-                                          return false; // Never remove the item
-                                        },
-                                        child: ListTile(
-                                          leading: CircleAvatar(
-                                            backgroundColor: isTimeIn
-                                                ? Colors.green
-                                                : Colors.orange,
-                                            child: Icon(
-                                              isTimeIn
-                                                  ? Icons.login
-                                                  : Icons.logout,
-                                              color: Colors.white,
                                             ),
-                                          ),
-                                          title: Text(
-                                            (log['employee_name'] as String?) ??
-                                            (log['name'] as String?) ??
-                                            'Unknown',
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            softWrap: false,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          subtitle: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                'ID: ${log['employee_id'] ?? 'N/A'}',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                softWrap: false,
-                                                style: TextStyle(
-                                                  color: Colors.white.withOpacity(0.7),
-                                                ),
-                                              ),
-                                              if (log['period'] != null)
-                                                Text(
-                                                  '${log['period']}',
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  softWrap: false,
-                                                  style: TextStyle(
-                                                    color: Colors.white.withOpacity(0.6),
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                          trailing: SizedBox(
-                                            width: w * 0.28,
-                                            child: Column(
+                                        ],
+                                      ),
+                                    )
+                                  else
+                                    ListView.builder(
+                                      itemCount: filteredLogs.length,
+                                      itemBuilder: (context, index) {
+                                        final log = filteredLogs[index];
+                                        final type = (log['type'] ?? '').toString().toLowerCase();
+                                        final isTimeIn = type.contains('in');
+                                        
+                                        debugPrint('[LOGS_PAGE] Log $index: emp=${log['employee_id']}, name=${log['employee_name']}, type=${log['type']}, timestamp=${log['timestamp']}, time_only=${log['time_only']}');
+                                        
+                                        // Generate unique key for this log entry
+                                        final logKey = '${log['employee_id']}_${log['timestamp']}_${log['type']}';
+                                        
+                                        return Dismissible(
+                                          key: Key(logKey),
+                                          direction: DismissDirection.endToStart,
+                                          background: Container(
+                                            color: Colors.green,
+                                            alignment: Alignment.centerRight,
+                                            padding: EdgeInsets.only(right: w * 0.04),
+                                            child: const Column(
                                               mainAxisAlignment: MainAxisAlignment.center,
-                                              crossAxisAlignment: CrossAxisAlignment.end,
                                               children: [
+                                                Icon(Icons.send, color: Colors.white, size: 24),
                                                 Text(
-                                                  controller.getTimeInOut(log),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  softWrap: false,
+                                                  'Send to Server',
                                                   style: TextStyle(
-                                                    color: isTimeIn
-                                                        ? Colors.green
-                                                        : Colors.orange,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  controller.formatDate(log['timestamp']),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  softWrap: false,
-                                                  style: TextStyle(
-                                                    color: Colors.white.withOpacity(0.5),
-                                                    fontSize: 11,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  (log['time_only'] as String?) ??
-                                                      controller.formatTimestamp(log['timestamp']),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  softWrap: false,
-                                                  style: TextStyle(
-                                                    color: Colors.white.withOpacity(0.7),
+                                                    color: Colors.white,
                                                     fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
                                                   ),
                                                 ),
                                               ],
                                             ),
                                           ),
+                                          confirmDismiss: (direction) async {
+                                            // Show confirmation dialog but never dismiss (always return false)
+                                            await _showSendToServerDialog(context, controller, log);
+                                            return false; // Never remove the item
+                                          },
+                                          child: ListTile(
+                                            leading: CircleAvatar(
+                                              backgroundColor: isTimeIn
+                                                  ? Colors.green
+                                                  : Colors.orange,
+                                              child: Icon(
+                                                isTimeIn
+                                                    ? Icons.login
+                                                    : Icons.logout,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                            title: Text(
+                                              (log['employee_name'] as String?) ??
+                                              (log['name'] as String?) ??
+                                              'Unknown',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            subtitle: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'ID: ${log['employee_id'] ?? 'N/A'}',
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  softWrap: false,
+                                                  style: TextStyle(
+                                                    color: Colors.white.withOpacity(0.7),
+                                                  ),
+                                                ),
+                                                if (log['period'] != null)
+                                                  Text(
+                                                    '${log['period']}',
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: Colors.white.withOpacity(0.6),
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                            trailing: SizedBox(
+                                              width: w * 0.28,
+                                              child: Column(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                crossAxisAlignment: CrossAxisAlignment.end,
+                                                children: [
+                                                  Text(
+                                                    controller.getTimeInOut(log),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: isTimeIn
+                                                          ? Colors.green
+                                                          : Colors.orange,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    controller.formatDate(log['timestamp']),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: Colors.white.withOpacity(0.5),
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    (log['time_only'] as String?) ??
+                                                        controller.formatTimestamp(log['timestamp']),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    softWrap: false,
+                                                    style: TextStyle(
+                                                      color: Colors.white.withOpacity(0.7),
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  if (controller.isLoading.value)
+                                    Container(
+                                      color: Colors.black.withOpacity(0.3),
+                                      child: const Center(
+                                        child: CircularProgressIndicator(
+                                          color: Color(0xFF3FA9F5),
                                         ),
-                                      );
-                                    },
-                                  ),
-                                if (controller.isLoading.value)
-                                  Container(
-                                    color: Colors.black.withOpacity(0.3),
-                                    child: const Center(
-                                      child: CircularProgressIndicator(
-                                        color: Color(0xFF3FA9F5),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -484,45 +458,47 @@ class LogsPage extends StatelessWidget {
 
 Widget _logsSearchField(
   BuildContext context,
-  LogsController controller, {
-  required bool isEmployeeId,
-}) {
+  LogsController controller,
+) {
   final radius = R.wp(context, 0.02, max: 12);
-  if (isEmployeeId) {
-    return TextField(
-      onChanged: (value) {
-        controller.employeeIdSearch.value = value;
-        controller.onUserInteraction();
-      },
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        hintText: 'Employee ID...',
-        hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
-        prefixIcon: const Icon(Icons.person, color: Colors.white70),
-        suffixIcon: IconButton(
-          icon: const Icon(Icons.login, color: Color(0xFF3FA9F5)),
-          onPressed: () => controller.authenticateByEmployeeId(
-            controller.employeeIdSearch.value,
-          ),
-          tooltip: 'Authenticate with Employee ID',
-        ),
-        filled: true,
-        fillColor: const Color(0xFF1A3A5C),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(radius),
-          borderSide: BorderSide.none,
-        ),
-      ),
-    );
-  }
-
+  final isAuthenticated = controller.isAuthenticated.value;
+  final selectedDate = controller.selectedDate.value;
   return TextField(
     controller: controller.searchController,
+    readOnly: true,
+    onTap: () async {
+      controller.onUserInteraction();
+      if (!isAuthenticated) {
+        controller.setStatus('Scan fingerprint to enable date search');
+        controller.onUserInteraction();
+        return;
+      }
+      final now = DateTime.now();
+      final initial = selectedDate ?? now;
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(now.year + 1, now.month, now.day),
+      );
+      if (picked != null) {
+        controller.setSelectedDate(picked);
+      }
+    },
     style: const TextStyle(color: Colors.white),
     decoration: InputDecoration(
-      hintText: 'Search logs...',
+      hintText: isAuthenticated
+          ? 'Select date (YYYY-MM-DD)'
+          : 'Scan fingerprint to search by date',
       hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
-      prefixIcon: const Icon(Icons.search, color: Colors.white70),
+      prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
+      suffixIcon: selectedDate == null
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.clear, color: Colors.white70),
+              onPressed: controller.clearSearch,
+              tooltip: 'Clear date filter',
+            ),
       filled: true,
       fillColor: const Color(0xFF1A3A5C),
       border: OutlineInputBorder(

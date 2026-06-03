@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/site_model.dart';
 import 'site_repository.dart';
+import 'app_session.dart';
 import 'local_db.dart';
 
 class SiteRepositoryImpl implements SiteRepository {
@@ -97,6 +98,7 @@ class SiteRepositoryImpl implements SiteRepository {
   @override
   Future<void> clearCache() async {
     await LocalDb.clearSelectedSite();
+    await AppSession.resetSiteSetup();
   }
 
   /// Save selected site with persistence

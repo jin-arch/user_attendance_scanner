@@ -1,5 +1,6 @@
 // ignore_for_file: unused_local_variable
 
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -8,6 +9,7 @@ import '../animations/dashboard_rising_fade_particle.dart';
 import '../controllers/enrollment_controller.dart';
 import '../controllers/offline_mode_controller.dart';
 import '../widgets/top_left_curved_notch_clipper.dart';
+import 'enrollment_saving_page.dart';
 
 class EnrollmentPage extends StatelessWidget {
   const EnrollmentPage({
@@ -35,21 +37,50 @@ class EnrollmentPage extends StatelessWidget {
         );
       }
     };
+    controller.onFingerprintNotRecognized = () {
+      if (!context.mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF0B2742),
+          title: const Text(
+            'Fingerprint Not Recognized',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: const Text(
+            'This fingerprint is not recognized or is not enrolled in the database. '
+            'Please try again or enter the employee ID manually.',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              color: Colors.white70,
+              height: 1.4,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text(
+                'OK',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  color: Color(0xFF44D980),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    };
     controller.onSuccess = (message) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.green),
         );
-        final normalized = message.toLowerCase();
-        final didSave =
-            normalized.contains('saved successfully') ||
-            normalized.contains('updated successfully');
-        if (didSave) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) return;
-            Get.until((route) => route.isFirst);
-          });
-        }
       }
     };
 
@@ -81,7 +112,7 @@ class EnrollmentPage extends StatelessWidget {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        resizeToAvoidBottomInset: true,
+        resizeToAvoidBottomInset: false,
         body: Container(
           decoration: const BoxDecoration(
             image: DecorationImage(
@@ -161,7 +192,7 @@ class EnrollmentPage extends StatelessWidget {
                         ),
                       ),
                       SizedBox(height: h * 0.03),
-                      _buildBottomRow(w, h, controller),
+                      _buildBottomRow(context, w, h, controller),
                     ],
                   ),
                 ),
@@ -226,7 +257,7 @@ class EnrollmentPage extends StatelessWidget {
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
                   fontSize: w * 0.018,
-                  color: Colors.white.withOpacity(0.9),
+                  color: Colors.white.withValues(alpha: 0.9),
                   letterSpacing: 3,
                   height: 1.1,
                 ),
@@ -237,7 +268,7 @@ class EnrollmentPage extends StatelessWidget {
                 style: TextStyle(
                   fontFamily: 'CEORUSE',
                   fontSize: w * 0.015,
-                  color: Colors.white.withOpacity(0.7),
+                  color: Colors.white.withValues(alpha: 0.7),
                   letterSpacing: 4,
                 ),
               ),
@@ -291,7 +322,7 @@ class EnrollmentPage extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(w * 0.028),
-            color: const Color(0xFF0B2742).withOpacity(0.70),
+            color: const Color(0xFF0B2742).withValues(alpha: 0.70),
           ),
           child: Column(
             children: [
@@ -309,7 +340,7 @@ class EnrollmentPage extends StatelessWidget {
                 ),
               ),
               Container(
-                color: const Color(0xFF081A2E).withOpacity(0.5),
+                color: const Color(0xFF081A2E).withValues(alpha: 0.5),
                 padding: EdgeInsets.symmetric(
                   horizontal: w * 0.014,
                   vertical: h * 0.010,
@@ -328,7 +359,7 @@ class EnrollmentPage extends StatelessWidget {
                   vertical: h * 0.014,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.4),
+                  color: Colors.white.withValues(alpha: 0.4),
                   borderRadius: BorderRadius.only(
                     bottomLeft: Radius.circular(w * 0.028),
                     bottomRight: Radius.circular(w * 0.028),
@@ -375,7 +406,7 @@ class EnrollmentPage extends StatelessWidget {
       padding: EdgeInsets.symmetric(horizontal: w * 0.01, vertical: w * 0.01),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(w * 0.018),
-        color: const Color(0xFF0E1F33).withOpacity(0.5),
+        color: const Color(0xFF0E1F33).withValues(alpha: 0.5),
       ),
       child: Center(
         child: Text(
@@ -398,17 +429,28 @@ class EnrollmentPage extends StatelessWidget {
     BuildContext context,
   ) {
     final cardRadius = BorderRadius.circular(w * 0.023);
-    final expandedPanelColor = const Color(0xFF092238).withOpacity(0.5);
+    final expandedPanelColor = const Color(0xFF092238).withValues(alpha: 0.5);
     return AnimatedBuilder(
       animation: Listenable.merge([
         controller.selfieImageBytes,
         controller.idController,
         controller.usernameController,
+        controller.employeePosition,
+        controller.employeeSbu,
       ]),
       builder: (context, _) {
         final selfieImage = controller.selfieImageBytes.value;
         final displayName = controller.usernameController.text;
         final displayId = controller.idController.text;
+        final position = controller.employeePosition.value.trim();
+        final sbu = controller.employeeSbu.value.trim();
+        final recordedLine = position.isNotEmpty && sbu.isNotEmpty
+            ? '$position | $sbu'
+            : (position.isNotEmpty
+                ? position
+                : (sbu.isNotEmpty
+                    ? sbu
+                    : 'Position and department will appear after lookup'));
 
         return ClipRRect(
           borderRadius: cardRadius,
@@ -421,7 +463,7 @@ class EnrollmentPage extends StatelessWidget {
                 Container(
                   width: w * 0.18,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF092238).withOpacity(0.7),
+                    color: const Color(0xFF092238).withValues(alpha: 0.7),
                     borderRadius: BorderRadius.only(
                       topLeft: cardRadius.topLeft,
                       bottomLeft: cardRadius.bottomLeft,
@@ -440,7 +482,7 @@ class EnrollmentPage extends StatelessWidget {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.85),
+                              color: Colors.white.withValues(alpha: 0.85),
                               width: 3,
                             ),
                             gradient: selfieImage == null
@@ -494,7 +536,7 @@ class EnrollmentPage extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'CEORUSE',
                           fontSize: w * 0.012,
-                          color: Colors.white.withOpacity(0.8),
+                          color: Colors.white.withValues(alpha: 0.8),
                           letterSpacing: 2,
                         ),
                       ),
@@ -637,13 +679,13 @@ class EnrollmentPage extends StatelessWidget {
                                           fontFamily: 'Poppins',
                                           fontStyle: FontStyle.italic,
                                           fontSize: w * 0.015,
-                                          color: Colors.white.withOpacity(0.8),
+                                          color: Colors.white.withValues(alpha: 0.8),
                                           letterSpacing: 1.4,
                                         ),
                                       ),
                                       SizedBox(height: h * 0.006),
                                       Text(
-                                        'INFORMATION TECHNOLOGY | FAST\nDISTRIBUTION CORPORATION',
+                                        recordedLine.toUpperCase(),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
@@ -675,7 +717,12 @@ class EnrollmentPage extends StatelessWidget {
     );
   }
 
-  Widget _buildBottomRow(double w, double h, EnrollmentController controller) {
+  Widget _buildBottomRow(
+    BuildContext context,
+    double w,
+    double h,
+    EnrollmentController controller,
+  ) {
     return Expanded(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -685,7 +732,7 @@ class EnrollmentPage extends StatelessWidget {
           Container(
             padding: EdgeInsets.all(w * 0.010),
             decoration: BoxDecoration(
-              color: const Color(0xFF0B2742).withOpacity(0.70),
+              color: const Color(0xFF0B2742).withValues(alpha: 0.70),
               borderRadius: BorderRadius.circular(w * 0.022),
             ),
             child: Row(
@@ -698,7 +745,7 @@ class EnrollmentPage extends StatelessWidget {
             ),
           ),
           SizedBox(width: w * 0.010),
-          _buildStatusPanel(w, h, controller),
+          _buildStatusPanel(context, w, h, controller),
         ],
       ),
     );
@@ -740,7 +787,7 @@ class EnrollmentPage extends StatelessWidget {
         vertical: h * 0.020,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.70),
+        color: const Color(0xFF0B2742).withValues(alpha: 0.70),
         borderRadius: BorderRadius.circular(w * 0.022),
       ),
       child: Column(
@@ -817,7 +864,7 @@ class EnrollmentPage extends StatelessWidget {
         vertical: h * 0.020,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.70),
+        color: const Color(0xFF0B2742).withValues(alpha: 0.70),
         borderRadius: BorderRadius.circular(w * 0.022),
       ),
       child: Column(
@@ -928,12 +975,14 @@ class EnrollmentPage extends StatelessWidget {
       width: w * 0.20,
       padding: EdgeInsets.symmetric(horizontal: w * 0.020, vertical: h * 0.020),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.70),
+        color: const Color(0xFF0B2742).withValues(alpha: 0.70),
         borderRadius: BorderRadius.circular(w * 0.022),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
           Text(
             isEditMode ? 'Employee Details' : 'Employee Details',
             style: TextStyle(
@@ -943,13 +992,22 @@ class EnrollmentPage extends StatelessWidget {
               color: Colors.white,
             ),
           ),
-          SizedBox(height: h * 0.020),
+          SizedBox(height: h * 0.016),
           _buildTextField(
             w,
             h,
             'Employee ID',
             controller.idController,
             readOnly: false,
+            onSubmitted: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Future.delayed(const Duration(milliseconds: 100), () {
+                controller.revealEmployeeIdFloater();
+              });
+            },
+            onChanged: () {
+              controller.hideEmployeeIdFloater();
+            },
           ),
           SizedBox(height: h * 0.016),
           _buildTextField(
@@ -963,26 +1021,33 @@ class EnrollmentPage extends StatelessWidget {
           GestureDetector(
             onTap: () => controller.loadEmployeeDetails(controller.idController.text),
             child: Container(
+              width: double.infinity,
               padding: EdgeInsets.symmetric(
-                horizontal: w * 0.016,
-                vertical: h * 0.012,
+                horizontal: w * 0.012,
+                vertical: h * 0.010,
               ),
               decoration: BoxDecoration(
                 color: const Color(0xFF3E7DDD),
                 borderRadius: BorderRadius.circular(w * 0.012),
               ),
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.search, color: Colors.white, size: w * 0.014),
-                  SizedBox(width: w * 0.008),
-                  Text(
-                    'LOOKUP EMPLOYEE',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: w * 0.011,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                  SizedBox(width: w * 0.006),
+                  Flexible(
+                    child: Text(
+                      'LOOKUP EMPLOYEE',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: w * 0.010,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ],
@@ -995,26 +1060,33 @@ class EnrollmentPage extends StatelessWidget {
               await controller.startIdentificationMode();
             },
             child: Container(
+              width: double.infinity,
               padding: EdgeInsets.symmetric(
-                horizontal: w * 0.016,
-                vertical: h * 0.012,
+                horizontal: w * 0.012,
+                vertical: h * 0.010,
               ),
               decoration: BoxDecoration(
                 color: const Color(0xFF44D980),
                 borderRadius: BorderRadius.circular(w * 0.012),
               ),
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.fingerprint, color: Colors.white, size: w * 0.014),
-                  SizedBox(width: w * 0.008),
-                  Text(
-                    'SCAN TO IDENTIFY',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: w * 0.011,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                  SizedBox(width: w * 0.006),
+                  Flexible(
+                    child: Text(
+                      'SCAN TO IDENTIFY',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: w * 0.010,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ],
@@ -1022,6 +1094,7 @@ class EnrollmentPage extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -1032,6 +1105,8 @@ class EnrollmentPage extends StatelessWidget {
     String label,
     TextEditingController controller, {
     bool readOnly = false,
+    VoidCallback? onSubmitted,
+    VoidCallback? onChanged,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1041,22 +1116,24 @@ class EnrollmentPage extends StatelessWidget {
           style: TextStyle(
             fontFamily: 'Poppins',
             fontSize: w * 0.010,
-            color: Colors.white.withOpacity(0.8),
+            color: Colors.white.withValues(alpha: 0.8),
           ),
         ),
         SizedBox(height: h * 0.008),
         Container(
           padding: EdgeInsets.symmetric(horizontal: w * 0.012),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
+            color: Colors.white.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(w * 0.010),
-            border: Border.all(color: Colors.white.withOpacity(0.3)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
           ),
           child: TextField(
             controller: controller,
             readOnly: readOnly,
             enableInteractiveSelection: !readOnly,
             showCursor: !readOnly,
+            onChanged: (_) => onChanged?.call(),
+            onSubmitted: (_) => onSubmitted?.call(),
             style: TextStyle(
               fontFamily: 'Poppins',
               fontSize: w * 0.011,
@@ -1068,7 +1145,7 @@ class EnrollmentPage extends StatelessWidget {
               hintStyle: TextStyle(
                 fontFamily: 'Poppins',
                 fontSize: w * 0.011,
-                color: Colors.white.withOpacity(0.5),
+                color: Colors.white.withValues(alpha: 0.5),
               ),
             ),
           ),
@@ -1127,6 +1204,7 @@ class EnrollmentPage extends StatelessWidget {
   }
 
   Widget _buildStatusPanel(
+    BuildContext context,
     double w,
     double h,
     EnrollmentController controller,
@@ -1158,12 +1236,16 @@ class EnrollmentPage extends StatelessWidget {
               ),
               SizedBox(width: w * 0.012),
               Expanded(
-                child: _buildActionButton(
-                  w,
-                  h,
-                  label: 'SAVE',
-                  color: const Color(0xFF44D980),
-                  onTap: controller.saveEnrollment,
+                child: Obx(
+                  () => _buildActionButton(
+                    w,
+                    h,
+                    label: controller.isSaving.value ? 'SAVING...' : 'SAVE',
+                    color: const Color(0xFF44D980),
+                    onTap: controller.isSaving.value
+                        ? null
+                        : () => _onSavePressed(context, controller),
+                  ),
                 ),
               ),
             ],
@@ -1194,7 +1276,7 @@ class EnrollmentPage extends StatelessWidget {
             vertical: h * 0.026,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFF0B2742).withOpacity(0.70),
+            color: const Color(0xFF0B2742).withValues(alpha: 0.70),
             borderRadius: BorderRadius.circular(w * 0.022),
           ),
           child: Column(
@@ -1215,7 +1297,7 @@ class EnrollmentPage extends StatelessWidget {
                 style: TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: w * 0.010,
-                  color: Colors.white.withOpacity(0.7),
+                  color: Colors.white.withValues(alpha: 0.7),
                 ),
               ),
               SizedBox(height: h * 0.008),
@@ -1231,7 +1313,7 @@ class EnrollmentPage extends StatelessWidget {
                       shape: BoxShape.circle,
                       color: isActive
                           ? const Color(0xFF39BF54)
-                          : Colors.grey.withOpacity(0.55),
+                          : Colors.grey.withValues(alpha: 0.55),
                       border: isActive
                           ? Border.all(color: Colors.white, width: 2)
                           : null,
@@ -1246,6 +1328,42 @@ class EnrollmentPage extends StatelessWidget {
     );
   }
 
+  Future<void> _onSavePressed(
+    BuildContext context,
+    EnrollmentController controller,
+  ) async {
+    EnrollmentSaveContext? saveCtx;
+    final saveFuture = controller.saveEnrollmentLocal().then((ctx) {
+      saveCtx = ctx;
+      return ctx != null;
+    });
+    var saved = false;
+
+    await Get.to<void>(
+      () => EnrollmentSavingPage(
+        saveFuture: saveFuture,
+        onLocalSaved: () => saved = true,
+      ),
+      fullscreenDialog: true,
+    );
+
+    if (!saved || saveCtx == null) return;
+
+    // Return to Home as soon as local DB has both thumbs; HRIS upload continues in background.
+    Get.until((route) => route.isFirst);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enrollment saved locally'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+
+    unawaited(controller.uploadEnrollmentToHris(saveCtx!));
+  }
+
   Widget _buildActionButton(
     double w,
     double h, {
@@ -1255,20 +1373,23 @@ class EnrollmentPage extends StatelessWidget {
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        height: w * 0.065,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(w * 0.022),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'CEORUSE',
-            fontSize: w * 0.013,
-            color: Colors.white,
-            letterSpacing: 2,
+      child: Opacity(
+        opacity: onTap == null ? 0.55 : 1,
+        child: Container(
+          height: w * 0.065,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(w * 0.022),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'CEORUSE',
+              fontSize: w * 0.013,
+              color: Colors.white,
+              letterSpacing: 2,
+            ),
           ),
         ),
       ),

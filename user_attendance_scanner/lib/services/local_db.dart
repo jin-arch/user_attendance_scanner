@@ -1,11 +1,16 @@
 // ignore_for_file: avoid_print
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../constants/date_time_formats.dart';
+import '../utils/hris_log.dart';
+import 'app_session.dart';
+import 'hris_push_policy.dart';
 
 class LocalDb {
   static Database? _db;
@@ -19,6 +24,10 @@ class LocalDb {
   static const int _maxTimelogRowsRead = 1200;
 
   static Map<String, dynamic> _emptyJson() => <String, dynamic>{};
+
+  static const Duration _apiTimeout = Duration(seconds: 25);
+
+  static void _apiLog(String message) => hrisLog(message);
 
   static List<Map<String, dynamic>> _extractRows(dynamic decoded) {
     dynamic data = decoded;
@@ -64,6 +73,7 @@ class LocalDb {
           (key, value) => MapEntry(key, value ?? ''),
         ),
       );
+      _apiLog('GET $uri');
       final request = await client.getUrl(uri);
       final basicToken = base64Encode(
         utf8.encode('$_apiUsername:$_apiPassword'),
@@ -72,19 +82,77 @@ class LocalDb {
       request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
       request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
 
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(_apiTimeout);
+      final body = await response.transform(utf8.decoder).join().timeout(_apiTimeout);
 
       if (response.statusCode < 200 || response.statusCode > 299) {
+        _apiLog('ERROR GET HTTP ${response.statusCode} - $body');
         throw Exception('HTTP ${response.statusCode}: $body');
       }
 
       if (body.trim().isEmpty) {
+        _apiLog('GET empty response body');
         return const [];
       }
 
+      _apiLog('GET OK ${response.statusCode} (${body.length} bytes)');
       final decoded = jsonDecode(body);
-      return _extractRows(decoded);
+      final rows = _extractRows(decoded);
+      _apiLog('GET parsed ${rows.length} rows');
+      
+      return rows;
+    } catch (e) {
+      _apiLog('GET failed: $e');
+      rethrow;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// HRIS write endpoints (timeIn/timeOut, insert timeLog, HRIS logs) require POST
+  /// with query parameters — GET returns HTTP 405.
+  static Future<List<Map<String, dynamic>>> _postApiRows(
+    String endpoint, {
+    Map<String, String?> queryParameters = const {},
+  }) async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 30);
+    try {
+      final uri = Uri.parse('$_apiBaseUrl$endpoint').replace(
+        queryParameters: queryParameters.map(
+          (key, value) => MapEntry(key, value ?? ''),
+        ),
+      );
+      _apiLog('POST $uri');
+      final request = await client.postUrl(uri);
+      final basicToken = base64Encode(
+        utf8.encode('$_apiUsername:$_apiPassword'),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
+
+      final response = await request.close().timeout(_apiTimeout);
+      final body = await response.transform(utf8.decoder).join().timeout(_apiTimeout);
+
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        _apiLog('POST ERROR HTTP ${response.statusCode} - $body');
+        throw Exception('HTTP ${response.statusCode}: $body');
+      }
+
+      if (body.trim().isEmpty) {
+        _apiLog('POST empty response body');
+        return const [];
+      }
+
+      _apiLog('POST OK ${response.statusCode} (${body.length} bytes)');
+      final decoded = jsonDecode(body);
+      final rows = _extractRows(decoded);
+      _apiLog('POST parsed ${rows.length} rows');
+      return rows;
+    } catch (e) {
+      _apiLog('POST failed: $e');
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -92,12 +160,24 @@ class LocalDb {
 
   static Future<Map<String, dynamic>> _postJson(
     String endpoint,
-    Map<String, dynamic> body,
-  ) async {
+    Map<String, dynamic> body, {
+    Map<String, String?> queryParameters = const {},
+  }) async {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 30);
     try {
-      final request = await client.postUrl(Uri.parse('$_apiBaseUrl$endpoint'));
+      final uri = Uri.parse('$_apiBaseUrl$endpoint').replace(
+        queryParameters: queryParameters.map(
+          (key, value) => MapEntry(key, value ?? ''),
+        ),
+      );
+      final leftLen = body['leftFingerThumb']?.toString().length ?? 0;
+      final rightLen = body['rightFingerThumb']?.toString().length ?? 0;
+      _apiLog(
+        'POST $uri employeeID=${body['employeeID']} '
+        'leftLen=$leftLen rightLen=$rightLen',
+      );
+      final request = await client.postUrl(uri);
       final basicToken = base64Encode(
         utf8.encode('$_apiUsername:$_apiPassword'),
       );
@@ -107,11 +187,15 @@ class LocalDb {
       request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
       request.write(jsonEncode(body));
 
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(_apiTimeout);
+      final responseBody =
+          await response.transform(utf8.decoder).join().timeout(_apiTimeout);
       if (response.statusCode < 200 || response.statusCode > 299) {
+        _apiLog('POST ERROR HTTP ${response.statusCode}: $responseBody');
         throw Exception('HTTP ${response.statusCode}: $responseBody');
       }
+
+      _apiLog('POST OK HTTP ${response.statusCode}');
 
       if (responseBody.trim().isEmpty) {
         return _emptyJson();
@@ -150,6 +234,21 @@ class LocalDb {
     ''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_employee_photos_site ON employee_photos (site_id)',
+    );
+    await _ensureEmployeePhotoPathColumn(db);
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS employee_profiles (
+        employee_id TEXT NOT NULL,
+        site_id TEXT NOT NULL,
+        employee_name TEXT,
+        position TEXT,
+        sbu TEXT,
+        PRIMARY KEY (employee_id, site_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_employee_profiles_site ON employee_profiles (site_id)',
     );
 
     await db.execute('''
@@ -199,11 +298,96 @@ class LocalDb {
       )
     ''');
 
+    await _ensureEmployeeProfilesTable(db);
+    await _ensureEmployeeProfileTimelogIdColumn(db);
     await _ensureTimelogCacheColumns(db);
     await _ensureAttendanceQueueColumns(db);
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_timelog_cache_lookup ON timelog_cache (site_id, employee_id, timelog_date)',
     );
+  }
+
+  static Future<void> _ensureEmployeePhotoPathColumn(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(employee_photos)');
+    final names = cols.map((c) => c['name']?.toString()).toSet();
+    if (!names.contains('photo_path')) {
+      await db.execute(
+        'ALTER TABLE employee_photos ADD COLUMN photo_path TEXT',
+      );
+    }
+  }
+
+  static Future<Directory> _employeePhotosDirectory() async {
+    Directory dir;
+    if (!kIsWeb && Platform.isWindows) {
+      dir = Directory(p.join(_windowsDbDirectory, 'employee_photos'));
+    } else {
+      final dbPath = await getDatabasesPath();
+      dir = Directory(p.join(dbPath, 'employee_photos'));
+    }
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  static String _sanitizePhotoFileKey(String siteId, String employeeId) {
+    return '${siteId.trim()}_${employeeId.trim()}'
+        .replaceAll(RegExp(r'[^\w\-.]'), '_');
+  }
+
+  static Future<String> _employeePhotoFilePath(
+    String siteId,
+    String employeeId,
+  ) async {
+    final dir = await _employeePhotosDirectory();
+    return p.join(dir.path, '${_sanitizePhotoFileKey(siteId, employeeId)}.img');
+  }
+
+  static Future<void> _ensureEmployeeProfileTimelogIdColumn(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(employee_profiles)');
+    final names = cols.map((c) => c['name']?.toString()).toSet();
+    if (!names.contains('timelog_employee_id')) {
+      await db.execute(
+        'ALTER TABLE employee_profiles ADD COLUMN timelog_employee_id TEXT',
+      );
+    }
+  }
+
+  static Future<void> _ensureEmployeeProfilesTable(Database db) async {
+    final tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='employee_profiles'",
+    );
+    if (tables.isEmpty) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS employee_profiles (
+          employee_id TEXT NOT NULL,
+          site_id TEXT NOT NULL,
+          employee_name TEXT,
+          position TEXT,
+          sbu TEXT,
+          PRIMARY KEY (employee_id, site_id)
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_employee_profiles_site ON employee_profiles (site_id)',
+      );
+      return;
+    }
+
+    final cols = await db.rawQuery('PRAGMA table_info(employee_profiles)');
+    final names = cols.map((c) => c['name']?.toString()).toSet();
+    if (!names.contains('employee_name')) {
+      await db.execute(
+        'ALTER TABLE employee_profiles ADD COLUMN employee_name TEXT',
+      );
+    }
+    if (!names.contains('position')) {
+      await db.execute('ALTER TABLE employee_profiles ADD COLUMN position TEXT');
+    }
+    if (!names.contains('sbu')) {
+      await db.execute('ALTER TABLE employee_profiles ADD COLUMN sbu TEXT');
+    }
   }
 
   static Future<void> _ensureAttendanceQueueColumns(Database db) async {
@@ -254,7 +438,24 @@ class LocalDb {
     final s = raw.toString().trim();
     if (s.isEmpty) return null;
 
-    final dt = DateTime.tryParse(s);
+    var dt = DateTime.tryParse(s);
+    if (dt == null) {
+      // HRIS API uses "yyyy/MM/dd HH:mm:ss" which Dart's tryParse rejects.
+      final slashMatch = RegExp(
+        r'^(\d{4})/(\d{1,2})/(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?',
+      ).firstMatch(s);
+      if (slashMatch != null) {
+        dt = DateTime(
+          int.parse(slashMatch.group(1)!),
+          int.parse(slashMatch.group(2)!),
+          int.parse(slashMatch.group(3)!),
+          int.tryParse(slashMatch.group(4) ?? '') ?? 0,
+          int.tryParse(slashMatch.group(5) ?? '') ?? 0,
+          int.tryParse(slashMatch.group(6) ?? '') ?? 0,
+        );
+      }
+    }
+
     if (dt != null) {
       final y = dt.year.toString().padLeft(4, '0');
       final m = dt.month.toString().padLeft(2, '0');
@@ -262,14 +463,109 @@ class LocalDb {
       return '$y-$m-$d';
     }
 
-    return s.length >= 10 ? s.substring(0, 10) : s;
+    final head = s.length >= 10 ? s.substring(0, 10) : s;
+    return head.replaceAll('/', '-');
+  }
+
+  /// Map HRIS uppercase JSON keys to canonical keys used by the app.
+  static Map<String, dynamic> normalizeTimelogApiRow(Map<String, dynamic> row) {
+    String? pick(List<String> keys) {
+      for (final key in keys) {
+        final value = row[key];
+        if (value == null) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+      }
+      return null;
+    }
+
+    final normalized = Map<String, dynamic>.from(row);
+    final employeeId = pick([
+      'EMPLOYEEID',
+      'employee_id',
+      'employeeID',
+      'EMPID',
+      'companyID',
+    ]);
+    if (employeeId != null) {
+      normalized['employee_id'] = employeeId;
+      normalized['EMPLOYEEID'] ??= employeeId;
+    }
+
+    final timelogId = pick(['TIMELOGID', 'timelogID', 'timeLogID']);
+    if (timelogId != null) {
+      normalized['timelogID'] = timelogId;
+      normalized['TIMELOGID'] ??= timelogId;
+    }
+
+    final dateRaw = pick([
+      'timelog',
+      'TIMELOG',
+      'timeLogDate',
+      'timelog_date',
+      'DATECAPTURED',
+      'datecaptured',
+      'date',
+    ]);
+    final dateOnly = DateTimeFormats.dateFromApiValue(dateRaw) ?? _normalizeDate(dateRaw);
+    if (dateOnly != null) {
+      normalized['timelog_date'] = dateOnly;
+      normalized['timeLogDate'] = dateOnly;
+      normalized['timelog'] = dateOnly;
+    }
+
+    void copyField(String canonical, List<String> sources) {
+      final value = pick(sources);
+      if (value != null) {
+        normalized[canonical] = value;
+      }
+    }
+
+    void copyTimeField(String canonical, List<String> sources) {
+      final value = pick(sources);
+      if (value != null) {
+        final timeOnly = DateTimeFormats.formatTimeFromApi(value);
+        if (timeOnly.isNotEmpty) {
+          normalized[canonical] = timeOnly;
+        }
+      }
+    }
+
+    copyTimeField('timeInMorning', [
+      'timeInMorning',
+      'TIMEINMORNING',
+      'timeinmorning',
+    ]);
+    copyTimeField('timeOutMorning', [
+      'timeOutMorning',
+      'TIMEOUTMORNING',
+      'timeoutmorning',
+    ]);
+    copyTimeField('timeInAfternoon', [
+      'timeInAfternoon',
+      'TIMEINAFTERNOON',
+      'timeinafternoon',
+    ]);
+    copyTimeField('timeOutAfternoon', [
+      'timeOutAfternoon',
+      'TIMEOUTAFTERNOON',
+      'timeoutafternoon',
+    ]);
+    copyField('remarks', ['remarks', 'REMARKS', 'remark']);
+    copyField('schedule', ['schedule', 'SCHUDULE', 'schedCode']);
+    copyField('code', ['code', 'CODE']);
+
+    return normalized;
   }
 
   static String? _extractTimelogDate(Map<String, dynamic> timelogData) {
     final raw =
         timelogData['timelog'] ??
+        timelogData['TIMELOG'] ??
         timelogData['timeLogDate'] ??
         timelogData['timelog_date'] ??
+        timelogData['DATECAPTURED'] ??
+        timelogData['datecaptured'] ??
         timelogData['date'];
     return _normalizeDate(raw);
   }
@@ -309,7 +605,7 @@ class LocalDb {
 
     return openDatabase(
       path,
-      version: 5,
+      version: 8,
       onCreate: (db, version) async {
         await _ensureSchema(db);
       },
@@ -340,22 +636,570 @@ class LocalDb {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Insert or replace an employee selfie photo.
+  /// Insert or replace an employee selfie photo (stored on disk, not in SQLite BLOB).
   static Future<void> upsertEmployeePhoto({
     required String employeeId,
     required String siteId,
     required Uint8List photo,
   }) async {
     final database = await db;
-    await database.insert('employee_photos', {
-      'employee_id': employeeId,
-      'site_id': siteId,
-      'photo': photo,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _ensureEmployeePhotoPathColumn(database);
+    final filePath = await _employeePhotoFilePath(siteId, employeeId);
+    await File(filePath).writeAsBytes(photo, flush: true);
+    await database.insert(
+      'employee_photos',
+      {
+        'employee_id': employeeId.trim(),
+        'site_id': siteId.trim(),
+        'photo': Uint8List(0),
+        'photo_path': filePath,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Timelog API often uses EMPLOYEEID; employee list uses EMPID.
+  static String? timelogEmployeeIdFromRow(Map<String, dynamic> row) {
+    const keys = [
+      'EMPLOYEEID',
+      'employeeID',
+      'companyID',
+      'COMPANYID',
+      'employee_id',
+      'emp_id',
+      'EMPID',
+      'id',
+    ];
+    for (final key in keys) {
+      final value = row[key]?.toString().trim();
+      if (value != null && value.isNotEmpty && value.toLowerCase() != 'null') {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /// App employee id + timelog alias for cache lookups.
+  static Future<List<String>> resolveTimelogEmployeeIds({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    final trimmed = employeeId.trim();
+    final ids = <String>{trimmed};
+    if (trimmed.isEmpty) return ids.toList();
+
+    try {
+      final profile = await getEmployeeProfile(
+        employeeId: trimmed,
+        siteId: siteId,
+      );
+      final alias = profile?['timelog_employee_id']?.toString().trim() ?? '';
+      if (alias.isNotEmpty) ids.add(alias);
+
+      // Profiles keyed by timelog EMPLOYEEID when it differs from EMPID.
+      final database = await db;
+      final linked = await database.query(
+        'employee_profiles',
+        columns: ['employee_id', 'timelog_employee_id'],
+        where:
+            'site_id = ? AND (employee_id = ? OR timelog_employee_id = ?)',
+        whereArgs: [siteId, trimmed, trimmed],
+      );
+      for (final row in linked) {
+        final emp = row['employee_id']?.toString().trim() ?? '';
+        final timelogId = row['timelog_employee_id']?.toString().trim() ?? '';
+        if (emp.isNotEmpty) ids.add(emp);
+        if (timelogId.isNotEmpty) ids.add(timelogId);
+      }
+    } catch (e) {
+      debugPrint('[LOCAL_DB] resolveTimelogEmployeeIds error: $e');
+    }
+    return ids.toList();
+  }
+
+  /// Link timelog EMPLOYEEID values to enrolled EMPID profiles when they match.
+  static Future<void> linkTimelogProfilesForSite(String siteId) async {
+    final database = await db;
+    final timelogIds = await database.rawQuery(
+      'SELECT DISTINCT employee_id FROM timelog_cache WHERE site_id = ?',
+      [siteId],
+    );
+    for (final row in timelogIds) {
+      final timelogEmpId = row['employee_id']?.toString().trim() ?? '';
+      if (timelogEmpId.isEmpty) continue;
+
+      final profile = await getEmployeeProfile(
+        employeeId: timelogEmpId,
+        siteId: siteId,
+      );
+      if (profile != null) {
+        final existingAlias =
+            profile['timelog_employee_id']?.toString().trim() ?? '';
+        if (existingAlias.isEmpty || existingAlias == timelogEmpId) {
+          await upsertEmployeeProfile(
+            employeeId: timelogEmpId,
+            siteId: siteId,
+            employeeName: profile['employee_name']?.toString(),
+            position: profile['position']?.toString(),
+            sbu: profile['sbu']?.toString(),
+            timelogEmployeeId: timelogEmpId,
+          );
+        }
+      }
+    }
+  }
+
+  /// Full timelog history for one employee (requires [siteID] on the API).
+  static Future<List<Map<String, dynamic>>> fetchTimelogsByEmployeeFromApi({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    return _getApiRows(
+      'get/timelog/perEmployee',
+      queryParameters: {
+        'siteID': siteId,
+        'employeeID': employeeId,
+      },
+    );
+  }
+
+  /// Last 7 days for entire site — dashboard display refresh only, not bulk storage.
+  static Future<List<Map<String, dynamic>>> fetchTimelogsLastWeekBySiteFromApi(
+    String siteId,
+  ) async {
+    return _getApiRows(
+      'get/timelog/lastweek/perSite',
+      queryParameters: {'siteID': siteId},
+    );
+  }
+
+  /// Download full timelog history for one employee into [timelog_cache].
+  static Future<int> syncTimelogsForEmployeeFromApi({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    if (siteId.trim().isEmpty || employeeId.trim().isEmpty) return 0;
+    try {
+      final rows = await fetchTimelogsByEmployeeFromApi(
+        siteId: siteId,
+        employeeId: employeeId,
+      );
+      if (rows.isEmpty) return 0;
+      await replaceTimelogCache(siteId: siteId, rows: rows);
+      return rows.length;
+    } catch (e) {
+      debugPrint(
+        '[SYNC_API] syncTimelogsForEmployeeFromApi employee=$employeeId: $e',
+      );
+      rethrow;
+    }
+  }
+
+  /// Fetch full timelog history for every enrolled employee at [siteId].
+  /// Returns total API rows merged into the local cache.
+  static Future<int> syncTimelogsFromApi(
+    String siteId, {
+    void Function(int processed, int total)? onProgress,
+  }) async {
+    if (siteId.trim().isEmpty) return 0;
+    try {
+      debugPrint(
+        '[SYNC_API] Fetching full timelog history per employee for site: $siteId',
+      );
+
+      final employeeRows = await getEmployeesBySite(siteId);
+      final employeeIds = <String>{};
+      for (final row in employeeRows) {
+        final empId = row['employee_id']?.toString().trim();
+        if (empId != null && empId.isNotEmpty) {
+          employeeIds.add(empId);
+        }
+      }
+
+      if (employeeIds.isEmpty) {
+        final database = await db;
+        final profiles = await database.query(
+          'employee_profiles',
+          columns: ['employee_id'],
+          where: 'site_id = ?',
+          whereArgs: [siteId],
+        );
+        for (final row in profiles) {
+          final empId = row['employee_id']?.toString().trim();
+          if (empId != null && empId.isNotEmpty) {
+            employeeIds.add(empId);
+          }
+        }
+      }
+
+      if (employeeIds.isEmpty) {
+        debugPrint(
+          '[SYNC_API] No employees cached for site $siteId — sync employees first',
+        );
+        return 0;
+      }
+
+      final ids = employeeIds.toList()..sort();
+      final total = ids.length;
+      var processed = 0;
+      var recordCount = 0;
+
+      for (final empId in ids) {
+        processed++;
+        var apiEmployeeId = empId;
+        try {
+          final profile = await getEmployeeProfile(
+            employeeId: empId,
+            siteId: siteId,
+          );
+          final alias = profile?['timelog_employee_id']?.toString().trim();
+          if (alias != null && alias.isNotEmpty) {
+            apiEmployeeId = alias;
+          }
+        } catch (_) {}
+
+        recordCount += await syncTimelogsForEmployeeFromApi(
+          siteId: siteId,
+          employeeId: apiEmployeeId,
+        );
+
+        if (onProgress != null &&
+            (processed == total || processed % 5 == 0)) {
+          onProgress(processed, total);
+        }
+      }
+
+      await linkTimelogProfilesForSite(siteId);
+      debugPrint(
+        '[SYNC_API] Merged $recordCount timelog rows for $total employees on site $siteId',
+      );
+      return recordCount;
+    } catch (e) {
+      debugPrint('[LOCAL_DB] syncTimelogsFromApi error: $e');
+      rethrow;
+    }
+  }
+
+  /// Resolve employee ID from API row (EMPID, EMPLOYEEID, employee_id, etc.).
+  static String? employeeIdFromApiRow(Map<String, dynamic> row) {
+    const keys = [
+      'EMPID',
+      'employee_id',
+      'EMPLOYEEID',
+      'employeeID',
+      'emp_id',
+      'id',
+    ];
+    for (final key in keys) {
+      final value = row[key]?.toString().trim();
+      if (value != null && value.isNotEmpty && value.toLowerCase() != 'null') {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static Map<String, dynamic> _employeeLookupResult({
+    required String id,
+    required String name,
+    String position = '',
+    String sbu = '',
+  }) {
+    return {
+      'id': id,
+      'name': name,
+      'position': position,
+      'sbu': sbu,
+      'exists': true,
+    };
+  }
+
+  /// Pull one employee from API, cache profile (name, position, SBU).
+  static Future<Map<String, dynamic>?> refreshEmployeeProfileFromApi({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    final trimmedId = employeeId.trim();
+    if (trimmedId.isEmpty) return null;
+
+    final rows = await fetchEmployeesBySiteFromApi(siteId);
+    for (final row in rows) {
+      final empId = employeeIdFromApiRow(row);
+      if (empId == null || empId != trimmedId) continue;
+
+      final fields = profileFieldsFromApiRow(row);
+      try {
+        await upsertEmployeeProfile(
+          employeeId: empId,
+          siteId: siteId,
+          employeeName: fields['employee_name'],
+          position: fields['position'],
+          sbu: fields['sbu'],
+          timelogEmployeeId: timelogEmployeeIdFromRow(row) ?? empId,
+        );
+      } catch (e) {
+        debugPrint('[LOCAL_DB] refreshEmployeeProfileFromApi save error: $e');
+      }
+
+      final resolvedName = (fields['employee_name'] ?? '').trim();
+      return _employeeLookupResult(
+        id: empId,
+        name: resolvedName.isNotEmpty ? resolvedName : 'Unknown',
+        position: fields['position'] ?? '',
+        sbu: fields['sbu'] ?? '',
+      );
+    }
+    return null;
+  }
+
+  /// Look up employee by ID: profiles cache, fingerprint DB, then API.
+  static Future<Map<String, dynamic>?> findEmployeeInSite({
+    required String siteId,
+    required String employeeId,
+  }) async {
+    final trimmedId = employeeId.trim();
+    if (trimmedId.isEmpty) return null;
+
+    String name = '';
+    String position = '';
+    String sbu = '';
+
+    try {
+      final profile = await getEmployeeProfile(
+        employeeId: trimmedId,
+        siteId: siteId,
+      );
+      name = profile?['employee_name']?.toString().trim() ?? '';
+      position = profile?['position']?.toString().trim() ?? '';
+      sbu = profile?['sbu']?.toString().trim() ?? '';
+      if (name.isNotEmpty && position.isNotEmpty && sbu.isNotEmpty) {
+        return _employeeLookupResult(
+          id: trimmedId,
+          name: name,
+          position: position,
+          sbu: sbu,
+        );
+      }
+    } catch (e) {
+      debugPrint('[LOCAL_DB] findEmployeeInSite profile read error: $e');
+    }
+
+    try {
+      final employees = await getEmployeesBySite(
+        siteId,
+        includeFingerTemplates: false,
+      );
+      for (final emp in employees) {
+        final empId = emp['employee_id']?.toString().trim() ?? '';
+        if (empId == trimmedId) {
+          name = name.isNotEmpty
+              ? name
+              : (emp['employee_name']?.toString().trim() ?? 'Unknown');
+          break;
+        }
+      }
+    } catch (e) {
+      debugPrint('[LOCAL_DB] findEmployeeInSite local employees error: $e');
+    }
+
+    if (name.isNotEmpty && position.isNotEmpty && sbu.isNotEmpty) {
+      return _employeeLookupResult(
+        id: trimmedId,
+        name: name,
+        position: position,
+        sbu: sbu,
+      );
+    }
+
+    try {
+      final fromApi = await refreshEmployeeProfileFromApi(
+        siteId: siteId,
+        employeeId: trimmedId,
+      );
+      if (fromApi != null) return fromApi;
+    } catch (e) {
+      debugPrint('[LOCAL_DB] findEmployeeInSite API error: $e');
+    }
+
+    if (name.isNotEmpty) {
+      return _employeeLookupResult(
+        id: trimmedId,
+        name: name,
+        position: position,
+        sbu: sbu,
+      );
+    }
+
+    return null;
   }
 
   /// Fetch a selfie photo for an employee (if any).
-  static Future<Uint8List?> getEmployeePhoto({
+  /// Extract position / SBU / name from API employee row (EMPID, POSITION, SBU, etc.).
+  static Map<String, String> profileFieldsFromApiRow(Map<String, dynamic> row) {
+    final firstName =
+        (row['FIRSTNAME'] ?? row['first_name'])?.toString().trim();
+    final middleName =
+        (row['MIDDLENAME'] ?? row['middle_name'])?.toString().trim();
+    final lastName = (row['LASTNAME'] ?? row['last_name'])?.toString().trim();
+    final fullNameParts = [firstName, middleName, lastName]
+        .whereType<String>()
+        .where((part) => part.isNotEmpty && part.toLowerCase() != 'null')
+        .toList();
+    final empName = (row['employee_name'] ?? row['full_name'] ?? row['name'])
+        ?.toString()
+        .trim();
+    final resolvedName = fullNameParts.isNotEmpty
+        ? fullNameParts.join(' ')
+        : ((empName != null &&
+                empName.isNotEmpty &&
+                empName.toLowerCase() != 'null')
+            ? empName
+            : '');
+
+    final position =
+        (row['POSITION'] ?? row['position'] ?? row['job_title'] ?? row['title'])
+            ?.toString()
+            .trim() ??
+        '';
+    final sbu = (row['SBU'] ??
+            row['sbu'] ??
+            row['department'] ??
+            row['business_unit'])
+        ?.toString()
+        .trim() ??
+        '';
+
+    return {
+      'employee_name': resolvedName,
+      'position': position,
+      'sbu': sbu,
+    };
+  }
+
+  static Future<void> upsertEmployeeProfile({
+    required String employeeId,
+    required String siteId,
+    String? employeeName,
+    String? position,
+    String? sbu,
+    String? timelogEmployeeId,
+  }) async {
+    if (employeeId.trim().isEmpty) return;
+    final database = await db;
+    await _ensureEmployeeProfilesTable(database);
+    await _ensureEmployeeProfileTimelogIdColumn(database);
+    final timelogId = (timelogEmployeeId ?? employeeId).trim();
+    await database.insert(
+      'employee_profiles',
+      {
+        'employee_id': employeeId.trim(),
+        'site_id': siteId.trim(),
+        'employee_name': employeeName ?? '',
+        'position': position ?? '',
+        'sbu': sbu ?? '',
+        'timelog_employee_id': timelogId,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<Map<String, dynamic>?> getEmployeeProfile({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    final database = await db;
+    await _ensureEmployeeProfilesTable(database);
+    final rows = await database.query(
+      'employee_profiles',
+      where: 'employee_id = ? AND site_id = ?',
+      whereArgs: [employeeId.trim(), siteId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Local cache first; fetches from API when profile is missing or empty.
+  static Future<Map<String, dynamic>?> resolveEmployeeProfile({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    final cached = await getEmployeeProfile(
+      employeeId: employeeId,
+      siteId: siteId,
+    );
+    final cachedName = cached?['employee_name']?.toString().trim() ?? '';
+    final cachedPosition = cached?['position']?.toString().trim() ?? '';
+    final cachedSbu = cached?['sbu']?.toString().trim() ?? '';
+    if (cachedName.isNotEmpty &&
+        cachedPosition.isNotEmpty &&
+        cachedSbu.isNotEmpty) {
+      return cached;
+    }
+
+    try {
+      final fromApi = await refreshEmployeeProfileFromApi(
+        siteId: siteId,
+        employeeId: employeeId,
+      );
+      if (fromApi != null) {
+        return getEmployeeProfile(
+          employeeId: employeeId.trim(),
+          siteId: siteId,
+        );
+      }
+    } catch (e) {
+      debugPrint('[LOCAL_DB] resolveEmployeeProfile API error: $e');
+    }
+    return cached;
+  }
+
+  /// Whether a photo exists without reading BLOB data (avoids CursorWindow errors).
+  static Future<bool> hasEmployeePhoto({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    try {
+      final database = await db;
+      await _ensureEmployeePhotoPathColumn(database);
+      final rows = await database.query(
+        'employee_photos',
+        columns: ['photo_path'],
+        where: 'employee_id = ? AND site_id = ?',
+        whereArgs: [employeeId.trim(), siteId.trim()],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final path = rows.first['photo_path']?.toString().trim() ?? '';
+      return path.isNotEmpty && File(path).existsSync();
+    } catch (e) {
+      debugPrint('[LOCAL_DB] hasEmployeePhoto error: $e');
+      return false;
+    }
+  }
+
+  static Future<void> _clearOversizedPhotoBlob({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    try {
+      final database = await db;
+      await _ensureEmployeePhotoPathColumn(database);
+      await database.update(
+        'employee_photos',
+        {'photo': Uint8List(0)},
+        where: 'employee_id = ? AND site_id = ?',
+        whereArgs: [employeeId.trim(), siteId.trim()],
+      );
+      debugPrint(
+        '[LOCAL_DB] Cleared oversized photo BLOB for $employeeId @ $siteId',
+      );
+    } catch (e) {
+      debugPrint('[LOCAL_DB] _clearOversizedPhotoBlob error: $e');
+    }
+  }
+
+  static Future<Uint8List?> _readLegacyEmployeePhotoBlob({
     required String employeeId,
     required String siteId,
   }) async {
@@ -364,14 +1208,75 @@ class LocalDb {
       'employee_photos',
       columns: ['photo'],
       where: 'employee_id = ? AND site_id = ?',
-      whereArgs: [employeeId, siteId],
+      whereArgs: [employeeId.trim(), siteId.trim()],
       limit: 1,
     );
     if (rows.isEmpty) return null;
     final raw = rows.first['photo'];
-    if (raw is Uint8List) return raw;
-    if (raw is List<int>) return Uint8List.fromList(raw);
+    if (raw is Uint8List) {
+      return raw.isEmpty ? null : raw;
+    }
+    if (raw is List<int>) {
+      return raw.isEmpty ? null : Uint8List.fromList(raw);
+    }
     return null;
+  }
+
+  static Future<Uint8List?> getEmployeePhoto({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    try {
+      final database = await db;
+      await _ensureEmployeePhotoPathColumn(database);
+      final rows = await database.query(
+        'employee_photos',
+        columns: ['photo_path'],
+        where: 'employee_id = ? AND site_id = ?',
+        whereArgs: [employeeId.trim(), siteId.trim()],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        final path = rows.first['photo_path']?.toString().trim() ?? '';
+        if (path.isNotEmpty) {
+          final file = File(path);
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            if (bytes.isNotEmpty) return bytes;
+          }
+        }
+      }
+
+      try {
+        return await _readLegacyEmployeePhotoBlob(
+          employeeId: employeeId,
+          siteId: siteId,
+        );
+      } on DatabaseException catch (e) {
+        final msg = e.toString().toLowerCase();
+        if (msg.contains('row too big') || msg.contains('cursorwindow')) {
+          await _clearOversizedPhotoBlob(
+            employeeId: employeeId,
+            siteId: siteId,
+          );
+        }
+        debugPrint('[LOCAL_DB] Legacy photo BLOB unreadable: $e');
+        return null;
+      }
+    } on DatabaseException catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('row too big') || msg.contains('cursorwindow')) {
+        await _clearOversizedPhotoBlob(
+          employeeId: employeeId,
+          siteId: siteId,
+        );
+      }
+      debugPrint('[LOCAL_DB] getEmployeePhoto error (skipped): $e');
+      return null;
+    } catch (e) {
+      debugPrint('[LOCAL_DB] getEmployeePhoto error (skipped): $e');
+      return null;
+    }
   }
 
   /// Merge API employees with local enrollments - preserves locally enrolled employees
@@ -440,16 +1345,41 @@ class LocalDb {
     });
   }
 
-  /// Fetch all employees for a given site.
+  /// Fetch employees for a site. Omit fingerprint BLOBs by default to avoid
+  /// SQLite CursorWindow "row too big" errors when many templates are stored.
   static Future<List<Map<String, dynamic>>> getEmployeesBySite(
-    String siteId,
-  ) async {
+    String siteId, {
+    bool includeFingerTemplates = false,
+  }) async {
     final database = await db;
     return database.query(
       'employees',
+      columns: includeFingerTemplates
+          ? null
+          : ['fid', 'employee_id', 'employee_name', 'site_id'],
       where: 'site_id = ?',
       whereArgs: [siteId],
     );
+  }
+
+  /// Load a single fingerprint template (avoids loading all BLOBs at once).
+  static Future<Uint8List?> getFingerTemplateByFid({
+    required int fid,
+    required String siteId,
+  }) async {
+    final database = await db;
+    final rows = await database.query(
+      'employees',
+      columns: ['finger_template'],
+      where: 'fid = ? AND site_id = ?',
+      whereArgs: [fid, siteId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final raw = rows.first['finger_template'];
+    if (raw is Uint8List) return raw;
+    if (raw is List<int>) return Uint8List.fromList(raw);
+    return null;
   }
 
   /// Remove all cached employees for a site (called before a fresh sync).
@@ -467,11 +1397,33 @@ class LocalDb {
     );
   }
 
+  /// Queue row type for time-in / time-out HRIS uploads (not fingerprint enrollment).
+  static const String pendingTimelogRecordType = 'timelog';
+
+  /// SQL fragment: only pending time-in/out rows (excludes fingerprint enrollment).
+  static const String _pendingTimelogWhereSql = '''
+    synced = 0
+    AND LOWER(COALESCE(record_type, 'attendance')) != 'fingerprint'
+    AND LOWER(COALESCE(record_type, 'attendance')) != 'enrollment'
+    AND payload_json IS NOT NULL
+    AND trim(payload_json) != ''
+    AND payload_json LIKE '%"code"%'
+  ''';
+
+  static const String _pendingTimelogWhereSqlAliased = '''
+    a.synced = 0
+    AND LOWER(COALESCE(a.record_type, 'attendance')) != 'fingerprint'
+    AND LOWER(COALESCE(a.record_type, 'attendance')) != 'enrollment'
+    AND a.payload_json IS NOT NULL
+    AND trim(a.payload_json) != ''
+    AND a.payload_json LIKE '%"code"%'
+  ''';
+
   static Future<int> queueAttendance({
     required String employeeId,
     required String siteId,
     required String attendanceTime,
-    String recordType = 'attendance',
+    String recordType = pendingTimelogRecordType,
     String? payloadJson,
   }) async {
     return queuePendingRecord(
@@ -487,12 +1439,65 @@ class LocalDb {
     required String employeeId,
     required String siteId,
     required String attendanceTime,
-    String recordType = 'attendance',
+    String recordType = pendingTimelogRecordType,
     String? payloadJson,
   }) async {
     final database = await db;
     final normalizedEmployeeId = employeeId.trim();
+    final normalizedSiteId = siteId.trim();
     final normalizedType = recordType.trim().toLowerCase();
+
+    // Timelog uploads: one pending row per punch (code + date), not per queue timestamp.
+    if (normalizedType == pendingTimelogRecordType &&
+        payloadJson != null &&
+        payloadJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(payloadJson);
+        if (decoded is Map<String, dynamic>) {
+          final code = decoded['code']?.toString() ?? '';
+          final date = decoded['timeLogDate']?.toString() ?? '';
+          if (code.isNotEmpty && date.isNotEmpty) {
+            final existingRows = await database.query(
+              'attendance_queue',
+              columns: ['id', 'payload_json'],
+              where:
+                  'employee_id = ? AND site_id = ? AND synced = 0 AND LOWER(COALESCE(record_type, \'attendance\')) = ?',
+              whereArgs: [
+                normalizedEmployeeId,
+                normalizedSiteId,
+                pendingTimelogRecordType,
+              ],
+            );
+            for (final row in existingRows) {
+              final raw = row['payload_json']?.toString();
+              if (raw == null || raw.isEmpty) continue;
+              try {
+                final existingPayload = jsonDecode(raw);
+                if (existingPayload is! Map<String, dynamic>) continue;
+                if (existingPayload['code']?.toString() != code) continue;
+                if (existingPayload['timeLogDate']?.toString() != date) {
+                  continue;
+                }
+                final existingId = row['id'] as int? ?? 0;
+                await database.update(
+                  'attendance_queue',
+                  {
+                    'payload_json': payloadJson,
+                    'attendance_time': attendanceTime,
+                  },
+                  where: 'id = ?',
+                  whereArgs: [existingId],
+                );
+                debugPrint(
+                  '[ATTENDANCE_QUEUE] Updated pending timelog id=$existingId code=$code',
+                );
+                return existingId;
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     final existing = await database.query(
       'attendance_queue',
@@ -501,7 +1506,7 @@ class LocalDb {
           'employee_id = ? AND site_id = ? AND attendance_time = ? AND record_type = ? AND synced = 0',
       whereArgs: [
         normalizedEmployeeId,
-        siteId,
+        normalizedSiteId,
         attendanceTime,
         normalizedType,
       ],
@@ -509,15 +1514,23 @@ class LocalDb {
     );
     if (existing.isNotEmpty) {
       final existingId = existing.first['id'] as int? ?? 0;
+      if (payloadJson != null && payloadJson.isNotEmpty) {
+        await database.update(
+          'attendance_queue',
+          {'payload_json': payloadJson},
+          where: 'id = ?',
+          whereArgs: [existingId],
+        );
+      }
       debugPrint(
-        '[ATTENDANCE_QUEUE] Duplicate pending skipped: type=$normalizedType id=$existingId',
+        '[ATTENDANCE_QUEUE] Duplicate pending updated: type=$normalizedType id=$existingId',
       );
       return existingId;
     }
 
     return database.insert('attendance_queue', {
       'employee_id': normalizedEmployeeId,
-      'site_id': siteId,
+      'site_id': normalizedSiteId,
       'attendance_time': attendanceTime,
       'record_type': normalizedType,
       'payload_json': payloadJson,
@@ -543,31 +1556,44 @@ class LocalDb {
     required String employeeId,
     required String siteId,
   }) async {
-    final rows = await getEmployeesBySite(siteId);
+    final leftFid = _stableFingerprintId(employeeId, 'left');
+    final rightFid = _stableFingerprintId(employeeId, 'right');
     String? leftB64;
     String? rightB64;
 
-    int leftFid = _stableFingerprintId(employeeId, 'left');
-    int rightFid = _stableFingerprintId(employeeId, 'right');
+    for (final fid in [leftFid, rightFid]) {
+      final bytes = await getFingerTemplateByFid(fid: fid, siteId: siteId);
+      if (bytes == null || bytes.isEmpty) continue;
+      if (fid == leftFid) {
+        leftB64 = base64Encode(bytes);
+      } else {
+        rightB64 = base64Encode(bytes);
+      }
+    }
 
+    if (leftB64 != null && rightB64 != null) {
+      return (leftB64, rightB64);
+    }
+
+    // Legacy rows may use non-stable fids — scan one template at a time.
+    final rows = await getEmployeesBySite(siteId, includeFingerTemplates: false);
     for (final row in rows) {
       if (row['employee_id']?.toString().trim() != employeeId.trim()) continue;
       final fid = row['fid'] as int?;
-      final raw = row['finger_template'];
-      Uint8List? bytes;
-      if (raw is Uint8List) {
-        bytes = raw;
-      } else if (raw is List<int>) {
-        bytes = Uint8List.fromList(raw);
-      }
+      if (fid == null) continue;
+      final bytes = await getFingerTemplateByFid(fid: fid, siteId: siteId);
       if (bytes == null || bytes.isEmpty) continue;
-      final b64 = base64Encode(bytes);
-      if (fid == leftFid) leftB64 = b64;
-      if (fid == rightFid) rightB64 = b64;
+      if (fid == leftFid || leftB64 == null) {
+        leftB64 = base64Encode(bytes);
+      } else if (fid == rightFid || rightB64 == null) {
+        rightB64 = base64Encode(bytes);
+      }
     }
 
-    if (leftB64 == null || rightB64 == null) return null;
-    return (leftB64, rightB64);
+    if (leftB64 != null && rightB64 != null) {
+      return (leftB64, rightB64);
+    }
+    return null;
   }
 
   static int _stableFingerprintId(String employeeId, String thumbKey) {
@@ -611,6 +1637,17 @@ class LocalDb {
   }
 
   static Future<List<Map<String, dynamic>>> getPendingAttendance() async {
+    final database = await db;
+    return database.query(
+      'attendance_queue',
+      where: _pendingTimelogWhereSql,
+      whereArgs: const [],
+      orderBy: 'id ASC',
+    );
+  }
+
+  /// All unsynced queue rows (timelog + fingerprint) for background sync.
+  static Future<List<Map<String, dynamic>>> getAllUnsyncedQueueRows() async {
     final database = await db;
     return database.query(
       'attendance_queue',
@@ -665,63 +1702,56 @@ class LocalDb {
   static Future<void> replaceTimelogCache({
     required String siteId,
     required List<Map<String, dynamic>> rows,
+    void Function(int processed, int total)? onProgress,
   }) async {
-    final database = await db;
+    if (rows.isEmpty) {
+      debugPrint('[TIMELOG_CACHE] No rows to process for replaceTimelogCache');
+      return;
+    }
 
-    final registeredEmployees = await database.query(
-      'employees',
-      where: 'site_id = ?',
-      whereArgs: [siteId],
-      columns: ['employee_id'],
-    );
-
-    final registeredIds = registeredEmployees
-        .map((row) => row['employee_id'].toString())
-        .toSet();
-
-    debugPrint(
-      '[TIMELOG_CACHE] Processing ${rows.length} rows for ${registeredIds.length} enrolled employees',
-    );
-
-    if (rows.isEmpty) return;
+    debugPrint('[TIMELOG_CACHE] Processing ${rows.length} API timelog rows for site: $siteId');
 
     final filteredTimelogs = <Map<String, dynamic>>[];
     int skippedCount = 0;
 
+    final total = rows.length;
+    var processed = 0;
     for (final row in rows) {
-      final employeeId =
-          (row['employee_id'] ??
-                  row['companyID'] ??
-                  row['employeeID'] ??
-                  row['EMPLOYEEID'])
-              ?.toString();
+      processed++;
+      final normalized = normalizeTimelogApiRow(row);
+      final employeeId = timelogEmployeeIdFromRow(normalized);
 
-      if (employeeId == null || !registeredIds.contains(employeeId)) {
+      if (employeeId == null || employeeId.isEmpty) {
+        debugPrint('[TIMELOG_CACHE] Skipping row: no valid employee ID');
         skippedCount++;
-        continue;
+      } else {
+        final timelogDate = _extractTimelogDate(normalized);
+        final payload = Map<String, dynamic>.from(normalized);
+        payload['employee_id'] = employeeId;
+        payload['EMPLOYEEID'] ??= employeeId;
+
+        if (timelogDate != null) {
+          payload['timelog_date'] = timelogDate;
+          payload['timeLogDate'] ??= timelogDate;
+          payload['timelog'] ??= timelogDate;
+        }
+
+        filteredTimelogs.add(payload);
       }
 
-      final timelogDate = _normalizeDate(
-        row['timelog'] ??
-            row['timeLogDate'] ??
-            row['timelog_date'] ??
-            row['date'],
-      );
-      final payload = Map<String, dynamic>.from(row);
-
-      if (timelogDate != null) {
-        payload['timelog_date'] = timelogDate;
-        payload['timeLogDate'] ??= timelogDate;
-        payload['timelog'] ??= timelogDate;
+      if (onProgress != null &&
+          (processed == total || processed % 25 == 0)) {
+        onProgress(processed, total);
       }
-
-      filteredTimelogs.add(payload);
     }
 
-    await batchSaveTimelogs(siteId: siteId, timelogDataList: filteredTimelogs);
+    if (filteredTimelogs.isNotEmpty) {
+      debugPrint('[TIMELOG_CACHE] Calling batchSaveTimelogs with ${filteredTimelogs.length} records');
+      await batchSaveTimelogs(siteId: siteId, timelogDataList: filteredTimelogs);
+    }
 
     debugPrint(
-      '[TIMELOG_CACHE] Upserted: ${filteredTimelogs.length}, Skipped: $skippedCount',
+      '[TIMELOG_CACHE] Complete - Processed: ${filteredTimelogs.length}, Skipped: $skippedCount',
     );
   }
 
@@ -758,12 +1788,20 @@ class LocalDb {
     final normalizedDate = _normalizeDate(date);
     if (normalizedDate == null) return null;
 
+    final employeeIds = await resolveTimelogEmployeeIds(
+      siteId: siteId,
+      employeeId: employeeId,
+    );
+    if (employeeIds.isEmpty) return null;
+
     final database = await db;
+    final inClause = List.filled(employeeIds.length, '?').join(',');
     var rows = await database.query(
       'timelog_cache',
       columns: ['raw_json'],
-      where: 'site_id = ? AND employee_id = ? AND timelog_date = ?',
-      whereArgs: [siteId, employeeId, normalizedDate],
+      where:
+          'site_id = ? AND employee_id IN ($inClause) AND timelog_date = ?',
+      whereArgs: [siteId, ...employeeIds, normalizedDate],
       orderBy: 'id DESC',
       limit: 1,
     );
@@ -772,8 +1810,8 @@ class LocalDb {
       final candidates = await database.query(
         'timelog_cache',
         columns: ['raw_json'],
-        where: 'site_id = ? AND employee_id = ?',
-        whereArgs: [siteId, employeeId],
+        where: 'site_id = ? AND employee_id IN ($inClause)',
+        whereArgs: [siteId, ...employeeIds],
         orderBy: 'id DESC',
         limit: 20,
       );
@@ -801,19 +1839,54 @@ class LocalDb {
     }
   }
 
+  static DateTime? _cutoffDateForLastDays(int days) {
+    if (days <= 0) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return today.subtract(Duration(days: days - 1));
+  }
+
+  static bool _timelogRowOnOrAfterCutoff(
+    Map<String, dynamic> row,
+    DateTime cutoff,
+  ) {
+    final dateStr = _extractTimelogDate(row);
+    final normalized = _normalizeDate(dateStr);
+    if (normalized == null) return false;
+    final parsed = DateTime.tryParse(normalized);
+    if (parsed == null) return false;
+    final rowDate = DateTime(parsed.year, parsed.month, parsed.day);
+    return !rowDate.isBefore(cutoff);
+  }
+
   static Future<List<Map<String, dynamic>>> getTimelogHistoryForEmployee({
     required String siteId,
     required String employeeId,
-    int limit = 10,
+    int limit = 35,
+    /// When set (e.g. 7), only rows on/after the last N calendar days are returned.
+    int? lastDaysOnly,
   }) async {
+    final employeeIds = await resolveTimelogEmployeeIds(
+      siteId: siteId,
+      employeeId: employeeId,
+    );
+    if (employeeIds.isEmpty) return const [];
+
+    final cutoff =
+        lastDaysOnly != null ? _cutoffDateForLastDays(lastDaysOnly) : null;
+    final queryLimit = cutoff != null
+        ? (limit * 8).clamp(limit, _maxTimelogRowsRead)
+        : limit;
+
     final database = await db;
+    final inClause = List.filled(employeeIds.length, '?').join(',');
     final rows = await database.query(
       'timelog_cache',
       columns: ['raw_json'],
-      where: 'site_id = ? AND employee_id = ?',
-      whereArgs: [siteId, employeeId],
+      where: 'site_id = ? AND employee_id IN ($inClause)',
+      whereArgs: [siteId, ...employeeIds],
       orderBy: "COALESCE(timelog_date, '') DESC, id DESC",
-      limit: limit,
+      limit: queryLimit,
     );
 
     final results = <Map<String, dynamic>>[];
@@ -825,7 +1898,11 @@ class LocalDb {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is Map<String, dynamic>) {
+          if (cutoff != null && !_timelogRowOnOrAfterCutoff(decoded, cutoff)) {
+            continue;
+          }
           results.add(decoded);
+          if (results.length >= limit) break;
         }
       } catch (_) {}
     }
@@ -998,7 +2075,8 @@ class LocalDb {
     int updateCount = 0;
     int insertCount = 0;
 
-    for (final timelogData in timelogDataList) {
+    for (final raw in timelogDataList) {
+      final timelogData = normalizeTimelogApiRow(raw);
       final employeeId =
           (timelogData['employee_id'] ??
                   timelogData['companyID'] ??
@@ -1038,9 +2116,9 @@ class LocalDb {
         }
       }
 
-      // Merge: only overwrite with non-blank values
+      // Merge API rows into cache: fill blanks only so local scans win.
       for (final entry in timelogData.entries) {
-        if (!_isBlank(entry.value)) {
+        if (!_isBlank(entry.value) && _isBlank(merged[entry.key])) {
           merged[entry.key] = entry.value;
         }
       }
@@ -1272,6 +2350,16 @@ class LocalDb {
     return (result.first['count'] as int?) ?? 0;
   }
 
+  /// Get count of timelog records for a site
+  static Future<int> getAttendanceCountForSite(String siteId) async {
+    final database = await db;
+    final result = await database.rawQuery(
+      'SELECT COUNT(*) AS count FROM timelog_cache WHERE site_id = ?',
+      [siteId],
+    );
+    return (result.first['count'] as int?) ?? 0;
+  }
+
   /// Get formatted attendance logs for display (proper Time In/Out detection)
   static Future<List<Map<String, dynamic>>> getAttendanceLogsForSite(
     String siteId,
@@ -1495,7 +2583,8 @@ class LocalDb {
     );
   }
 
-  /// Save attendance logs from API to local database using batch insert
+  /// Save attendance logs from API to local database using batch insert.
+  /// Merges into existing cache — does not wipe local-only records.
   static Future<void> saveAttendanceLogsForSite(
     String siteId,
     List<Map<String, dynamic>> logs,
@@ -1505,36 +2594,19 @@ class LocalDb {
       return;
     }
 
-    final database = await db;
-    final registeredEmployees = await database.query(
-      'employees',
-      where: 'site_id = ?',
-      whereArgs: [siteId],
-      columns: ['employee_id'],
-    );
-    final registeredIds = registeredEmployees
-        .map((row) => row['employee_id'].toString())
-        .toSet();
-
     final filteredTimelogs = <Map<String, dynamic>>[];
     int skippedCount = 0;
 
     for (final log in logs) {
-      final employeeId =
-          (log['employee_id'] ??
-                  log['employeeId'] ??
-                  log['employeeID'] ??
-                  log['EMPLOYEEID'] ??
-                  log['companyID'])
-              .toString()
-              .trim();
+      final normalized = normalizeTimelogApiRow(log);
+      final employeeId = timelogEmployeeIdFromRow(normalized);
 
-      if (employeeId.isEmpty || !registeredIds.contains(employeeId)) {
+      if (employeeId == null || employeeId.isEmpty) {
         skippedCount++;
         continue;
       }
 
-      final payload = Map<String, dynamic>.from(log);
+      final payload = Map<String, dynamic>.from(normalized);
       final dateOnly = _normalizeDate(
         payload['timelog'] ??
             payload['timeLogDate'] ??
@@ -1607,6 +2679,7 @@ class LocalDb {
     }
 
     await batchSaveTimelogs(siteId: siteId, timelogDataList: filteredTimelogs);
+    await linkTimelogProfilesForSite(siteId);
     debugPrint(
       '[LOCAL_DB] Merged ${filteredTimelogs.length} attendance logs for site $siteId (skipped $skippedCount)',
     );
@@ -1824,30 +2897,144 @@ class LocalDb {
     required String attendanceType,
     required DateTime timestamp,
   }) async {
+    final code = _attendanceTypeToTimelogCode(attendanceType);
+    final date =
+        '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
+    final time =
+        '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
+    final payload = <String, dynamic>{
+      'timeLogId': 'tl_${timestamp.millisecondsSinceEpoch}',
+      'timeLogDate': date,
+      'remarks': 'SUCCESS',
+      'schedule': 'AUTO',
+      'code': code,
+    };
+    switch (code) {
+      case 'IN_AM':
+        payload['timeInMorning'] = time;
+        break;
+      case 'OUT_AM':
+        payload['timeOutMorning'] = time;
+        break;
+      case 'IN_PM':
+        payload['timeInAfternoon'] = time;
+        break;
+      case 'OUT_PM':
+        payload['timeOutAfternoon'] = time;
+        break;
+    }
     await queueAttendance(
       employeeId: employeeId,
       siteId: siteId,
-      attendanceTime: timestamp.toIso8601String(),
+      attendanceTime: DateTime.now().toIso8601String(),
+      recordType: pendingTimelogRecordType,
+      payloadJson: jsonEncode(payload),
     );
   }
 
-  /// Get pending attendance records from queue (alias)
-  static Future<List<Map<String, dynamic>>> getPendingAttendanceQueue() async {
-    return await getPendingAttendance();
+  static String _attendanceTypeToTimelogCode(String attendanceType) {
+    final normalized = attendanceType.toUpperCase();
+    if (normalized.contains('OUT') && normalized.contains('AFTERNOON')) {
+      return 'OUT_PM';
+    }
+    if (normalized.contains('IN') && normalized.contains('AFTERNOON')) {
+      return 'IN_PM';
+    }
+    if (normalized.contains('OUT')) return 'OUT_AM';
+    return 'IN_AM';
   }
 
-  /// Sync pending HRIS queue to server (alias)
+  /// Get all unsynced queue rows for background sync (timelog + fingerprint).
+  static Future<List<Map<String, dynamic>>> getPendingAttendanceQueue() async {
+    return await getAllUnsyncedQueueRows();
+  }
+
+  /// Sync pending HRIS queue rows to the legacy HRIS endpoints.
   static Future<void> syncPendingHrisQueue() async {
+    if (!await HrisPushPolicy.shouldPushToHrisApi()) {
+      debugPrint('[HRIS_QUEUE] Skipped — offline UI mode or no network');
+      return;
+    }
+
     final pendingRows = await getPendingHrisRequests();
     if (pendingRows.isEmpty) return;
 
-    // Process pending requests (implementation from original home_page.dart)
     for (final row in pendingRows) {
+      final id = row['id'] as int?;
+      if (id == null) continue;
+
       try {
-        final id = row['id'];
+        final endpoint = row['endpoint']?.toString() ?? '';
+        final rawParams = row['query_params']?.toString() ?? '';
+        if (endpoint.isEmpty || rawParams.isEmpty) {
+          await markHrisRequestSynced(id);
+          continue;
+        }
+
+        final decoded = jsonDecode(rawParams);
+        if (decoded is! Map<String, dynamic>) {
+          await markHrisRequestSynced(id);
+          continue;
+        }
+
+        final params = decoded.map(
+          (key, value) => MapEntry(key, value?.toString()),
+        );
+
+        switch (endpoint) {
+          case 'update/timeLog/timeIn':
+            await submitAttendanceTimeIn(
+              passedID: params['passedID'],
+              timeLogId: params['timelogID'] ?? '',
+              remarks: params['remarks'] ?? 'SUCCESS',
+              timeLog: params['timelog'] ?? '',
+              timeInMorning: params['timeInMorning'] ?? '',
+              timeInAfternoon: params['timeInAfternoon'],
+              code: params['code'] ?? 'IN_AM',
+            );
+            break;
+          case 'update/timeLog/timeOut':
+            await submitAttendanceTimeOut(
+              passedID: params['passedID'],
+              timeLogId: params['timelogID'] ?? '',
+              remarks: params['remarks'] ?? 'SUCCESS',
+              timeLog: params['timelog'] ?? '',
+              timeOutMorning: params['timeOutMorning'] ?? '',
+              timeOutAfternoon: params['timeOutAfternoon'],
+              code: params['code'] ?? 'OUT_AM',
+            );
+            break;
+          case 'insert/hris/logs/transaction':
+            await submitHrisLogTransaction(
+              passedID: params['passedID'],
+              companyID: params['companyID'] ?? '',
+              datelog: params['datelog'] ?? '',
+              logTime: params['log_time'] ?? '',
+              logType: params['log_type'] ?? '',
+              logId: params['logID'] ?? '',
+            );
+            break;
+          case 'insert/timeLog':
+            await submitInsertTimeLog(
+              siteId: params['siteID'] ?? '',
+              employeeId: params['employeeID'] ?? '',
+              timeLogId: params['timelogID'] ?? '',
+              timeLog: params['timelog'] ?? '',
+              remarks: params['remarks'] ?? 'SUCCESS',
+              schedule: params['schedule'] ?? 'AUTO',
+              timeInMorning: params['timeinmorning'] ?? '',
+              timeInAfternoon: params['timeinafternoon'] ?? '',
+              dateCaptured: params['datecaptured'] ?? '',
+              code: params['code'] ?? 'IN_AM',
+            );
+            break;
+          default:
+            debugPrint('[HRIS_QUEUE] Unknown endpoint: $endpoint');
+        }
+
         await markHrisRequestSynced(id);
       } catch (e) {
-        debugPrint('Failed to sync HRIS request: $e');
+        debugPrint('[HRIS_QUEUE] Failed to sync request $id: $e');
       }
     }
   }
@@ -1891,7 +3078,8 @@ class LocalDb {
     String siteId,
     List<Map<String, dynamic>> logs,
   ) async {
-    await saveAttendanceLogsForSite(siteId, logs);
+    await replaceTimelogCache(siteId: siteId, rows: logs);
+    await linkTimelogProfilesForSite(siteId);
   }
 
   static Future<List<Map<String, dynamic>>> getEmployeeLogsForDate(
@@ -2028,6 +3216,10 @@ class LocalDb {
     });
 
     debugPrint('[SITE_PREFS] Saved selected site: $siteId ($siteName)');
+    await AppSession.saveSelectedSite(
+      siteId: siteId,
+      siteName: siteName,
+    );
   }
 
   /// Get currently selected site
@@ -2098,6 +3290,8 @@ class LocalDb {
   static Future<void> clearSelectedSite() async {
     final database = await db;
     await database.delete('site_preferences');
+    await AppSession.clearSelectedSite();
+    await AppSession.resetSiteSetup();
     debugPrint('[SITE_PREFS] Cleared selected site');
   }
 
@@ -2152,25 +3346,26 @@ class LocalDb {
     );
   }
 
+  @Deprecated('Use fetchTimelogsLastWeekBySiteFromApi or per-employee full history')
   static Future<List<Map<String, dynamic>>> fetchTimelogsBySiteFromApi(
     String siteId,
-  ) async {
-    return _getApiRows(
-      'get/timelog/lastweek/perSite',
-      queryParameters: {'siteID': siteId},
-    );
-  }
+  ) =>
+      fetchTimelogsLastWeekBySiteFromApi(siteId);
 
   static Future<Map<String, dynamic>> updateEmployeeThumbDetails({
     required String employeeId,
     required String leftFingerThumb,
     required String rightFingerThumb,
   }) async {
-    return _postJson('update/employee/thumbDetails', {
-      'employeeID': employeeId,
-      'leftFingerThumb': leftFingerThumb,
-      'rightFingerThumb': rightFingerThumb,
-    });
+    return _postJson(
+      'update/employee/thumbDetails',
+      {
+        'employeeID': employeeId,
+        'leftFingerThumb': leftFingerThumb,
+        'rightFingerThumb': rightFingerThumb,
+      },
+      queryParameters: {'employeeID': employeeId},
+    );
   }
 
   static Future<Map<String, dynamic>> submitAttendanceTimeIn({
@@ -2182,7 +3377,7 @@ class LocalDb {
     required String? timeInAfternoon,
     required String code,
   }) async {
-    final rows = await _getApiRows(
+    final rows = await _postApiRows(
       'update/timeLog/timeIn',
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -2206,7 +3401,7 @@ class LocalDb {
     required String? timeOutAfternoon,
     required String code,
   }) async {
-    final rows = await _getApiRows(
+    final rows = await _postApiRows(
       'update/timeLog/timeOut',
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -2229,7 +3424,7 @@ class LocalDb {
     required String logType,
     required String logId,
   }) async {
-    final rows = await _getApiRows(
+    final rows = await _postApiRows(
       'insert/hris/logs/transaction',
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -2255,7 +3450,7 @@ class LocalDb {
     required String dateCaptured,
     required String code,
   }) async {
-    final rows = await _getApiRows(
+    final rows = await _postApiRows(
       'insert/timeLog',
       queryParameters: {
         'siteID': siteId,
@@ -2350,6 +3545,105 @@ class LocalDb {
     return '$hour:$minute:$second';
   }
 
+  /// Human-readable label for a queued timelog code (IN_AM, OUT_PM, etc.).
+  static String pendingAttendanceCodeLabel(String code) {
+    switch (code.toUpperCase()) {
+      case 'IN_AM':
+        return 'Time In (AM)';
+      case 'OUT_AM':
+        return 'Time Out (AM)';
+      case 'IN_PM':
+        return 'Time In (PM)';
+      case 'OUT_PM':
+        return 'Time Out (PM)';
+      default:
+        if (code.toUpperCase().startsWith('IN')) return 'Time In';
+        if (code.toUpperCase().startsWith('OUT')) return 'Time Out';
+        return 'Attendance';
+    }
+  }
+
+  /// Display fields for a pending attendance row (time in/out uploads only).
+  static Map<String, String> describePendingAttendanceRow(
+    Map<String, dynamic> row,
+  ) {
+    Map<String, dynamic>? payload;
+    final rawPayload = row['payload_json']?.toString();
+    if (rawPayload != null && rawPayload.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawPayload);
+        if (decoded is Map<String, dynamic>) payload = decoded;
+      } catch (_) {}
+    }
+
+    final code = payload?['code']?.toString() ?? '';
+    var date = payload?['timeLogDate']?.toString() ?? '';
+    var time = '';
+
+    switch (code.toUpperCase()) {
+      case 'IN_AM':
+        time = payload?['timeInMorning']?.toString() ?? '';
+        break;
+      case 'OUT_AM':
+        time = payload?['timeOutMorning']?.toString() ?? '';
+        break;
+      case 'IN_PM':
+        time = payload?['timeInAfternoon']?.toString() ?? '';
+        break;
+      case 'OUT_PM':
+        time = payload?['timeOutAfternoon']?.toString() ?? '';
+        break;
+      default:
+        time = payload?['timeInMorning']?.toString() ??
+            payload?['timeOutMorning']?.toString() ??
+            payload?['timeInAfternoon']?.toString() ??
+            payload?['timeOutAfternoon']?.toString() ??
+            '';
+    }
+
+    if (date.isEmpty || time.isEmpty) {
+      final attendanceTime = row['attendance_time']?.toString() ?? '';
+      final parsed = DateTime.tryParse(attendanceTime);
+      if (parsed != null) {
+        if (date.isEmpty) {
+          date =
+              '${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}';
+        }
+        if (time.isEmpty) {
+          time =
+              '${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}:${parsed.second.toString().padLeft(2, '0')}';
+        }
+      } else if (date.isEmpty && attendanceTime.isNotEmpty) {
+        final parts = attendanceTime.split(RegExp(r'[T ]'));
+        if (parts.isNotEmpty) date = parts.first;
+        if (time.isEmpty && parts.length > 1) time = parts.sublist(1).join(' ');
+      }
+    }
+
+    return {
+      'display_label': pendingAttendanceCodeLabel(code),
+      'display_date': date.isEmpty ? 'Unknown date' : date,
+      'display_time': time.isEmpty ? '--:--:--' : time,
+      'attendance_code': code,
+    };
+  }
+
+  /// Count time-in/out rows still waiting for HRIS upload.
+  static Future<int> countPendingTimelogsForSite(String siteId) async {
+    if (siteId.trim().isEmpty) return 0;
+    final database = await db;
+    final result = await database.rawQuery(
+      '''
+      SELECT COUNT(*) AS c
+      FROM attendance_queue a
+      WHERE a.site_id = ?
+        AND $_pendingTimelogWhereSqlAliased
+      ''',
+      [siteId],
+    );
+    return (result.first['c'] as int?) ?? 0;
+  }
+
   static Future<List<Map<String, dynamic>>> getEmployeesWithPendingRecords(
     String siteId,
   ) async {
@@ -2364,7 +3658,8 @@ class LocalDb {
       FROM attendance_queue a
       LEFT JOIN employees e
         ON e.employee_id = a.employee_id AND e.site_id = a.site_id
-      WHERE a.site_id = ? AND a.synced = 0
+      WHERE a.site_id = ?
+        AND $_pendingTimelogWhereSqlAliased
       GROUP BY a.employee_id
       ORDER BY pending_count DESC, last_attendance_time DESC
       ''',
@@ -2393,12 +3688,30 @@ class LocalDb {
         a.payload_json,
         a.synced
       FROM attendance_queue a
-      WHERE a.site_id = ? AND a.employee_id = ? AND a.synced = 0
+      WHERE a.site_id = ?
+        AND a.employee_id = ?
+        AND $_pendingTimelogWhereSqlAliased
       GROUP BY a.id
       ORDER BY a.id ASC
       ''',
       [siteId, employeeId],
     );
+  }
+
+  static Future<bool> hasPendingFingerprintUpdate({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    final database = await db;
+    final rows = await database.query(
+      'attendance_queue',
+      columns: ['id'],
+      where:
+          'site_id = ? AND employee_id = ? AND synced = 0 AND LOWER(record_type) = ?',
+      whereArgs: [siteId, employeeId.trim(), 'fingerprint'],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
   }
 
   static Future<void> markMultipleAttendanceSynced(List<int> ids) async {

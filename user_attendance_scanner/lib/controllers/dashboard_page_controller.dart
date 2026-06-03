@@ -1,22 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../constants/date_time_formats.dart';
 import '../zkfp/zkteco_usb.dart';
+import '../services/hris_push_policy.dart';
 import '../services/local_db.dart';
-import '../services/offline_mode_sync_service.dart';
+import '../services/pending_sync_service.dart';
 
 class DashboardPageController extends GetxController {
-  final _offlineModeSyncService = OfflineModeSyncService();
   final now = DateTime.now().obs;
   final profilePhoto = Rxn<Uint8List>();
   final alreadyTimedIn = false.obs;
   final rows = <DashboardRowVm>[].obs;
   final isLoadingRows = true.obs;
+  final showNavBar = false.obs;
+  final navBarOpacity = 0.0.obs;
 
   Timer? _clockTimer;
   Timer? _afkTimer;
@@ -27,6 +28,9 @@ class DashboardPageController extends GetxController {
   bool _isProcessingTemplate = false;
   bool _ownsTemplateCallback = false;
   bool _isActiveRoute = true;
+  bool _isSyncingTimelogs = false;
+  DateTime? _lastTimelogSyncAt;
+  static const Duration _timelogSyncCooldown = Duration(minutes: 2);
   void Function(Uint8List template, int size)? _templateHandler;
 
   final Map<int, DashboardEmployeeEntry> _employeeDb = {};
@@ -94,6 +98,16 @@ class DashboardPageController extends GetxController {
     _lastActivityTime = DateTime.now();
   }
 
+  void toggleShowNavBar() {
+    showNavBar.value = true;
+    navBarOpacity.value = 1.0;
+  }
+
+  void toggleHideNavBar() {
+    showNavBar.value = false;
+    navBarOpacity.value = 0.0;
+  }
+
   void setRouteActive(bool isActive) {
     _isActiveRoute = isActive;
   }
@@ -119,7 +133,10 @@ class DashboardPageController extends GetxController {
     try {
       if (siteId == null || siteId.isEmpty) return;
       print('[DASHBOARD_SCAN] Loading employees for site: $siteId');
-      final rows = await LocalDb.getEmployeesBySite(siteId);
+      final rows = await LocalDb.getEmployeesBySite(
+        siteId,
+        includeFingerTemplates: false,
+      );
       print('[DASHBOARD_SCAN] Found ${rows.length} employee rows from DB');
       _employeeDb.clear();
       _employeeDbByFid.clear();
@@ -128,12 +145,9 @@ class DashboardPageController extends GetxController {
         final fid = row['fid'] as int?;
         final empId = row['employee_id']?.toString() ?? '';
         final empName = row['employee_name']?.toString() ?? '';
-        final templateRaw = row['finger_template'];
-        final templateBytes = templateRaw is Uint8List
-            ? templateRaw
-            : (templateRaw is List<int>
-                ? Uint8List.fromList(templateRaw)
-                : null);
+        final templateBytes = fid == null
+            ? null
+            : await LocalDb.getFingerTemplateByFid(fid: fid, siteId: siteId);
 
         print('[DASHBOARD_SCAN] Employee row: fid=$fid, empId=$empId, name=$empName, hasTemplate=${templateBytes != null}');
 
@@ -327,14 +341,14 @@ class DashboardPageController extends GetxController {
     return photo;
   }
 
+  /// Dashboard history table: show full available local history.
+  static const int _dashboardHistoryMaxRows = 10000;
+
   Future<List<Map<String, dynamic>>> loadTimelogHistory({
     required String siteId,
     required String employeeId,
-    int limit = 10,
+    int limit = _dashboardHistoryMaxRows,
   }) async {
-    // Keep the same safety delay used in the old page logic so recent writes appear.
-    await Future.delayed(const Duration(milliseconds: 1000));
-
     print('[DASHBOARD_LOAD] ===== LOADING HISTORY =====');
     print('[DASHBOARD_LOAD] siteId="$siteId" employeeId="$employeeId"');
 
@@ -354,6 +368,203 @@ class DashboardPageController extends GetxController {
     // }
 
     return history;
+  }
+
+  List<DashboardRowVm> _mapTimelogHistoryToRows({
+    required List<Map<String, dynamic>> history,
+    required String? overrideTimeIn,
+    required String? overrideTimeOut,
+  }) {
+    // Group entries by date to prevent duplicates
+    final Map<String, List<Map<String, dynamic>>> groupedByDate = {};
+    for (final entry in history) {
+      final dateText = _pickFirst(entry, [
+        'timeLogDate',
+        'timelog_date',
+        'datecaptured',
+        'DATECAPTURED',
+        'datelog',
+        'timelog',
+        'TIMELOG',
+      ]);
+      if (dateText.isNotEmpty) {
+        final normalizedDate = dateText.length >= 10
+            ? dateText.substring(0, 10).replaceAll('/', '-')
+            : dateText.replaceAll('/', '-');
+        groupedByDate.putIfAbsent(normalizedDate, () => []).add(entry);
+      }
+    }
+
+    // Consolidate entries for each date across the full fetched history.
+    final sortedDates = groupedByDate.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+    final consolidatedRows = <Map<String, dynamic>>[];
+    for (final dateText in sortedDates) {
+      final entries = groupedByDate[dateText]!;
+      if (entries.length == 1) {
+        consolidatedRows.add(entries.first);
+      } else {
+        // Merge multiple entries for the same date
+        final merged = <String, dynamic>{};
+        String? bestTimeIn;
+        String? bestTimeOut;
+
+        for (final entry in entries) {
+          // Merge all fields, prioritizing non-null values
+          for (final key in entry.keys) {
+            if (entry[key] != null && entry[key].toString().isNotEmpty) {
+              merged[key] = entry[key];
+            }
+          }
+
+          // Find the earliest time-in and latest time-out
+          final timeIn = DateTimeFormats.formatTimeFromApi(_pickFirst(entry, [
+            'timeInMorning',
+            'timeinmorning',
+            'TIMEINMORNING',
+            'timeInAfternoon',
+            'TIMEINAFTERNOON',
+          ]));
+          final timeOut = DateTimeFormats.formatTimeFromApi(_pickFirst(entry, [
+            'timeOutMorning',
+            'timeoutmorning',
+            'TIMEOUTMORNING',
+            'timeOutAfternoon',
+            'TIMEOUTAFTERNOON',
+          ]));
+
+          if (timeIn.isNotEmpty && timeIn != '-') {
+            if (bestTimeIn == null || timeIn.compareTo(bestTimeIn) < 0) {
+              bestTimeIn = timeIn;
+            }
+          }
+          if (timeOut.isNotEmpty && timeOut != '-') {
+            if (bestTimeOut == null || timeOut.compareTo(bestTimeOut) > 0) {
+              bestTimeOut = timeOut;
+            }
+          }
+        }
+
+        // Update merged entry with best times
+        if (bestTimeIn != null) {
+          merged['timeInMorning'] = bestTimeIn;
+          merged['timeinmorning'] = bestTimeIn;
+        }
+        if (bestTimeOut != null) {
+          merged['timeOutMorning'] = bestTimeOut;
+          merged['timeoutmorning'] = bestTimeOut;
+        }
+
+        consolidatedRows.add(merged);
+        print('[DASHBOARD_LOAD] Consolidated ${entries.length} entries for date $dateText');
+      }
+    }
+
+    final mappedRows = consolidatedRows.map(_rowFromTimelog).toList();
+
+    final today = DateTimeFormats.dateOnly(DateTime.now());
+    final todayIndex = mappedRows.indexWhere((row) => row.rawDate == today);
+
+    if (todayIndex >= 0) {
+      final todayRow = mappedRows[todayIndex];
+      final todayLog = todayRow.timeLogs.split('|');
+      var timeIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
+      var timeOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
+
+      if (overrideTimeIn != null) timeIn = overrideTimeIn;
+      if (overrideTimeOut != null) timeOut = overrideTimeOut;
+
+      final hasIn = timeIn != '-' && timeIn.isNotEmpty;
+      final hasOut = timeOut != '-' && timeOut.isNotEmpty;
+      final status = hasIn && hasOut
+          ? 'COMPLETE'
+          : (hasIn ? 'INCOMPLETE' : 'NO LOG');
+
+      mappedRows[todayIndex] = DashboardRowVm(
+        rawDate: todayRow.rawDate,
+        date: todayRow.date,
+        day: todayRow.day,
+        shift: todayRow.shift,
+        timeLogs: '$timeIn | $timeOut',
+        status: status,
+        isComplete: status == 'COMPLETE',
+      );
+      print('[DASHBOARD_LOAD] Updated today row at index $todayIndex with status $status');
+    } else if (overrideTimeIn != null || overrideTimeOut != null) {
+      // Only create today row if it doesn't exist AND we have override times
+      // This prevents creating duplicate entries when scanning from homepage
+      final timeIn = overrideTimeIn ?? '-';
+      final timeOut = overrideTimeOut ?? '-';
+      final hasIn = timeIn != '-' && timeIn.isNotEmpty;
+      final hasOut = timeOut != '-' && timeOut.isNotEmpty;
+      final status = hasIn && hasOut
+          ? 'COMPLETE'
+          : (hasIn ? 'INCOMPLETE' : 'NO LOG');
+
+      mappedRows.insert(
+        0,
+        DashboardRowVm(
+          rawDate: today,
+          date: DateTimeFormats.dateLongUpper(DateTime.now()),
+          day: DateTimeFormats.dayShort(DateTime.now()).toUpperCase(),
+          shift: '-',
+          timeLogs: '$timeIn | $timeOut',
+          status: status,
+          isComplete: status == 'COMPLETE',
+        ),
+      );
+      print('[DASHBOARD_LOAD] Created today row with status $status');
+    }
+
+    return mappedRows;
+  }
+
+  void _refreshTimelogsInBackground({
+    required String siteId,
+    required String employeeId,
+    required String? overrideTimeIn,
+    required String? overrideTimeOut,
+  }) {
+    Future.microtask(() async {
+      if (_isSyncingTimelogs) return;
+      final now = DateTime.now();
+      final lastSync = _lastTimelogSyncAt;
+      if (lastSync != null &&
+          now.difference(lastSync) < _timelogSyncCooldown) {
+        return;
+      }
+
+      _isSyncingTimelogs = true;
+      try {
+        if (!await HrisPushPolicy.shouldPushToHrisApi()) {
+          return;
+        }
+        _lastTimelogSyncAt = DateTime.now();
+        await LocalDb.syncTimelogsForEmployeeFromApi(
+          siteId: siteId,
+          employeeId: employeeId,
+        );
+        await LocalDb.linkTimelogProfilesForSite(siteId);
+
+        final history = await loadTimelogHistory(
+          siteId: siteId,
+          employeeId: employeeId,
+          limit: _dashboardHistoryMaxRows,
+        );
+        final mappedRows = _mapTimelogHistoryToRows(
+          history: history,
+          overrideTimeIn: overrideTimeIn,
+          overrideTimeOut: overrideTimeOut,
+        );
+        if (_isActiveRoute) {
+          rows.value = mappedRows;
+        }
+      } catch (e) {
+        debugPrint('[DASHBOARD_LOAD] Timelog refresh from API failed: $e');
+      } finally {
+        _isSyncingTimelogs = false;
+      }
+    });
   }
 
   Future<void> loadRows({
@@ -377,132 +588,13 @@ class DashboardPageController extends GetxController {
       final history = await loadTimelogHistory(
         siteId: siteId,
         employeeId: employeeId,
-        limit: 10,
+        limit: _dashboardHistoryMaxRows,
       );
-
-      // Group entries by date to prevent duplicates
-      final Map<String, List<Map<String, dynamic>>> groupedByDate = {};
-      for (final entry in history) {
-        final dateText = _pickFirst(entry, [
-          'timeLogDate',
-          'timelog_date', 
-          'datecaptured',
-          'datelog',
-          'timelog',
-        ]);
-        if (dateText.isNotEmpty) {
-          groupedByDate.putIfAbsent(dateText, () => []).add(entry);
-        }
-      }
-
-      // Consolidate entries for each date
-      final consolidatedRows = <Map<String, dynamic>>[];
-      for (final dateText in groupedByDate.keys) {
-        final entries = groupedByDate[dateText]!;
-        if (entries.length == 1) {
-          consolidatedRows.add(entries.first);
-        } else {
-          // Merge multiple entries for the same date
-          final merged = <String, dynamic>{};
-          String? bestTimeIn;
-          String? bestTimeOut;
-          
-          for (final entry in entries) {
-            // Merge all fields, prioritizing non-null values
-            for (final key in entry.keys) {
-              if (entry[key] != null && entry[key].toString().isNotEmpty) {
-                merged[key] = entry[key];
-              }
-            }
-            
-            // Find the earliest time-in and latest time-out
-            final timeIn = _pickFirst(entry, ['timeInMorning', 'timeinmorning']);
-            final timeOut = _pickFirst(entry, ['timeOutMorning', 'timeoutmorning']);
-            
-            if (timeIn.isNotEmpty && timeIn != '-') {
-              if (bestTimeIn == null || timeIn.compareTo(bestTimeIn) < 0) {
-                bestTimeIn = timeIn;
-              }
-            }
-            if (timeOut.isNotEmpty && timeOut != '-') {
-              if (bestTimeOut == null || timeOut.compareTo(bestTimeOut) > 0) {
-                bestTimeOut = timeOut;
-              }
-            }
-          }
-          
-          // Update merged entry with best times
-          if (bestTimeIn != null) {
-            merged['timeInMorning'] = bestTimeIn;
-            merged['timeinmorning'] = bestTimeIn;
-          }
-          if (bestTimeOut != null) {
-            merged['timeOutMorning'] = bestTimeOut;
-            merged['timeoutmorning'] = bestTimeOut;
-          }
-          
-          consolidatedRows.add(merged);
-          print('[DASHBOARD_LOAD] Consolidated ${entries.length} entries for date $dateText');
-        }
-      }
-
-      final mappedRows = consolidatedRows.map(_rowFromTimelog).toList();
-
-      final today = DateTimeFormats.dateOnly(DateTime.now());
-      final todayIndex = mappedRows.indexWhere((row) => row.rawDate == today);
-
-      if (todayIndex >= 0) {
-        final todayRow = mappedRows[todayIndex];
-        final todayLog = todayRow.timeLogs.split('|');
-        var timeIn = todayLog.isNotEmpty ? todayLog.first.trim() : '-';
-        var timeOut = todayLog.length > 1 ? todayLog[1].trim() : '-';
-
-        if (overrideTimeIn != null) timeIn = overrideTimeIn;
-        if (overrideTimeOut != null) timeOut = overrideTimeOut;
-
-        final hasIn = timeIn != '-' && timeIn.isNotEmpty;
-        final hasOut = timeOut != '-' && timeOut.isNotEmpty;
-        final status = hasIn && hasOut
-            ? 'COMPLETE'
-            : (hasIn ? 'INCOMPLETE' : 'NO LOG');
-
-        mappedRows[todayIndex] = DashboardRowVm(
-          rawDate: todayRow.rawDate,
-          date: todayRow.date,
-          day: todayRow.day,
-          shift: todayRow.shift,
-          timeLogs: '$timeIn | $timeOut',
-          status: status,
-          isComplete: status == 'COMPLETE',
-        );
-        print('[DASHBOARD_LOAD] Updated today row at index $todayIndex with status $status');
-      } else if (overrideTimeIn != null || overrideTimeOut != null) {
-        // Only create today row if it doesn't exist AND we have override times
-        // This prevents creating duplicate entries when scanning from homepage
-        final timeIn = overrideTimeIn ?? '-';
-        final timeOut = overrideTimeOut ?? '-';
-        final hasIn = timeIn != '-' && timeIn.isNotEmpty;
-        final hasOut = timeOut != '-' && timeOut.isNotEmpty;
-        final status = hasIn && hasOut
-            ? 'COMPLETE'
-            : (hasIn ? 'INCOMPLETE' : 'NO LOG');
-
-        mappedRows.insert(
-          0,
-          DashboardRowVm(
-            rawDate: today,
-            date: DateTimeFormats.dateLongUpper(DateTime.now()),
-            day: DateTimeFormats.dayShort(DateTime.now()).toUpperCase(),
-            shift: '-',
-            timeLogs: '$timeIn | $timeOut',
-            status: status,
-            isComplete: status == 'COMPLETE',
-          ),
-        );
-        print('[DASHBOARD_LOAD] Created today row with status $status');
-      }
-
-      rows.value = mappedRows;
+      rows.value = _mapTimelogHistoryToRows(
+        history: history,
+        overrideTimeIn: overrideTimeIn,
+        overrideTimeOut: overrideTimeOut,
+      );
     } catch (e) {
       print('[DASHBOARD_LOAD] Error: $e');
       rows.value = const [];
@@ -510,6 +602,13 @@ class DashboardPageController extends GetxController {
       isLoadingRows.value = false;
       alreadyTimedIn.value = false;
     }
+
+    _refreshTimelogsInBackground(
+      siteId: siteId,
+      employeeId: employeeId,
+      overrideTimeIn: overrideTimeIn,
+      overrideTimeOut: overrideTimeOut,
+    );
   }
 
   Future<String?> recordAttendance({
@@ -739,68 +838,87 @@ class DashboardPageController extends GetxController {
     required String siteId,
     required _PendingTimeLog pending,
   }) async {
-    if (_offlineModeSyncService.isOfflineMode()) {
-      await _queuePendingAttendance(
-        employeeId: employeeId,
-        siteId: siteId,
-        timestamp: _pendingAttendanceTimestamp(pending),
-        pending: pending,
+    // Offline-first: local timelog is already saved; queue then push to HRIS.
+    final timestamp = _pendingAttendanceTimestamp(pending);
+    final payload = _pendingTimeLogPayload(pending);
+    final queueId = await _queuePendingAttendance(
+      employeeId: employeeId,
+      siteId: siteId,
+      timestamp: timestamp,
+      payloadJson: jsonEncode(payload),
+    );
+
+    if (!Get.isRegistered<PendingSyncService>()) {
+      Get.put(PendingSyncService());
+    }
+    final syncService = Get.find<PendingSyncService>();
+
+    if (await syncService.shouldPushToHrisApi()) {
+      try {
+        await syncService.uploadAttendancePayload(
+          siteId: siteId,
+          employeeId: employeeId,
+          payload: payload,
+        );
+        await LocalDb.markAttendanceSynced(queueId);
+        debugPrint(
+          '[DASHBOARD_RECORD] HRIS upload OK employee=$employeeId code=${pending.code}',
+        );
+        return false;
+      } catch (e) {
+        debugPrint(
+          '[DASHBOARD_RECORD] Immediate HRIS upload failed (will retry): $e',
+        );
+      }
+
+      unawaited(
+        syncService.syncAllPending(siteId: siteId).catchError(
+          (Object e) {
+            debugPrint('[DASHBOARD_RECORD] Background HRIS upload: $e');
+            return (synced: 0, failed: 0);
+          },
+        ),
       );
       return true;
     }
 
-    try {
-      await LocalDb.submitAttendanceSync(
-        siteId: siteId,
-        employeeId: employeeId,
-        timeLogId: pending.timeLogId,
-        timeLog: pending.timeLogDate,
-        remarks: pending.remarks,
-        schedule: pending.schedule,
-        code: pending.code,
-        timeInMorning: pending.timeInMorning,
-        timeOutMorning: pending.timeOutMorning,
-        timeInAfternoon: pending.timeInAfternoon,
-        timeOutAfternoon: pending.timeOutAfternoon,
-      );
-      return false;
-    } catch (e) {
-      debugPrint('[DASHBOARD_RECORD] Submit failed, queueing offline: $e');
-      await _queuePendingAttendance(
-        employeeId: employeeId,
-        siteId: siteId,
-        timestamp: _pendingAttendanceTimestamp(pending),
-        pending: pending,
-      );
-      return true;
-    }
+    debugPrint(
+      '[DASHBOARD_RECORD] HRIS upload deferred (Offline UI mode — queued)',
+    );
+    return true;
   }
 
-  Future<void> _queuePendingAttendance({
+  Map<String, dynamic> _pendingTimeLogPayload(_PendingTimeLog pending) {
+    return {
+      'timeLogId': pending.timeLogId,
+      'timeLogDate': pending.timeLogDate,
+      'remarks': pending.remarks,
+      'schedule': pending.schedule,
+      'code': pending.code,
+      'timeInMorning': pending.timeInMorning,
+      'timeOutMorning': pending.timeOutMorning,
+      'timeInAfternoon': pending.timeInAfternoon,
+      'timeOutAfternoon': pending.timeOutAfternoon,
+    };
+  }
+
+  Future<int> _queuePendingAttendance({
     required String employeeId,
     required String siteId,
     required DateTime timestamp,
-    required _PendingTimeLog pending,
+    required String payloadJson,
   }) async {
-    await LocalDb.queueAttendance(
+    final queueId = await LocalDb.queueAttendance(
       employeeId: employeeId,
       siteId: siteId,
-      attendanceTime: timestamp.toIso8601String(),
-      payloadJson: jsonEncode({
-        'timeLogId': pending.timeLogId,
-        'timeLogDate': pending.timeLogDate,
-        'remarks': pending.remarks,
-        'schedule': pending.schedule,
-        'code': pending.code,
-        'timeInMorning': pending.timeInMorning,
-        'timeOutMorning': pending.timeOutMorning,
-        'timeInAfternoon': pending.timeInAfternoon,
-        'timeOutAfternoon': pending.timeOutAfternoon,
-      }),
+      attendanceTime: DateTime.now().toIso8601String(),
+      recordType: LocalDb.pendingTimelogRecordType,
+      payloadJson: payloadJson,
     );
     debugPrint(
-      '[DASHBOARD_RECORD] Queued pending attendance employee=$employeeId site=$siteId ts=$timestamp',
+      '[DASHBOARD_RECORD] Queued pending attendance id=$queueId employee=$employeeId site=$siteId ts=$timestamp',
     );
+    return queueId;
   }
 
   DateTime _pendingAttendanceTimestamp(_PendingTimeLog pending) {
@@ -866,14 +984,34 @@ class DashboardPageController extends GetxController {
       'timeLogDate',
       'timelog_date',
       'datecaptured',
+      'DATECAPTURED',
       'datelog',
       'timelog',
+      'TIMELOG',
     ]);
-    final parsedDate = _parseDate(dateText);
-    final timeInMorning = _pickFirst(row, ['timeInMorning', 'timeinmorning']);
-    final timeOutMorning = _pickFirst(row, ['timeOutMorning', 'timeoutmorning']);
-    final timeInAfternoon = _pickFirst(row, ['timeInAfternoon', 'timeinafternoon']);
-    final timeOutAfternoon = _pickFirst(row, ['timeOutAfternoon', 'timeoutafternoon']);
+    final dateOnly =
+        DateTimeFormats.dateFromApiValue(dateText) ?? dateText.replaceAll('/', '-');
+    final parsedDate = _parseDate(dateOnly);
+    final timeInMorning = DateTimeFormats.formatTimeFromApi(_pickFirst(row, [
+      'timeInMorning',
+      'timeinmorning',
+      'TIMEINMORNING',
+    ]));
+    final timeOutMorning = DateTimeFormats.formatTimeFromApi(_pickFirst(row, [
+      'timeOutMorning',
+      'timeoutmorning',
+      'TIMEOUTMORNING',
+    ]));
+    final timeInAfternoon = DateTimeFormats.formatTimeFromApi(_pickFirst(row, [
+      'timeInAfternoon',
+      'timeinafternoon',
+      'TIMEINAFTERNOON',
+    ]));
+    final timeOutAfternoon = DateTimeFormats.formatTimeFromApi(_pickFirst(row, [
+      'timeOutAfternoon',
+      'timeoutafternoon',
+      'TIMEOUTAFTERNOON',
+    ]));
     final firstIn = !_isBlank(timeInMorning)
         ? timeInMorning
         : (!_isBlank(timeInAfternoon) ? timeInAfternoon : '-');
@@ -887,10 +1025,10 @@ class DashboardPageController extends GetxController {
         : (hasIn ? 'INCOMPLETE' : 'NO LOG');
 
     return DashboardRowVm(
-      rawDate: dateText,
+      rawDate: dateOnly,
       date: parsedDate != null
           ? DateTimeFormats.dateLongUpper(parsedDate)
-          : (dateText.isEmpty ? '-' : dateText),
+          : (dateOnly.isEmpty ? '-' : dateOnly),
         day: parsedDate != null ? DateTimeFormats.dayLongUpper(parsedDate) : '-',
       shift: _pickFirst(row, ['schedule', 'schedCode']).isEmpty
           ? '-'

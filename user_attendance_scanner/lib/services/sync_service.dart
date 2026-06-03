@@ -132,7 +132,7 @@ class SyncService {
                   Text(
                     subtitle,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
+                      color: Colors.white.withValues(alpha: 0.7),
                       fontSize: 12,
                     ),
                   ),
@@ -156,32 +156,21 @@ class SyncService {
 
     onStatusUpdate?.call('Fetching employee list from server...');
 
-    final url = Uri.parse('$_baseUrl/get/employees');
-    final headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'User-Agent': 'FAST-Attendance/1.0',
-      'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
-    };
+    final rows = await LocalDb.fetchEmployeesBySiteFromApi(resolvedSiteId);
+    onStatusUpdate?.call('Saving ${rows.length} employees to local database...');
 
-    final response = await http.get(
-      Uri.parse('$url?site_id=$resolvedSiteId'),
-      headers: headers,
-    ).timeout(const Duration(seconds: 30));
-
-    if (response.statusCode != 200) {
-      throw Exception('Failed to fetch employees: ${response.statusCode}');
+    for (final row in rows) {
+      final empId = LocalDb.employeeIdFromApiRow(row);
+      if (empId == null) continue;
+      final fields = LocalDb.profileFieldsFromApiRow(row);
+      await LocalDb.upsertEmployeeProfile(
+        employeeId: empId,
+        siteId: resolvedSiteId,
+        employeeName: fields['employee_name'],
+        position: fields['position'],
+        sbu: fields['sbu'],
+      );
     }
-
-    final responseData = json.decode(response.body);
-    if (!responseData['success']) {
-      throw Exception('Server error: ${responseData['message']}');
-    }
-
-    final employees = (responseData['data'] as List).cast<Map<String, dynamic>>();
-    onStatusUpdate?.call('Saving ${employees.length} employees to local database...');
-
-    await LocalDb.saveEmployeesForSite(resolvedSiteId, employees);
   }
 
   static Future<void> _syncEmployeeLogs({
@@ -193,34 +182,28 @@ class SyncService {
       throw Exception('No site selected');
     }
 
-    onStatusUpdate?.call('Fetching employee logs from server...');
-
-    final url = Uri.parse('$_baseUrl/get/timelogs');
-    final headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'User-Agent': 'FAST-Attendance/1.0',
-      'Authorization': 'Basic ${base64Encode(utf8.encode('$_apiUsername:$_apiPassword'))}',
-    };
-
-    final response = await http.get(
-      Uri.parse('$url?site_id=$resolvedSiteId'),
-      headers: headers,
-    ).timeout(const Duration(seconds: 30));
-
-    if (response.statusCode != 200) {
-      throw Exception('Failed to fetch logs: ${response.statusCode}');
+    onStatusUpdate?.call(
+      'Fetching full timelog history from server (per employee)...',
+    );
+    
+    try {
+      final count = await LocalDb.syncTimelogsFromApi(resolvedSiteId);
+      
+      if (count == 0) {
+        debugPrint('[SYNC_SERVICE] Warning: No timelog records received from API for site $resolvedSiteId');
+        onStatusUpdate?.call('No new timelog records found on server.');
+      } else {
+        debugPrint('[SYNC_SERVICE] Successfully synced $count timelog records for site $resolvedSiteId');
+        onStatusUpdate?.call('Saved $count timelog records to local database.');
+      }
+      
+      // Verify data was actually saved
+      final savedCount = await LocalDb.getAttendanceCountForSite(resolvedSiteId);
+      debugPrint('[SYNC_SERVICE] Verified: $savedCount total timelog records now in local database for site $resolvedSiteId');
+    } catch (e) {
+      debugPrint('[SYNC_SERVICE] Error syncing timelogs: $e');
+      throw Exception('Failed to sync timelogs: $e');
     }
-
-    final responseData = json.decode(response.body);
-    if (!responseData['success']) {
-      throw Exception('Server error: ${responseData['message']}');
-    }
-
-    final logs = (responseData['data'] as List).cast<Map<String, dynamic>>();
-    onStatusUpdate?.call('Saving ${logs.length} log entries to local database...');
-
-    await LocalDb.saveAttendanceLogsForSite(resolvedSiteId, logs);
   }
 
   static void _showSuccessMessage(BuildContext context, String message) {

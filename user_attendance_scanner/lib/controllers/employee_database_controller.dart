@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../services/connectivity_service.dart';
 import '../services/local_db.dart';
 import '../services/offline_mode_sync_service.dart';
 import '../services/pending_sync_service.dart';
+import 'offline_mode_controller.dart';
 
 class EmployeeDatabaseController extends GetxController {
   final RxList<Map<String, dynamic>> employeesWithPending =
@@ -13,17 +17,125 @@ class EmployeeDatabaseController extends GetxController {
   final RxString selectedEmployeeName = ''.obs;
   final RxBool isLoading = false.obs;
   final RxBool isUploading = false.obs;
+  final RxBool isAutoSyncing = false.obs;
   final RxString errorMessage = ''.obs;
 
   String _siteId = '';
+  String _initializedSite = '';
+  Timer? _onlinePollTimer;
+  bool _pollInProgress = false;
+  final _offlineModeSync = OfflineModeSyncService();
+  VoidCallback? _modeListener;
+  final RxBool isOfflineUiMode = true.obs;
 
   void setSiteId(String siteId) {
     _siteId = siteId;
   }
 
+  @override
+  void onReady() {
+    super.onReady();
+    if (_siteId.isNotEmpty) {
+      unawaited(loadEmployeesWithPendingRecords());
+    }
+  }
+
   void initializeForSite(String siteId) {
     setSiteId(siteId);
-    loadEmployeesWithPendingRecords();
+    final isSameSite = _initializedSite == siteId;
+    _initializedSite = siteId;
+
+    // Always refresh when page is reopened so newly queued rows appear immediately.
+    unawaited(loadEmployeesWithPendingRecords());
+    if (isSameSite && selectedEmployeeId.value.isNotEmpty) {
+      unawaited(
+        loadPendingRecordsForEmployee(
+          employeeId: selectedEmployeeId.value,
+          employeeName: selectedEmployeeName.value,
+        ),
+      );
+    }
+
+    _bindModeListener();
+    if (isSameSite) return;
+    _onlinePollTimer?.cancel();
+    _onlinePollTimer = null;
+    if (_offlineModeSync.isOnlineMode()) {
+      _startOnlinePendingPoll();
+    }
+  }
+
+  void _bindModeListener() {
+    isOfflineUiMode.value = _offlineModeSync.isOfflineMode();
+    _modeListener ??= () {
+      isOfflineUiMode.value = _offlineModeSync.isOfflineMode();
+      unawaited(_onSyncModeChanged());
+    };
+    _offlineModeSync.modeChanged.removeListener(_modeListener!);
+    _offlineModeSync.modeChanged.addListener(_modeListener!);
+  }
+
+  Future<void> _onSyncModeChanged() async {
+    await loadEmployeesWithPendingRecords();
+    final employeeId = selectedEmployeeId.value;
+    if (employeeId.isNotEmpty) {
+      await loadPendingRecordsForEmployee(
+        employeeId: employeeId,
+        employeeName: selectedEmployeeName.value,
+      );
+    }
+    if (_offlineModeSync.isOnlineMode()) {
+      _startOnlinePendingPoll();
+      await _pollPendingInOnlineMode();
+    } else {
+      _onlinePollTimer?.cancel();
+      _onlinePollTimer = null;
+    }
+  }
+
+  void _startOnlinePendingPoll() {
+    _onlinePollTimer?.cancel();
+    _onlinePollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_pollPendingInOnlineMode());
+    });
+  }
+
+  Future<void> _pollPendingInOnlineMode() async {
+    if (_pollInProgress || _siteId.isEmpty) return;
+    if (!OfflineModeSyncService().isOnlineMode()) return;
+    if (!await ConnectivityService().isOnline()) return;
+    _pollInProgress = true;
+    try {
+      if (!Get.isRegistered<PendingSyncService>()) {
+        Get.put(PendingSyncService(), permanent: true);
+      }
+
+      isAutoSyncing.value = true;
+      await Get.find<PendingSyncService>().flushAllPending(siteId: _siteId);
+      await loadEmployeesWithPendingRecords();
+      final employeeId = selectedEmployeeId.value;
+      if (employeeId.isNotEmpty) {
+        await loadPendingRecordsForEmployee(
+          employeeId: employeeId,
+          employeeName: selectedEmployeeName.value,
+        );
+      }
+    } catch (e) {
+      errorMessage.value = 'Online pending sync error: $e';
+      debugPrint('[EMPLOYEE_DB] Online poll error: $e');
+    } finally {
+      isAutoSyncing.value = false;
+      _pollInProgress = false;
+    }
+  }
+
+  @override
+  void onClose() {
+    _onlinePollTimer?.cancel();
+    if (_modeListener != null) {
+      _offlineModeSync.modeChanged.removeListener(_modeListener!);
+    }
+    super.onClose();
   }
 
   Future<void> loadEmployeesWithPendingRecords() async {
@@ -69,7 +181,10 @@ class EmployeeDatabaseController extends GetxController {
       for (final row in pending) {
         final id = row['id'] as int? ?? 0;
         if (id > 0) {
-          uniqueByQueueId[id] = row;
+          uniqueByQueueId[id] = {
+            ...row,
+            ...LocalDb.describePendingAttendanceRow(row),
+          };
         }
       }
       selectedEmployeePending.assignAll(uniqueByQueueId.values.toList());
@@ -107,22 +222,31 @@ class EmployeeDatabaseController extends GetxController {
         return;
       }
 
-      if (Get.isRegistered<PendingSyncService>() &&
-          OfflineModeSyncService().isOnlineMode()) {
-        await Get.find<PendingSyncService>().syncAllPending(siteId: _siteId);
-      } else {
-        errorMessage.value = 'Switch to online mode to upload pending records';
+      if (!OfflineModeSyncService().isOnlineMode()) {
+        errorMessage.value =
+            'Offline mode — switch to Online mode to upload to the server';
         return;
       }
+      if (!await ConnectivityService().isOnline()) {
+        errorMessage.value = 'No network connection — connect to upload';
+        return;
+      }
+      if (!Get.isRegistered<PendingSyncService>()) {
+        Get.put(PendingSyncService());
+      }
+      await Get.find<PendingSyncService>().flushAllPending(siteId: _siteId);
 
       debugPrint('[EMPLOYEE_DB] Uploaded pending for $employeeId');
 
-      // Reload data
-      await loadPendingRecordsForEmployee(
-        employeeId: employeeId,
-        employeeName: selectedEmployeeName.value,
-      );
       await loadEmployeesWithPendingRecords();
+      if (employeesWithPending.isEmpty) {
+        clearSelection();
+      } else {
+        await loadPendingRecordsForEmployee(
+          employeeId: employeeId,
+          employeeName: selectedEmployeeName.value,
+        );
+      }
     } catch (e) {
       errorMessage.value = 'Upload failed: $e';
       debugPrint('[EMPLOYEE_DB] Upload error: $e');
@@ -152,19 +276,27 @@ class EmployeeDatabaseController extends GetxController {
         return;
       }
 
-      if (Get.isRegistered<PendingSyncService>() &&
-          OfflineModeSyncService().isOnlineMode()) {
-        await Get.find<PendingSyncService>().syncAllPending(siteId: _siteId);
-      } else {
-        errorMessage.value = 'Switch to online mode to upload pending records';
+      if (!OfflineModeSyncService().isOnlineMode()) {
+        errorMessage.value =
+            'Offline mode — switch to Online mode to upload to the server';
         return;
       }
+      if (!await ConnectivityService().isOnline()) {
+        errorMessage.value = 'No network connection — connect to upload';
+        return;
+      }
+      if (!Get.isRegistered<PendingSyncService>()) {
+        Get.put(PendingSyncService());
+      }
+      await Get.find<PendingSyncService>().flushAllPending(siteId: _siteId);
 
       debugPrint('[EMPLOYEE_DB] Uploaded all pending records');
 
       // Reload data
       await loadEmployeesWithPendingRecords();
-      if (selectedEmployeeId.value.isNotEmpty) {
+      if (employeesWithPending.isEmpty) {
+        clearSelection();
+      } else if (selectedEmployeeId.value.isNotEmpty) {
         await loadPendingRecordsForEmployee(
           employeeId: selectedEmployeeId.value,
           employeeName: selectedEmployeeName.value,
@@ -182,5 +314,28 @@ class EmployeeDatabaseController extends GetxController {
     selectedEmployeeId.value = '';
     selectedEmployeeName.value = '';
     selectedEmployeePending.clear();
+  }
+
+  /// Opens offline/online mode picker (used by Pending Records action button).
+  Future<void> promptSyncModeSelection() async {
+    if (!Get.isRegistered<OfflineModeController>()) {
+      Get.put(OfflineModeController());
+    }
+    await Get.find<OfflineModeController>().presentModeSelectionDialog(
+      showPicker: true,
+    );
+    await _onSyncModeChanged();
+  }
+
+  /// Refresh lists after Online-mode flush (from [OfflineModeController]).
+  Future<void> reloadAfterOnlineSync() async {
+    await loadEmployeesWithPendingRecords();
+    final employeeId = selectedEmployeeId.value;
+    if (employeeId.isNotEmpty) {
+      await loadPendingRecordsForEmployee(
+        employeeId: employeeId,
+        employeeName: selectedEmployeeName.value,
+      );
+    }
   }
 }

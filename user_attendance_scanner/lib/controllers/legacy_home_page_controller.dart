@@ -115,7 +115,10 @@ class LegacyHomePageController extends GetxController {
     }
   }
 
-  Future<void> syncEmployeesFromApiToLocalDb(String siteId) async {
+  Future<void> syncEmployeesFromApiToLocalDb(
+    String siteId, {
+    void Function(int processed, int total)? onProgress,
+  }) async {
     await LocalDb.pruneToSite(siteId);
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 30);
@@ -138,12 +141,15 @@ class LegacyHomePageController extends GetxController {
       final decoded = jsonDecode(body);
       final rows = _extractRows(decoded);
 
+      final totalRows = rows.length;
       int totalEmps = 0;
       int skippedEmps = 0;
       int savedFingerprints = 0;
       int skippedTemplates = 0;
       final templatesToSave = <Map<String, dynamic>>[];
+      var processed = 0;
       for (final row in rows) {
+        processed++;
         totalEmps++;
         final empId =
             (row['employee_id'] ?? row['emp_id'] ?? row['id'] ?? row['EMPID'])
@@ -172,8 +178,23 @@ class LegacyHomePageController extends GetxController {
 
         if (empId == null || empId.isEmpty) {
           skippedEmps++;
+          if (onProgress != null &&
+              (processed == totalRows || processed % 25 == 0)) {
+            onProgress(processed, totalRows);
+          }
           continue;
         }
+
+        final profileFields = LocalDb.profileFieldsFromApiRow(row);
+        await LocalDb.upsertEmployeeProfile(
+          employeeId: empId,
+          siteId: siteId,
+          employeeName: resolvedName ?? profileFields['employee_name'],
+          position: profileFields['position'],
+          sbu: profileFields['sbu'],
+          timelogEmployeeId:
+              LocalDb.timelogEmployeeIdFromRow(row) ?? empId,
+        );
 
         final thumbTemplates = <String, String?>{
           'left':
@@ -208,11 +229,19 @@ class LegacyHomePageController extends GetxController {
             skippedTemplates++;
           }
         }
+
+        if (onProgress != null &&
+            (processed == totalRows || processed % 25 == 0)) {
+          onProgress(processed, totalRows);
+        }
       }
 
       await LocalDb.mergeEmployeesFromApi(
         siteId: siteId,
-        apiEmployees: templatesToSave,
+        apiEmployees: await _filterApiTemplatesForLocalPendingFingerprintUpdates(
+          siteId: siteId,
+          templates: templatesToSave,
+        ),
       );
 
       final dbCount = await LocalDb.getEmployeeCountBySite(siteId);
@@ -228,76 +257,19 @@ class LegacyHomePageController extends GetxController {
     }
   }
 
-  Future<void> fetchAndCacheSiteTimeLogs(String siteId) async {
+  Future<void> fetchAndCacheSiteTimeLogs(
+    String siteId, {
+    void Function(int processed, int total)? onProgress,
+  }) async {
     try {
-      debugPrint('[TIMELOG_FETCH] ===== START FETCHING TIMELOGS =====');
-      debugPrint('[TIMELOG_FETCH] SiteID: $siteId');
-      final apiUrl = '$_timelogPerSiteApiUrl$siteId';
-      debugPrint('[TIMELOG_FETCH] API URL: $apiUrl');
-
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 20);
-      try {
-        final request = await client.getUrl(
-          Uri.parse(apiUrl),
-        );
-        final basicToken = base64Encode(
-          utf8.encode('$_apiUsername:$_apiPassword'),
-        );
-        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Basic $basicToken',
-        );
-
-        debugPrint('[TIMELOG_FETCH] Sending HTTP GET request...');
-        final response = await request.close();
-        debugPrint('[TIMELOG_FETCH] HTTP Response Status: ${response.statusCode}');
-
-        final body = await response.transform(utf8.decoder).join();
-        debugPrint('[TIMELOG_FETCH] Response Body Length: ${body.length} characters');
-
-        if (body.length < 500) {
-          debugPrint('[TIMELOG_FETCH] Response Body: $body');
-        } else {
-          debugPrint('[TIMELOG_FETCH] Response Body (first 500 chars): ${body.substring(0, 500)}');
-        }
-
-        if (response.statusCode < 200 || response.statusCode > 299) {
-          debugPrint('[TIMELOG_FETCH] ERROR: HTTP ${response.statusCode} - $body');
-          throw Exception('HTTP ${response.statusCode}: $body');
-        }
-
-        if (body.isEmpty) {
-          debugPrint('[TIMELOG_FETCH] WARNING: Empty response body from API');
-          return;
-        }
-
-        debugPrint('[TIMELOG_FETCH] Decoding JSON response...');
-        final decoded = jsonDecode(body);
-        debugPrint('[TIMELOG_FETCH] Decoded JSON type: ${decoded.runtimeType}');
-
-        final rows = _extractRows(decoded);
-        debugPrint('[TIMELOG_FETCH] Extracted rows count: ${rows.length}');
-
-        if (rows.isEmpty) {
-          debugPrint('[TIMELOG_FETCH] WARNING: No rows extracted from API response');
-          debugPrint('[TIMELOG_FETCH] Full decoded response: $decoded');
-          return;
-        }
-
-        // Log first 3 rows for inspection
-        for (int i = 0; i < rows.take(3).length; i++) {
-          debugPrint('[TIMELOG_FETCH] Row $i: ${rows[i]}');
-        }
-
-        debugPrint('[TIMELOG_FETCH] Saving ${rows.length} rows to local cache...');
-        await LocalDb.replaceTimelogCache(siteId: siteId, rows: rows);
-        debugPrint('[TIMELOG_FETCH] ===== TIMELOG FETCH COMPLETE =====');
-      } finally {
-        client.close(force: true);
-      }
+      debugPrint(
+        '[TIMELOG_FETCH] Full history sync per employee for site $siteId',
+      );
+      final count = await LocalDb.syncTimelogsFromApi(
+        siteId,
+        onProgress: onProgress,
+      );
+      debugPrint('[TIMELOG_FETCH] Merged $count timelog rows into local cache');
     } catch (e, stackTrace) {
       debugPrint('[TIMELOG_FETCH] ERROR: $e');
       debugPrint('[TIMELOG_FETCH] Stack trace: $stackTrace');
@@ -366,6 +338,44 @@ class LegacyHomePageController extends GetxController {
     if (value == null) return true;
     final text = value.toString().trim();
     return text.isEmpty || text == 'null';
+  }
+
+  Future<List<Map<String, dynamic>>>
+      _filterApiTemplatesForLocalPendingFingerprintUpdates({
+    required String siteId,
+    required List<Map<String, dynamic>> templates,
+  }) async {
+    if (templates.isEmpty) return templates;
+
+    final blockedEmployeeIds = <String>{};
+    final allowed = <Map<String, dynamic>>[];
+
+    for (final row in templates) {
+      final employeeId = row['employee_id']?.toString().trim() ?? '';
+      if (employeeId.isEmpty) continue;
+
+      if (blockedEmployeeIds.contains(employeeId)) {
+        continue;
+      }
+
+      final hasPendingFingerprint = await LocalDb.hasPendingFingerprintUpdate(
+        employeeId: employeeId,
+        siteId: siteId,
+      );
+      if (hasPendingFingerprint) {
+        blockedEmployeeIds.add(employeeId);
+        continue;
+      }
+
+      allowed.add(row);
+    }
+
+    if (blockedEmployeeIds.isNotEmpty) {
+      debugPrint(
+        '[SYNC_DEBUG] Skipped API fingerprint overwrite for ${blockedEmployeeIds.length} employee(s) with pending local fingerprint updates.',
+      );
+    }
+    return allowed;
   }
 
   /// Delegates to [DashboardPageController] so scan flow uses the same

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../services/local_db.dart';
+import '../constants/date_time_formats.dart';
 import '../models/employee_model.dart';
 import '../services/device_service.dart';
 import '../services/device_service_impl.dart';
@@ -30,12 +31,12 @@ class LogsController extends GetxController {
   // Observable state
   final RxList<Map<String, dynamic>> logs = <Map<String, dynamic>>[].obs;
   final RxBool isLoading = false.obs;
-  final RxString searchQuery = ''.obs;
   final RxString selectedFilter = 'All'.obs;
   final RxString statusMessage = ''.obs;
   final RxString lastDbSyncLabel = ''.obs;
   final RxString errorMessage = ''.obs;
   final TextEditingController searchController = TextEditingController();
+  final Rxn<DateTime> selectedDate = Rxn<DateTime>();
 
   // Authentication state
   final RxBool isAuthenticated = false.obs;
@@ -43,8 +44,7 @@ class LogsController extends GetxController {
   final RxBool isScanning = false.obs;
   final RxBool isDeviceConnected = false.obs;
 
-  // Employee ID search and cooldown
-  final RxString employeeIdSearch = ''.obs;
+  // Cooldown
   final RxBool isCooldownActive = false.obs;
   final RxInt cooldownSeconds = 0.obs;
   final RxBool showTimeLogs = true.obs;
@@ -74,7 +74,6 @@ class LogsController extends GetxController {
     super.onInit();
     _deviceService = Get.find<DeviceService>();
     _employeeRepository = Get.find<EmployeeRepository>();
-    _setupSearchListener();
     _initializeDevice();
     // Start automatic fingerprint detection when page loads
     _startAutomaticDetection();
@@ -93,11 +92,15 @@ class LogsController extends GetxController {
     super.onClose();
   }
   
-  void _setupSearchListener() {
-    searchController.addListener(() {
-      searchQuery.value = searchController.text.toLowerCase();
-      onUserInteraction(); // Reset AFK on user input
-    });
+  void _updateSelectedDate(DateTime? date) {
+    selectedDate.value = date;
+    searchController.text =
+        date == null ? '' : DateTimeFormats.dateOnly(date);
+  }
+
+  void setSelectedDate(DateTime? date) {
+    _updateSelectedDate(date);
+    onUserInteraction();
   }
 
   void _startAfkTimer() {
@@ -116,12 +119,7 @@ class LogsController extends GetxController {
   }
 
   void onUserInteraction() {
-    final now = DateTime.now();
-    final last = _lastAfkInteractionAt;
-    if (last != null && now.difference(last).inMilliseconds < 400) {
-      return;
-    }
-    _lastAfkInteractionAt = now;
+    _lastAfkInteractionAt = DateTime.now();
     _resetAfkTimer();
   }
 
@@ -244,10 +242,10 @@ class LogsController extends GetxController {
 
   Future<void> _authenticateWithLocalData() async {
     try {
-      setStatus('Ready to authenticate - enter employee ID');
+      setStatus('Ready to authenticate - scan fingerprint');
 
       // Don't automatically load all logs - wait for user authentication
-      // User must either scan fingerprint or input employee ID
+      // User must scan fingerprint before viewing logs
     } catch (e) {
       debugPrint('[LOGS_CONTROLLER] Authentication error: $e');
       errorMessage.value = 'Authentication failed: $e';
@@ -310,7 +308,6 @@ class LogsController extends GetxController {
   Future<void> _completeFingerprintAuthentication(Employee employee) async {
     authenticatedEmployee.value = employee;
     isAuthenticated.value = true;
-    employeeIdSearch.value = employee.id;
     errorMessage.value = '';
 
     debugPrint(
@@ -327,98 +324,15 @@ class LogsController extends GetxController {
     _resetAfkTimer();
   }
 
-  /// Authenticate by Employee ID - show only that employee's logs
+  /// Employee ID authentication is disabled (fingerprint-only access).
   Future<void> authenticateByEmployeeId(
-    String employeeId, {
-    bool skipThumbCheck = false,
-  }) async {
-    if (employeeId.trim().isEmpty) {
-      errorMessage.value = 'Please enter a valid employee ID';
-      return;
-    }
-
-    try {
-      isLoading.value = true;
-      errorMessage.value = '';
-
-      debugPrint('[AUTH] ===== EMPLOYEE AUTHENTICATION START =====');
-      debugPrint('[AUTH] Employee ID: $employeeId');
-      debugPrint('[AUTH] Site ID: $siteId');
-
-      if (siteId == null || siteId!.isEmpty) {
-        errorMessage.value = 'No site selected';
-        debugPrint('[AUTH] ERROR: No site selected');
-        return;
-      }
-
-      if (!skipThumbCheck) {
-        setStatus('Verifying employee biometric data...');
-        debugPrint('[AUTH] Checking if employee has thumb mark...');
-        final hasThumbMark = await _employeeHasThumbMark(employeeId.trim());
-        debugPrint('[AUTH] Has thumb mark: $hasThumbMark');
-
-        if (!hasThumbMark) {
-          errorMessage.value =
-              'Employee ID $employeeId has no enrolled thumb mark. Please enroll first.';
-          authenticatedEmployee.value = null;
-          isAuthenticated.value = false;
-          logs.clear();
-          setStatus('Employee not enrolled');
-          debugPrint('[AUTH] ERROR: Employee not enrolled');
-          return;
-        }
-      }
-
-      // Get employee from LOCAL DATABASE FIRST (offline-first approach)
-      debugPrint('[AUTH] Fetching employee from offline database...');
-      String empName = 'Employee $employeeId';
-      Employee? localEmployee;
-
-      try {
-        final employees = _dedupeEmployeesById(
-          await _employeeRepository.getEmployeesForSite(siteId!),
-        );
-        localEmployee = _findEmployeeById(employees, employeeId.trim());
-        if (localEmployee != null) {
-          empName = localEmployee.name;
-          debugPrint('[AUTH] Found employee from local DB: $empName');
-        }
-      } catch (e) {
-        debugPrint('[AUTH] Could not fetch from local DB: $e');
-      }
-
-      authenticatedEmployee.value = localEmployee ??
-          Employee(
-            id: employeeId.trim(),
-            name: empName,
-            siteId: siteId!,
-          );
-      isAuthenticated.value = true;
-
-      debugPrint('[AUTH] ✅ Employee authenticated: $empName');
-      debugPrint('[AUTH] ===== EMPLOYEE AUTHENTICATION END =====');
-
-      // Now load logs (will fetch from LOCAL DB FIRST)
-      setStatus('Loading employee time logs...');
-      await loadLogs();
-
-      // Set status to green after successful authentication and log loading
-      if (isAuthenticated.value && logs.isNotEmpty) {
-        setStatus('Time logs loaded successfully');
-      } else if (isAuthenticated.value) {
-        setStatus('Authenticated - no time logs found');
-      }
-
-      _resetAfkTimer(); // Reset AFK timeout on successful authentication
-    } catch (e) {
-      debugPrint('[AUTH] ERROR: $e');
-      errorMessage.value = 'Authentication error: $e';
-      authenticatedEmployee.value = null;
-      isAuthenticated.value = false;
-      logs.clear();
-    } finally {
-      isLoading.value = false;
-    }
+    String employeeId,
+  ) async {
+    final trimmed = employeeId.trim();
+    errorMessage.value = trimmed.isEmpty
+        ? 'Employee ID authentication is disabled. Please scan your fingerprint.'
+        : 'Employee ID authentication is disabled for $trimmed. Please scan your fingerprint.';
+    setStatus('Scan fingerprint to authenticate');
   }
 
   /// Start fingerprint authentication - waits for finger on scanner
@@ -462,13 +376,11 @@ class LogsController extends GetxController {
       // Wait for finger detection instead of continuous scanning
       while (!isAuthenticated.value && isDeviceConnected.value && siteId != null) {
         try {
-          isScanning.value = true;
-          setStatus('Scanning fingerprint...');
-
           await _performFingerprintScan();
 
-          isScanning.value = false;
-          setStatus('Place finger on scanner');
+          if (!isAuthenticated.value) {
+            setStatus('Place finger on scanner');
+          }
 
           // If match found, exit loop
           if (isAuthenticated.value) {
@@ -486,7 +398,6 @@ class LogsController extends GetxController {
           await Future.delayed(const Duration(milliseconds: 2000));
         } catch (e) {
           debugPrint('[LOGS_CONTROLLER] Scan attempt error: $e');
-          isScanning.value = false;
           setStatus('Place finger on scanner');
           // Clear error and add delay before continuing
           errorMessage.value = '';
@@ -563,6 +474,7 @@ class LogsController extends GetxController {
   }
 
   Future<void> _performFingerprintScan() async {
+    var didScan = false;
     try {
       debugPrint('[LOGS_CONTROLLER] ===== FINGERPRINT SCAN START =====');
 
@@ -579,6 +491,9 @@ class LogsController extends GetxController {
       debugPrint('[LOGS_CONTROLLER] Fingerprint template received: ${template != null}');
 
       if (template != null && _isValidFingerprintTemplate(template)) {
+        didScan = true;
+        isScanning.value = true;
+        setStatus('Scanning fingerprint...');
         debugPrint('[LOGS_CONTROLLER] Valid fingerprint - identifying on device...');
 
         final identification = await _deviceService.identifyOnDevice(
@@ -633,6 +548,9 @@ class LogsController extends GetxController {
       // Don't set error message to avoid stopping continuous scan
       // errorMessage.value = 'Scanning error: $e';
       // DON'T change status - keep it blue
+    }
+    if (didScan) {
+      isScanning.value = false;
     }
     debugPrint('[LOGS_CONTROLLER] ===== FINGERPRINT SCAN END =====');
   }
@@ -711,7 +629,8 @@ class LogsController extends GetxController {
         final enriched = localLogs.map((log) {
           final copy = Map<String, dynamic>.from(log);
           copy['employee_id'] ??= authenticatedEmployee.value!.id;
-          copy['employee_name'] ??= authenticatedEmployee.value!.name;
+          copy['employee_name'] = _resolveEmployeeName(copy);
+          copy['period'] = _resolvePeriod(copy);
           return copy;
         }).toList();
 
@@ -731,8 +650,36 @@ class LogsController extends GetxController {
         return;
       }
 
-      // If no local logs, show empty state (don't fetch from API to prevent mixing data)
-      debugPrint('[LOGS_CONTROLLER] ⚠️ No logs found in offline database');
+      debugPrint(
+        '[LOGS_CONTROLLER] No local logs — pulling full history from API',
+      );
+      try {
+        await LocalDb.syncTimelogsForEmployeeFromApi(
+          siteId: siteId!,
+          employeeId: authenticatedEmployee.value!.id,
+        );
+        final afterSync = await LocalDb.getAttendanceLogsForEmployee(
+          authenticatedEmployee.value!.id,
+          siteId!,
+        );
+        if (afterSync.isNotEmpty) {
+          logs.assignAll(
+            afterSync.map((log) {
+              final copy = Map<String, dynamic>.from(log);
+              copy['employee_name'] = _resolveEmployeeName(copy);
+              copy['period'] = _resolvePeriod(copy);
+              return copy;
+            }).toList(),
+          );
+          setStatus('Loaded ${logs.length} time logs from server');
+          debugPrint('[LOGS_CONTROLLER] ===== LOAD LOGS END (API SYNC) =====');
+          return;
+        }
+      } catch (e) {
+        debugPrint('[LOGS_CONTROLLER] API timelog sync failed: $e');
+      }
+
+      debugPrint('[LOGS_CONTROLLER] ⚠️ No logs found after sync');
       setStatus('Authenticated - no time logs found');
       logs.clear();
       debugPrint('[LOGS_CONTROLLER] ===== LOAD LOGS END (NO LOCAL DATA) =====');
@@ -779,11 +726,11 @@ class LogsController extends GetxController {
     authenticatedEmployee.value = null;
     logs.clear();
     searchController.clear();
-    searchQuery.value = '';
+    selectedDate.value = null;
     errorMessage.value = '';
     logCooldownMap.clear();
     activeCooldownCount.value = 0;
-    setStatus('Logged out - enter employee ID or scan fingerprint');
+    setStatus('Logged out - scan fingerprint to authenticate');
     debugPrint('[LOGS_CONTROLLER] User logged out');
   }
 
@@ -997,6 +944,50 @@ class LogsController extends GetxController {
     }
   }
 
+  String _resolveEmployeeName(Map<String, dynamic> log) {
+    final employeeId = (log['employee_id'] ?? '').toString().trim();
+    final rawName =
+        (log['employee_name'] ?? log['name'] ?? '').toString().trim();
+    final authName = authenticatedEmployee.value?.name.trim() ?? '';
+
+    final isPlaceholder = rawName.isEmpty ||
+        rawName.toLowerCase() == 'unknown' ||
+        rawName.toLowerCase().startsWith('employee');
+
+    if (isPlaceholder &&
+        authName.isNotEmpty &&
+        (employeeId.isEmpty ||
+            employeeId.toLowerCase() ==
+                (authenticatedEmployee.value?.id.toLowerCase() ?? ''))) {
+      return authName;
+    }
+
+    if (rawName.isNotEmpty) return rawName;
+    if (authName.isNotEmpty) return authName;
+    return employeeId.isEmpty ? 'Unknown' : employeeId;
+  }
+
+  String _resolvePeriod(Map<String, dynamic> log) {
+    final rawPeriod = (log['period'] ?? '').toString().trim();
+    final parsed = _parseLogTimestamp(log['timestamp']);
+
+    if (parsed != null) {
+      return parsed.hour < 12 ? 'Morning' : 'Afternoon';
+    }
+
+    final timeText = (log['time_only'] ?? '').toString().trim();
+    if (timeText.isNotEmpty && timeText.contains(':')) {
+      final hour = int.tryParse(timeText.split(':').first);
+      if (hour != null) {
+        return hour < 12 ? 'Morning' : 'Afternoon';
+      }
+    }
+
+    if (rawPeriod.toLowerCase().contains('morn')) return 'Morning';
+    if (rawPeriod.toLowerCase().contains('after')) return 'Afternoon';
+    return rawPeriod;
+  }
+
   Future<Map<String, String>> _fetchEmployeeNamesFromApi(String siteId) async {
     final names = <String, String>{};
     try {
@@ -1044,21 +1035,9 @@ class LogsController extends GetxController {
             continue;
           }
 
-          final id = emp['employee_id']?.toString() ??
-                     emp['employeeID']?.toString() ??
-                     emp['EMPLOYEEID']?.toString() ??
-                     '';
-          final name = emp['employee_name']?.toString() ??
-                      emp['employeeName']?.toString() ??
-                      emp['EMPLOYEE_NAME']?.toString() ??
-                      emp['EmployeeName']?.toString() ??
-                      emp['name']?.toString() ??
-                      emp['Name']?.toString() ??
-                      emp['fullname']?.toString() ??
-                      emp['fullName']?.toString() ??
-                      emp['FULLNAME']?.toString() ??
-                      emp['first_name']?.toString() ??
-                      '';
+          final row = Map<String, dynamic>.from(emp);
+          final id = LocalDb.employeeIdFromApiRow(row) ?? '';
+          final name = LocalDb.profileFieldsFromApiRow(row)['employee_name'] ?? '';
 
           debugPrint('[LOGS_CONTROLLER] Processing: id="$id", name="$name", all_keys=${(emp).keys.toList()}');
 
@@ -1088,6 +1067,10 @@ class LogsController extends GetxController {
 
   // Filter and search logic
   List<Map<String, dynamic>> get filteredLogs {
+    if (!isAuthenticated.value) {
+      return [];
+    }
+
     var filtered = logs.toList();
     
     // Apply type filter
@@ -1098,12 +1081,12 @@ class LogsController extends GetxController {
       }).toList();
     }
     
-    // Apply search filter
-    if (searchQuery.value.isNotEmpty) {
+    final targetDate = selectedDate.value;
+    if (targetDate != null) {
+      final targetKey = DateTimeFormats.dateKey(targetDate);
       filtered = filtered.where((log) {
-        final empId = (log['employee_id'] ?? '').toString().toLowerCase();
-        final empName = (log['employee_name'] ?? '').toString().toLowerCase();
-        return empId.contains(searchQuery.value) || empName.contains(searchQuery.value);
+        final logKey = _logDateKey(log);
+        return logKey != null && logKey == targetKey;
       }).toList();
     }
     
@@ -1116,18 +1099,14 @@ class LogsController extends GetxController {
   
   void clearSearch() {
     searchController.clear();
-    searchQuery.value = '';
+    selectedDate.value = null;
   }
   
   String formatTimestamp(dynamic timestamp) {
     if (timestamp == null || timestamp.toString().isEmpty) return 'N/A';
     try {
-      // Handle API format "2026/04/01 08:59:23"
-      String ts = timestamp.toString();
-      if (ts.contains('/')) {
-        ts = ts.replaceAll('/', '-');
-      }
-      final dateTime = DateTime.parse(ts);
+      final dateTime = _parseLogTimestamp(timestamp);
+      if (dateTime == null) return 'N/A';
       return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
     } catch (e) {
       return 'N/A';
@@ -1137,16 +1116,39 @@ class LogsController extends GetxController {
   String formatDate(dynamic timestamp) {
     if (timestamp == null || timestamp.toString().isEmpty) return 'N/A';
     try {
-      // Handle API format "2026/04/01 08:59:23"
-      String ts = timestamp.toString();
-      if (ts.contains('/')) {
-        ts = ts.replaceAll('/', '-');
-      }
-      final dateTime = DateTime.parse(ts);
+      final dateTime = _parseLogTimestamp(timestamp);
+      if (dateTime == null) return 'N/A';
       return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')}';
     } catch (e) {
       return 'N/A';
     }
+  }
+
+  DateTime? _parseLogTimestamp(dynamic timestamp) {
+    if (timestamp == null) return null;
+    final raw = timestamp.toString().trim();
+    if (raw.isEmpty) return null;
+
+    final normalized = raw.replaceAll('/', '-');
+    final parsed = DateTime.tryParse(normalized);
+    if (parsed != null) return parsed;
+
+    if (normalized.contains(' ')) {
+      final datePart = normalized.split(' ').first;
+      return DateTime.tryParse(datePart);
+    }
+    return null;
+  }
+
+  String? _logDateKey(Map<String, dynamic> log) {
+    final raw = log['timelog_date'] ??
+        log['timeLogDate'] ??
+        log['timelog'] ??
+        log['timestamp'] ??
+        log['date'] ??
+        log['datetime'];
+    final parsed = _parseLogTimestamp(raw);
+    return parsed == null ? null : DateTimeFormats.dateKey(parsed);
   }
 
   String getTimeInOut(Map<String, dynamic> log) {
@@ -1238,19 +1240,13 @@ class LogsController extends GetxController {
       isLoading.value = true;
       setStatus('Fetching time logs from server...');
       
-      // Fetch all time logs from API
-      final apiLogs = await _fetchLogsFromApi(siteId!);
-      
-      if (apiLogs.isNotEmpty) {
-        setStatus('Saving ${apiLogs.length} time logs to local database...');
-        
-        // Save to local database
-        await LocalDb.saveAttendanceLogsForSite(siteId!, apiLogs);
-        
-        setStatus('Successfully saved ${apiLogs.length} time logs to local database');
-        debugPrint('[LOGS_CONTROLLER] Saved ${apiLogs.length} logs to local database');
+      final count = await LocalDb.syncTimelogsFromApi(siteId!);
+
+      if (count > 0) {
+        setStatus('Saved $count timelog records to local database');
+        debugPrint('[LOGS_CONTROLLER] Saved $count timelog rows to local database');
       } else {
-        setStatus('No time logs found on server');
+        setStatus('No time logs found on server (sync employees first)');
       }
     } catch (e) {
       errorMessage.value = 'Failed to fetch time logs: $e';

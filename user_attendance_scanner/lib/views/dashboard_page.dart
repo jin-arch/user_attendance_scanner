@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_print
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../animations/dashboard_rising_fade_particle.dart';
 import '../constants/date_time_formats.dart';
@@ -104,6 +105,7 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   @override
   void initState() {
     super.initState();
+    _reapplyImmersiveMode();
 
     // Controller is provided by AppBinding (MVP-style DI)
     _controller = Get.find<LegacyHomePageController>();
@@ -314,11 +316,18 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
     );
     print('[DASHBOARD_SCAN] Attendance result: $attendanceType');
 
-    if (attendanceType == 'TIME IN' || attendanceType == 'TIME OUT' || attendanceType == 'QUEUED OFFLINE') {
-      final resultTypeStr = attendanceType == 'TIME OUT'
-          ? 'timeOutSuccess'
-          : 'timeInSuccess';
-      final displayAttendanceType = attendanceType == 'QUEUED OFFLINE' ? 'Time In (Queued)' : (attendanceType ?? 'Time In');
+    final isSuccess = attendanceType == 'TIME IN' ||
+        attendanceType == 'TIME OUT' ||
+        attendanceType == 'QUEUED TIME IN' ||
+        attendanceType == 'QUEUED TIME OUT' ||
+        attendanceType == 'QUEUED OFFLINE';
+    if (isSuccess) {
+      final isTimeOut = attendanceType == 'TIME OUT' ||
+          attendanceType == 'QUEUED TIME OUT';
+      final resultTypeStr = isTimeOut ? 'timeOutSuccess' : 'timeInSuccess';
+      final displayAttendanceType = attendanceType?.startsWith('QUEUED') == true
+          ? (isTimeOut ? 'Time Out (Queued)' : 'Time In (Queued)')
+          : (attendanceType ?? 'Time In');
 
       if (mounted) {
         _dashboardController.stopScanLoop(setScanning: _controller.setScanning);
@@ -541,6 +550,19 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   
   void _resetAfkTimer() {
     _dashboardController.resetAfkTimer();
+    _reapplyImmersiveMode();
+  }
+
+  void _reapplyImmersiveMode() {
+    if (kIsWeb) return;
+    final target = defaultTargetPlatform;
+    final isSupportedPlatform = target == TargetPlatform.android ||
+        target == TargetPlatform.iOS ||
+        target == TargetPlatform.windows ||
+        target == TargetPlatform.linux ||
+        target == TargetPlatform.macOS;
+    if (!isSupportedPlatform) return;
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   Future<void> _loadRows({String? siteId}) async {

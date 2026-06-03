@@ -20,7 +20,7 @@ class AppBinding extends Bindings {
     // Register dependencies
     Get.lazyPut<DeviceService>(() => DeviceServiceImpl(), fenix: true);
     Get.lazyPut<ScannerRegistryService>(() => ScannerRegistryService(), fenix: true);
-    Get.lazyPut<PendingSyncService>(() => PendingSyncService(), fenix: true);
+    Get.put<PendingSyncService>(PendingSyncService(), permanent: true);
     Get.lazyPut<SiteRepository>(() => SiteRepositoryImpl(), fenix: true);
     Get.lazyPut<EmployeeRepository>(() => EmployeeRepositoryImpl(), fenix: true);
     Get.lazyPut<AttendanceRepository>(() => AttendanceRepositoryImpl(), fenix: true);

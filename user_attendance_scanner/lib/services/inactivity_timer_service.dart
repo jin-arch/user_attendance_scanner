@@ -25,7 +25,7 @@ class InactivityTimerService {
     _isPaused = false;
     _lastInteractionTime = DateTime.now();
     _startTimer();
-    debugPrint('[INACTIVITY_TIMER] Started 10-minute timer');
+    debugPrint('[INACTIVITY_TIMER] Started 30-minute timer');
   }
 
   void pause() {
@@ -47,6 +47,7 @@ class InactivityTimerService {
     if (!_isActive || _isPaused) return;
     _lastInteractionTime = DateTime.now();
     timerExpired.value = false;
+    _startTimer();
     debugPrint('[INACTIVITY_TIMER] Interaction recorded - timer reset');
   }
 
@@ -68,9 +69,9 @@ class InactivityTimerService {
   void _startTimer() {
     _inactivityTimer?.cancel();
     _inactivityTimer =
-        Timer(const Duration(minutes: 10), () {
+        Timer(const Duration(minutes: 30), () {
       timerExpired.value = true;
-      debugPrint('[INACTIVITY_TIMER] 10-minute timer expired');
+      debugPrint('[INACTIVITY_TIMER] 30-minute timer expired');
     });
   }
 

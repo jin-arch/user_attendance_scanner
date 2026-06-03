@@ -396,10 +396,13 @@ class ZKTecoUSB {
         _lastTemplate = null;
         return template;
       } else {
-        // Windows: Poll for fingerprint
+        // Windows: Poll for fingerprint with strict timeout
         debugPrint('Waiting for fingerprint...');
         
         const maxAttempts = 50; // 10 seconds at 200ms intervals
+        int consecutiveErrors = 0;
+        const maxConsecutiveErrors = 5; // Stop after 5 consecutive errors
+        
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
           final result = _sdk!.acquireFingerprint();
           
@@ -410,8 +413,21 @@ class ZKTecoUSB {
               _lastCapturedImage = result.image;
             }
             _lastTemplate = result.template;
+            consecutiveErrors = 0;
             
             return result.template;
+          }
+          
+          // Count consecutive errors
+          if (result.error != ZkfpErrors.OK) {
+            consecutiveErrors++;
+            // Exit early if too many consecutive errors (likely no finger)
+            if (consecutiveErrors >= maxConsecutiveErrors) {
+              debugPrint('Fingerprint capture: No finger detected (error count: $consecutiveErrors)');
+              return null;
+            }
+          } else {
+            consecutiveErrors = 0;
           }
           
           if (result.error == ZkfpErrors.BUSY || 
@@ -423,7 +439,7 @@ class ZKTecoUSB {
           await Future.delayed(const Duration(milliseconds: 200));
         }
         
-        debugPrint('Fingerprint capture timeout');
+        debugPrint('Fingerprint capture timeout after $maxAttempts attempts');
         return null;
       }
     } catch (e) {

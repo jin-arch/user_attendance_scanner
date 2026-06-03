@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum SyncMode { online, offline }
 
 class OfflineModeSyncService {
   static final OfflineModeSyncService _instance =
       OfflineModeSyncService._internal();
+
+  static const String _modePrefsKey = 'hris_sync_mode_v1';
+  static const String _modeChosenPrefsKey = 'hris_sync_mode_chosen_v1';
 
   SyncMode _currentMode = SyncMode.offline;
   bool _hasShownModeSelector = false;
@@ -25,6 +29,24 @@ class OfflineModeSyncService {
     modeChanged.value = mode;
     _hasShownModeSelector = false;
     debugPrint('[OFFLINE_MODE_SYNC] Mode changed to: ${mode.name}');
+  }
+
+  Future<void> persistMode(SyncMode mode) async {
+    _currentMode = mode;
+    modeChanged.value = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_modePrefsKey, mode.name);
+    await prefs.setBool(_modeChosenPrefsKey, true);
+    debugPrint('[OFFLINE_MODE_SYNC] Persisted mode: ${mode.name}');
+  }
+
+  Future<SyncMode?> loadPersistedMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(_modeChosenPrefsKey) ?? false)) return null;
+    final name = prefs.getString(_modePrefsKey);
+    if (name == SyncMode.online.name) return SyncMode.online;
+    if (name == SyncMode.offline.name) return SyncMode.offline;
+    return null;
   }
 
   SyncMode getMode() => _currentMode;

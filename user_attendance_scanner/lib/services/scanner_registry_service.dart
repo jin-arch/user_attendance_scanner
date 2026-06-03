@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
@@ -24,7 +22,10 @@ class ScannerRegistryService extends GetxService {
       debugPrint('[SCANNER_REGISTRY] clearAllFingerprints: $e');
     }
 
-    final rows = await LocalDb.getEmployeesBySite(siteId);
+    final rows = await LocalDb.getEmployeesBySite(
+      siteId,
+      includeFingerTemplates: false,
+    );
     var registered = 0;
 
     for (final row in rows) {
@@ -32,10 +33,8 @@ class ScannerRegistryService extends GetxService {
       final empId = row['employee_id']?.toString().trim() ?? '';
       if (fid == null || empId.isEmpty) continue;
 
-      final templateRaw = row['finger_template'];
-      final templateBytes = templateRaw is Uint8List
-          ? templateRaw
-          : (templateRaw is List<int> ? Uint8List.fromList(templateRaw) : null);
+      final templateBytes =
+          await LocalDb.getFingerTemplateByFid(fid: fid, siteId: siteId);
       if (templateBytes == null || templateBytes.isEmpty) continue;
 
       final ok = await _device.registerFingerprint(fid, templateBytes);

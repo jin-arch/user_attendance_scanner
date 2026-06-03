@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import '../services/offline_mode_sync_service.dart';
 
 class OfflineModeSelectionModal extends StatelessWidget {
   final VoidCallback onOnlineSelected;
   final VoidCallback onOfflineSelected;
   final bool? hasWiFi;
+  final bool? hasInternet;
   final String? siteNameDisplay;
 
   const OfflineModeSelectionModal({
@@ -12,6 +12,7 @@ class OfflineModeSelectionModal extends StatelessWidget {
     required this.onOnlineSelected,
     required this.onOfflineSelected,
     this.hasWiFi,
+    this.hasInternet,
     this.siteNameDisplay,
   });
 
@@ -19,6 +20,10 @@ class OfflineModeSelectionModal extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
     final h = MediaQuery.sizeOf(context).height;
+
+    final wifiConnected = hasWiFi == true;
+    final networkAvailable = hasInternet == true;
+    final onlineAvailable = networkAvailable;
 
     return WillPopScope(
       onWillPop: () async => false,
@@ -71,32 +76,62 @@ class OfflineModeSelectionModal extends StatelessWidget {
                         ),
                       ),
                       SizedBox(height: h * 0.012),
-                      if (hasWiFi != null)
-                        Padding(
-                          padding: EdgeInsets.only(bottom: h * 0.012),
-                          child: Row(
-                            children: [
-                              Icon(
-                                hasWiFi! ? Icons.wifi : Icons.wifi_off,
-                                color: hasWiFi!
-                                    ? const Color(0xFF44D980)
-                                    : Colors.grey,
-                                size: w * 0.015,
-                              ),
-                              SizedBox(width: w * 0.010),
-                              Text(
-                                hasWiFi! ? 'WiFi Connected' : 'No WiFi',
+                      Padding(
+                        padding: EdgeInsets.only(bottom: h * 0.012),
+                        child: Row(
+                          children: [
+                            Icon(
+                              wifiConnected ? Icons.wifi : Icons.wifi_off,
+                              color: wifiConnected
+                                  ? const Color(0xFF44D980)
+                                  : Colors.grey,
+                              size: w * 0.015,
+                            ),
+                            SizedBox(width: w * 0.010),
+                            Expanded(
+                              child: Text(
+                                wifiConnected ? 'Wi‑Fi: connected' : 'Wi‑Fi: not connected',
                                 style: TextStyle(
                                   fontFamily: 'Poppins',
                                   fontSize: w * 0.011,
-                                  color: hasWiFi!
+                                  color: wifiConnected
                                       ? const Color(0xFF44D980)
                                       : Colors.grey,
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(bottom: h * 0.012),
+                        child: Row(
+                          children: [
+                            Icon(
+                              networkAvailable ? Icons.public : Icons.public_off,
+                              color: networkAvailable
+                                  ? const Color(0xFF44D980)
+                                  : Colors.grey,
+                              size: w * 0.015,
+                            ),
+                            SizedBox(width: w * 0.010),
+                            Expanded(
+                              child: Text(
+                                networkAvailable
+                                    ? 'Network: available (Wi‑Fi or mobile)'
+                                    : 'Network: not available',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: w * 0.011,
+                                  color: networkAvailable
+                                      ? const Color(0xFF44D980)
+                                      : Colors.grey,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -107,10 +142,12 @@ class OfflineModeSelectionModal extends StatelessWidget {
                   h,
                   icon: Icons.cloud_upload,
                   title: 'ONLINE MODE',
-                  subtitle: 'Send data to server\n(requires WiFi)',
+                  subtitle: onlineAvailable
+                      ? 'Send data to server\n(syncs attendance & timelogs)'
+                      : 'Send data to server\n(connect to network first)',
                   color: const Color(0xFF3E7DDD),
                   onTap: onOnlineSelected,
-                  isAvailable: hasWiFi ?? true,
+                  isAvailable: onlineAvailable,
                 ),
                 SizedBox(height: h * 0.015),
                 _buildModeOption(
@@ -119,7 +156,7 @@ class OfflineModeSelectionModal extends StatelessWidget {
                   h,
                   icon: Icons.storage,
                   title: 'OFFLINE MODE',
-                  subtitle: 'Save data locally\n(sync later via WiFi)',
+                  subtitle: 'Save data locally\n(sync later when online)',
                   color: const Color(0xFF244D86),
                   onTap: onOfflineSelected,
                 ),

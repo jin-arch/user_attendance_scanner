@@ -37,7 +37,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Attendance Scanner - Biometric System',
       initialBinding: AppBinding(),
-      initialRoute: AppRoutes.legacyHome,
+      initialRoute: AppRoutes.home,
       getPages: [
         // Legacy UI (default)
         GetPage(name: AppRoutes.legacyHome, page: () => const HomePage()),

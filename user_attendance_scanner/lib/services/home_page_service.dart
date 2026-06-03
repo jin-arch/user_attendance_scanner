@@ -413,19 +413,29 @@ class HomePageService extends GetxService {
 
   Future<void> loadFromLocalDb(String siteId) async {
     try {
-      final employees = await LocalDb.getEmployeesBySite(siteId);
-      
+      final employees = await LocalDb.getEmployeesBySite(
+        siteId,
+        includeFingerTemplates: false,
+      );
+
       employeeDb.clear();
       employeeDbByFid.clear();
-      
+
       for (final emp in employees) {
-        final empId = emp['employee_id'] as String;
-        final empName = emp['employee_name'] as String;
-        final fid = emp['fid'] as int;
-        final template = emp['template'] as String;
-        
+        final empId = emp['employee_id']?.toString() ?? '';
+        final empName = emp['employee_name']?.toString() ?? '';
+        final fid = emp['fid'] as int?;
+        if (empId.isEmpty || fid == null) continue;
+
+        final templateBytes = await LocalDb.getFingerTemplateByFid(
+          fid: fid,
+          siteId: siteId,
+        );
+        if (templateBytes == null || templateBytes.isEmpty) continue;
+
+        final templateKey = String.fromCharCodes(templateBytes);
         employeeDb[fid] = EmployeeEntry(id: empId, name: empName);
-        employeeDbByFid[template] = EmployeeEntry(id: empId, name: empName);
+        employeeDbByFid[templateKey] = EmployeeEntry(id: empId, name: empName);
       }
       
       onEmployeesLoaded?.call();
@@ -438,32 +448,10 @@ class HomePageService extends GetxService {
   Future<void> fetchAndCacheSiteTimeLogs() async {
     final siteId = selectedSiteId?.value;
     if (siteId == null || siteId.isEmpty) return;
-    
+
     try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 15);
-      
-      final url = '$_timelogPerSiteApiUrl$siteId';
-      final request = await client.getUrl(Uri.parse(url));
-      final basicToken = base64Encode(
-        utf8.encode('$_apiUsername:$_apiPassword'),
-      );
-      
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'FAST-Attendance/1.0');
-      request.headers.set(HttpHeaders.authorizationHeader, 'Basic $basicToken');
-
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode >= 200 && response.statusCode <= 299) {
-        final decoded = jsonDecode(body);
-        final logs = _extractSiteRows(decoded);
-        
-        // Cache timelogs in local database
-        await LocalDb.cacheTimeLogs(siteId, logs);
-        debugPrint('[API] Cached ${logs.length} timelogs for site $siteId');
-      }
+      final count = await LocalDb.syncTimelogsFromApi(siteId);
+      debugPrint('[API] Merged $count timelogs into local DB for site $siteId');
     } catch (e) {
       debugPrint('[API] Error fetching timelogs: $e');
     }
@@ -665,17 +653,21 @@ class HomePageService extends GetxService {
         );
       }
       
-      // Record to local database first
-      await LocalDb.insertTimeLog({
-        'employeeId': employee.id,
-        'employeeName': employee.name,
-        'siteId': siteId,
-        'type': attendanceType,
-        'timestamp': timestamp.toIso8601String(),
-      });
-      
-      // TODO: Send to remote API
-      // await _sendToRemoteApi(employee, attendanceType, timestamp);
+      // Record via dashboard controller (local DB + pending HRIS API queue).
+      if (Get.isRegistered<LegacyHomePageController>()) {
+        await Get.find<LegacyHomePageController>().recordAttendance(
+          siteId: siteId,
+          employeeId: employee.id,
+        );
+      } else {
+        await LocalDb.insertTimeLog({
+          'employeeId': employee.id,
+          'employeeName': employee.name,
+          'siteId': siteId,
+          'type': attendanceType,
+          'timestamp': timestamp.toIso8601String(),
+        });
+      }
       
       final typeEnum = attendanceType.toLowerCase().contains('in') 
         ? ScanResultType.timeInSuccess 

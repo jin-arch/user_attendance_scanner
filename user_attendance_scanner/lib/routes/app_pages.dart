@@ -1,6 +1,5 @@
 import 'package:get/get.dart';
 
-import '../bindings/app_binding.dart';
 import '../bindings/enrollment_binding.dart';
 import '../bindings/splash_binding.dart';
 import '../views/dashboard_page.dart';

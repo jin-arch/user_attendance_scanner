@@ -1,12 +1,31 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
+import '../utils/hris_log.dart';
 import '../zkfp/zkteco_usb.dart';
 import '../services/local_db.dart';
-import '../services/offline_mode_sync_service.dart';
+import '../services/pending_sync_service.dart';
 import '../services/scanner_registry_service.dart';
+
+/// Returned after fingerprints are stored in the local DB (ready for HRIS upload).
+class EnrollmentSaveContext {
+  const EnrollmentSaveContext({
+    required this.employeeId,
+    required this.employeeName,
+    required this.siteId,
+    required this.leftFingerThumb,
+    required this.rightFingerThumb,
+  });
+
+  final String employeeId;
+  final String employeeName;
+  final String siteId;
+  final String leftFingerThumb;
+  final String rightFingerThumb;
+}
 
 class EnrollmentController extends GetxController {
   final ZKTecoUSB _device = ZKTecoUSB();
@@ -20,22 +39,31 @@ class EnrollmentController extends GetxController {
   final showForm = ValueNotifier<bool>(false);
   final selfieImageBytes = ValueNotifier<Uint8List?>(null);
   final isIdentifyingEmployee = ValueNotifier<bool>(false);
+  final employeePosition = ValueNotifier<String>('');
+  final employeeSbu = ValueNotifier<String>('');
+  final showEmployeeIdFloater = ValueNotifier<bool>(false);
+  final fingerprintEnrollmentAllowed = ValueNotifier<bool>(true);
 
   final leftThumbScans = ValueNotifier<int>(0);
   final rightThumbScans = ValueNotifier<int>(0);
   final leftThumbScansList = <Uint8List>[];
   final rightThumbScansList = <Uint8List>[];
+  final isSaving = false.obs;
 
   static const int scansPerFinger = 3;
   static const int minTimeBetweenScansMs = 800;
 
   Timer? _scanTimer;
   DateTime? _lastScanTime;
+  String? _fingerprintBlockReason;
+  final Map<String, bool> _apiFingerprintCache = {};
 
   Function(String)? onError;
   Function(String)? onSuccess;
+  VoidCallback? onFingerprintNotRecognized;
 
   final String? siteId;
+  String? _resolvedSiteId;
   final bool isEditMode;
   final String? employeeId;
   final String? employeeName;
@@ -56,6 +84,7 @@ class EnrollmentController extends GetxController {
   void _initialize() {
     idController.addListener(_onFormChanged);
     usernameController.addListener(_onFormChanged);
+    unawaited(_ensureSiteIdResolved());
     _prefillEmployeeDetails();
     _loadEmployeePhoto();
     _clearScanState();
@@ -91,6 +120,10 @@ class EnrollmentController extends GetxController {
       isIdentifyingEmployee.dispose();
       leftThumbScans.dispose();
       rightThumbScans.dispose();
+      employeePosition.dispose();
+      employeeSbu.dispose();
+      showEmployeeIdFloater.dispose();
+      fingerprintEnrollmentAllowed.dispose();
     } catch (e) {
       debugPrint('[ENROLLMENT] Error in onClose: $e');
     }
@@ -117,11 +150,25 @@ class EnrollmentController extends GetxController {
     if (employeeName != null && employeeName!.isNotEmpty) {
       usernameController.text = employeeName!;
     }
+    // Guide panel always shows lookup fields; keep showForm in sync for legacy checks.
+    showForm.value = true;
     if ((employeeId != null && employeeId!.isNotEmpty) ||
         (employeeName != null && employeeName!.isNotEmpty)) {
-      showForm.value = true;
-      // Clear scan state to prepare for new fingerprint enrollment
       _clearScanState();
+      if (employeeId != null && employeeId!.isNotEmpty) {
+        unawaited(() async {
+          try {
+            final lookup = await lookupExistingEmployee(employeeId!);
+            if (lookup != null) {
+              _applyEmployeeFromLookup(lookup);
+            } else {
+              await _loadEmployeeProfile(employeeId!);
+            }
+          } catch (e) {
+            debugPrint('[ENROLLMENT] Prefill profile error: $e');
+          }
+        }());
+      }
     }
   }
 
@@ -136,21 +183,28 @@ class EnrollmentController extends GetxController {
       selfieImageBytes.value = null;
       return;
     }
-    final site = siteId ?? 'default';
-    final photo = await LocalDb.getEmployeePhoto(
-      employeeId: empId,
-      siteId: site,
-    );
-    selfieImageBytes.value = photo;
+    await _loadEmployeePhotoForId(empId);
   }
 
   Future<void> _loadEmployeePhotoForId(String empId) async {
-    final site = siteId ?? 'default';
-    final photo = await LocalDb.getEmployeePhoto(
-      employeeId: empId,
-      siteId: site,
-    );
-    selfieImageBytes.value = photo;
+    try {
+      final site = await _activeSiteId();
+      if (!await LocalDb.hasEmployeePhoto(
+        employeeId: empId,
+        siteId: site,
+      )) {
+        selfieImageBytes.value = null;
+        return;
+      }
+      final photo = await LocalDb.getEmployeePhoto(
+        employeeId: empId,
+        siteId: site,
+      );
+      selfieImageBytes.value = photo;
+    } catch (e, stack) {
+      debugPrint('[ENROLLMENT] Photo load failed (non-fatal): $e\n$stack');
+      selfieImageBytes.value = null;
+    }
   }
 
   Future<void> _initDevice() async {
@@ -194,7 +248,9 @@ class EnrollmentController extends GetxController {
       deviceInitialized.value = true;
       debugPrint('Device initialized successfully');
       onSuccess?.call('Device ready for fingerprint scanning');
-      _startScanLoop();
+      if (isIdentifyingEmployee.value || fingerprintEnrollmentAllowed.value) {
+        _startScanLoop();
+      }
     } catch (e) {
       debugPrint('Device initialization error: $e');
       onError?.call('Device initialization error: $e');
@@ -203,11 +259,18 @@ class EnrollmentController extends GetxController {
 
   void _startScanLoop() {
     if (isScanning.value) return;
+    if (!isIdentifyingEmployee.value && !fingerprintEnrollmentAllowed.value) {
+      return;
+    }
     isScanning.value = true;
     debugPrint('Starting enrollment scan loop...');
 
     _scanTimer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
       if (!isScanning.value || !_device.isConnected) return;
+      if (!isIdentifyingEmployee.value && !fingerprintEnrollmentAllowed.value) {
+        _stopScanLoop();
+        return;
+      }
 
       // If in identification mode, try to identify employee
       if (isIdentifyingEmployee.value) {
@@ -251,6 +314,12 @@ class EnrollmentController extends GetxController {
   }
 
   Future<void> _onFingerprintCaptured(Uint8List template) async {
+    if (!fingerprintEnrollmentAllowed.value) {
+      if (_fingerprintBlockReason != null) {
+        onError?.call(_fingerprintBlockReason!);
+      }
+      return;
+    }
     final isLeftTurn = leftThumbScans.value < scansPerFinger;
     final isRightTurn = rightThumbScans.value < scansPerFinger;
 
@@ -338,6 +407,12 @@ class EnrollmentController extends GetxController {
   }
 
   void resetFingerprints() {
+    if (!fingerprintEnrollmentAllowed.value) {
+      if (_fingerprintBlockReason != null) {
+        onError?.call(_fingerprintBlockReason!);
+      }
+      return;
+    }
     _device.clearCachedCapture();
     leftThumbScans.value = 0;
     rightThumbScans.value = 0;
@@ -349,45 +424,63 @@ class EnrollmentController extends GetxController {
     onSuccess?.call('Enter employee details');
   }
 
-  Future<void> saveEnrollment() async {
+  /// Saves both thumbs to local DB only. Returns context for HRIS upload after navigation.
+  Future<EnrollmentSaveContext?> saveEnrollmentLocal() async {
+    if (isSaving.value) return null;
+
     if (idController.text.isEmpty || usernameController.text.isEmpty) {
       onError?.call('Please enter ID and username');
-      return;
+      return null;
+    }
+
+    final canEnroll = await _ensureFingerprintEnrollmentAllowed(
+      idController.text.trim(),
+    );
+    if (!canEnroll) {
+      return null;
     }
 
     if (leftThumbScans.value < scansPerFinger ||
         rightThumbScans.value < scansPerFinger) {
       onError?.call('Please scan each thumb 3 times (3 left, 3 right)');
-      return;
+      return null;
     }
 
+    isSaving.value = true;
     try {
-      final site = siteId ?? 'default';
+      final site = await _activeSiteId();
       final empId = idController.text.trim();
       final empName = usernameController.text.trim();
 
-      if (!isEditMode) {
-        final existing = await LocalDb.getEmployeesBySite(site);
-        final found = existing.any(
-          (emp) => emp['employee_id'].toString() == empId,
-        );
+      // Always replace local fingerprint templates for this employee/site.
+      // Scanning uses local templates first; API sync is secondary.
+      await LocalDb.deleteEmployeeFingerprints(
+        employeeId: empId,
+        siteId: site,
+      );
 
-        if (found) {
-          onError?.call('Employee with this ID already exists!');
-          return;
-        }
+      final leftTemplate = await _resolveEnrollmentTemplate(leftThumbScansList);
+      final rightTemplate =
+          await _resolveEnrollmentTemplate(rightThumbScansList);
+      if (leftTemplate == null || rightTemplate == null) {
+        throw Exception('Unable to prepare fingerprint templates');
       }
 
-      if (isEditMode) {
-        await LocalDb.deleteEmployeeFingerprints(
-          employeeId: empId,
-          siteId: site,
-        );
-      }
+      final leftB64 = base64Encode(leftTemplate);
+      final rightB64 = base64Encode(rightTemplate);
 
-      await _saveFingerTemplates(
+      await LocalDb.upsertEmployee(
+        fid: _stableFingerprintId(empId, 'left'),
         employeeId: empId,
         employeeName: empName,
+        template: leftTemplate,
+        siteId: site,
+      );
+      await LocalDb.upsertEmployee(
+        fid: _stableFingerprintId(empId, 'right'),
+        employeeId: empId,
+        employeeName: empName,
+        template: rightTemplate,
         siteId: site,
       );
 
@@ -399,34 +492,13 @@ class EnrollmentController extends GetxController {
         );
       }
 
-      final offlineMode = OfflineModeSyncService();
-      if (offlineMode.isOfflineMode()) {
-        await LocalDb.queueFingerprintUpdate(
-          employeeId: empId,
-          siteId: site,
-        );
-        debugPrint('[ENROLLMENT] Queued fingerprint update (offline)');
-      } else {
-        try {
-          final thumbs = await LocalDb.getEmployeeThumbTemplatesForApi(
-            employeeId: empId,
-            siteId: site,
-          );
-          if (thumbs != null) {
-            await LocalDb.updateEmployeeThumbDetails(
-              employeeId: empId,
-              leftFingerThumb: thumbs.$1,
-              rightFingerThumb: thumbs.$2,
-            );
-          }
-        } catch (e) {
-          debugPrint('[ENROLLMENT] Online thumb sync failed, queueing: $e');
-          await LocalDb.queueFingerprintUpdate(
-            employeeId: empId,
-            siteId: site,
-          );
-        }
-      }
+      await LocalDb.queueFingerprintUpdate(
+        employeeId: empId,
+        siteId: site,
+      );
+      hrisLog(
+        '[ENROLLMENT] Local save OK employee=$empId thumbs stored (queued for HRIS)',
+      );
 
       if (Get.isRegistered<ScannerRegistryService>()) {
         await Get.find<ScannerRegistryService>().reloadSiteFromLocalDb(site);
@@ -434,15 +506,64 @@ class EnrollmentController extends GetxController {
 
       _clearEnrollmentData();
 
-      onSuccess?.call(
-        isEditMode
-            ? 'Enrollment updated successfully!'
-            : 'Enrollment saved successfully!'
+      return EnrollmentSaveContext(
+        employeeId: empId,
+        employeeName: empName,
+        siteId: site,
+        leftFingerThumb: leftB64,
+        rightFingerThumb: rightB64,
       );
     } catch (e) {
       debugPrint('Save error: $e');
       onError?.call('Save failed: $e');
+      return null;
+    } finally {
+      isSaving.value = false;
     }
+  }
+
+  /// POST thumbDetails to HRIS when Online mode (runs after returning to Home).
+  Future<void> uploadEnrollmentToHris(EnrollmentSaveContext ctx) async {
+    if (!Get.isRegistered<PendingSyncService>()) {
+      Get.put(PendingSyncService());
+    }
+    final sync = Get.find<PendingSyncService>();
+
+    if (!await sync.shouldPushToHrisApi()) {
+      hrisLog(
+        '[ENROLLMENT] HRIS thumb upload deferred (Offline mode — queued locally)',
+      );
+      return;
+    }
+
+    try {
+      await sync.uploadFingerprint(
+        employeeId: ctx.employeeId,
+        siteId: ctx.siteId,
+        leftFingerThumb: ctx.leftFingerThumb,
+        rightFingerThumb: ctx.rightFingerThumb,
+      );
+      await sync.markFingerprintQueueSynced(
+        employeeId: ctx.employeeId,
+        siteId: ctx.siteId,
+      );
+      hrisLog('[ENROLLMENT] HRIS thumbDetails upload OK employee=${ctx.employeeId}');
+    } catch (e) {
+      hrisLog('[ENROLLMENT] HRIS thumbDetails failed (queued retry): $e');
+      unawaited(sync.syncAllPending(siteId: ctx.siteId));
+    }
+  }
+
+  Future<bool> saveEnrollment() async {
+    final ctx = await saveEnrollmentLocal();
+    if (ctx == null) return false;
+    onSuccess?.call(
+      isEditMode
+          ? 'Enrollment updated successfully!'
+          : 'Enrollment saved successfully!',
+    );
+    unawaited(uploadEnrollmentToHris(ctx));
+    return true;
   }
 
   void _clearEnrollmentData() {
@@ -456,6 +577,8 @@ class EnrollmentController extends GetxController {
     lastFingerprintImage.value = null;
     selfieImageBytes.value = null;
     _lastScanTime = null;
+    fingerprintEnrollmentAllowed.value = true;
+    _fingerprintBlockReason = null;
   }
 
   void _clearScanState() {
@@ -467,32 +590,109 @@ class EnrollmentController extends GetxController {
     _lastScanTime = null;
   }
 
-  Future<void> _saveFingerTemplates({
+  bool _isBlankFingerprintValue(dynamic value) {
+    if (value == null) return true;
+    final text = value.toString().trim();
+    return text.isEmpty || text.toLowerCase() == 'null';
+  }
+
+  bool _setFingerprintEnrollmentBlocked(String reason) {
+    fingerprintEnrollmentAllowed.value = false;
+    _fingerprintBlockReason = reason;
+    onError?.call(reason);
+    _stopScanLoop();
+    return false;
+  }
+
+  Future<bool> _employeeHasLocalFingerprint({
     required String employeeId,
-    required String employeeName,
     required String siteId,
   }) async {
-    final leftTemplate = await _resolveEnrollmentTemplate(leftThumbScansList);
-    final rightTemplate = await _resolveEnrollmentTemplate(rightThumbScansList);
-    if (leftTemplate == null || rightTemplate == null) {
-      throw Exception('Unable to prepare fingerprint templates');
+    final rows = await LocalDb.getEmployeesBySite(
+      siteId,
+      includeFingerTemplates: false,
+    );
+    for (final row in rows) {
+      final empId = row['employee_id']?.toString().trim() ?? '';
+      if (empId.isEmpty || empId != employeeId.trim()) continue;
+      final fid = row['fid'] as int?;
+      if (fid == null) continue;
+      final bytes = await LocalDb.getFingerTemplateByFid(
+        fid: fid,
+        siteId: siteId,
+      );
+      if (bytes != null && bytes.isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool?> _employeeHasApiFingerprint({
+    required String employeeId,
+    required String siteId,
+  }) async {
+    final key = employeeId.trim();
+    if (_apiFingerprintCache.containsKey(key)) {
+      return _apiFingerprintCache[key];
     }
 
-    await LocalDb.upsertEmployee(
-      fid: _stableFingerprintId(employeeId, 'left'),
-      employeeId: employeeId,
-      employeeName: employeeName,
-      template: leftTemplate,
-      siteId: siteId,
-    );
+    try {
+      final rows = await LocalDb.fetchEmployeesBySiteFromApi(siteId);
+      for (final row in rows) {
+        final empId = LocalDb.employeeIdFromApiRow(row) ??
+            row['employee_id']?.toString();
+        if (empId == null || empId.trim() != key) continue;
 
-    await LocalDb.upsertEmployee(
-      fid: _stableFingerprintId(employeeId, 'right'),
+        final hasTemplate = [
+          row['LEFTFINGERTHUMB'],
+          row['leftFingerThumb'],
+          row['left_thumb'],
+          row['RIGHTFINGERTHUMB'],
+          row['rightFingerThumb'],
+          row['right_thumb'],
+          row['finger_template'],
+          row['template'],
+          row['fingerprint'],
+        ].any((value) => !_isBlankFingerprintValue(value));
+
+        _apiFingerprintCache[key] = hasTemplate;
+        return hasTemplate;
+      }
+      _apiFingerprintCache[key] = false;
+      return false;
+    } catch (e) {
+      debugPrint('[ENROLLMENT] API fingerprint check failed: $e');
+      return null;
+    }
+  }
+
+  Future<bool> _ensureFingerprintEnrollmentAllowed(String employeeId) async {
+    fingerprintEnrollmentAllowed.value = true;
+    _fingerprintBlockReason = null;
+
+    final site = await _activeSiteId();
+    if (await _employeeHasLocalFingerprint(employeeId: employeeId, siteId: site)) {
+      return _setFingerprintEnrollmentBlocked(
+        'Employee already has enrolled fingerprints.',
+      );
+    }
+
+    final apiHas = await _employeeHasApiFingerprint(
       employeeId: employeeId,
-      employeeName: employeeName,
-      template: rightTemplate,
-      siteId: siteId,
+      siteId: site,
     );
+    if (apiHas == null) {
+      return _setFingerprintEnrollmentBlocked(
+        'Unable to verify fingerprint status. Please sync online and try again.',
+      );
+    }
+    if (apiHas) {
+      return _setFingerprintEnrollmentBlocked(
+        'Employee already has enrolled fingerprints.',
+      );
+    }
+    return true;
   }
 
   Future<Uint8List?> _resolveEnrollmentTemplate(
@@ -521,25 +721,99 @@ class EnrollmentController extends GetxController {
     return hash == 0 ? 1 : hash;
   }
 
-  /// Look up an existing employee by ID from the database
+  Future<String> _activeSiteId() async {
+    final resolved = await _resolveSiteId();
+    if (resolved == null || resolved.isEmpty) {
+      throw StateError('No site selected');
+    }
+    return resolved;
+  }
+
+  Future<String?> _resolveSiteId() async {
+    if (_resolvedSiteId != null && _resolvedSiteId!.isNotEmpty) {
+      return _resolvedSiteId;
+    }
+    final incoming = siteId?.trim();
+    if (incoming != null && incoming.isNotEmpty) {
+      _resolvedSiteId = incoming;
+      return incoming;
+    }
+    final selected = await LocalDb.getSelectedSiteId();
+    if (selected != null && selected.trim().isNotEmpty) {
+      _resolvedSiteId = selected.trim();
+      return _resolvedSiteId;
+    }
+    return null;
+  }
+
+  Future<void> _ensureSiteIdResolved() async {
+    await _resolveSiteId();
+  }
+
+  void _applyEmployeeFromLookup(Map<String, dynamic> employee) {
+    idController.text = employee['id']?.toString() ?? '';
+    usernameController.text = employee['name']?.toString() ?? '';
+    employeePosition.value = employee['position']?.toString().trim() ?? '';
+    employeeSbu.value = employee['sbu']?.toString().trim() ?? '';
+  }
+
+  Future<void> _loadEmployeeProfile(String employeeId) async {
+    final site = await _activeSiteId();
+    final profile = await LocalDb.resolveEmployeeProfile(
+      employeeId: employeeId,
+      siteId: site,
+    );
+    if (profile != null) {
+      final name = profile['employee_name']?.toString().trim() ?? '';
+      if (name.isNotEmpty && usernameController.text.trim().isEmpty) {
+        usernameController.text = name;
+      }
+      employeePosition.value = profile['position']?.toString().trim() ?? '';
+      employeeSbu.value = profile['sbu']?.toString().trim() ?? '';
+    }
+  }
+
+  void _clearEmployeeProfile() {
+    employeePosition.value = '';
+    employeeSbu.value = '';
+  }
+
+  String _recordedDetailsLine() {
+    final position = employeePosition.value.trim();
+    final sbu = employeeSbu.value.trim();
+    if (position.isNotEmpty && sbu.isNotEmpty) {
+      return '$position | $sbu';
+    }
+    if (position.isNotEmpty) return position;
+    if (sbu.isNotEmpty) return sbu;
+    return '';
+  }
+
+  void revealEmployeeIdFloater() {
+    showEmployeeIdFloater.value = true;
+  }
+
+  void hideEmployeeIdFloater() {
+    showEmployeeIdFloater.value = false;
+  }
+
+  /// Look up employee by ID from local DB, then from API if needed.
   Future<Map<String, dynamic>?> lookupExistingEmployee(String employeeId) async {
-    if (employeeId.isEmpty || siteId == null) {
+    if (employeeId.trim().isEmpty) {
+      return null;
+    }
+
+    final resolvedSite = await _resolveSiteId();
+    if (resolvedSite == null || resolvedSite.isEmpty) {
+      onError?.call('No site selected. Please select a site on the home page first.');
       return null;
     }
 
     try {
-      final employees = await LocalDb.getEmployeesBySite(siteId!);
-      for (final emp in employees) {
-        final empId = emp['employee_id']?.toString() ?? '';
-        if (empId == employeeId.trim()) {
-          return {
-            'id': empId,
-            'name': emp['employee_name']?.toString() ?? 'Unknown',
-            'exists': true,
-          };
-        }
-      }
-      return null;
+      return await LocalDb.findEmployeeInSite(
+        siteId: resolvedSite,
+        employeeId: employeeId.trim(),
+      );
     } catch (e) {
       debugPrint('[ENROLLMENT] Error looking up employee: $e');
       return null;
@@ -560,25 +834,66 @@ class EnrollmentController extends GetxController {
         return false;
       }
 
-      idController.text = employee['id'];
-      usernameController.text = employee['name'];
-      await _loadEmployeePhotoForId(employee['id']);
+      _applyEmployeeFromLookup(employee);
+
+      if (employeePosition.value.isEmpty || employeeSbu.value.isEmpty) {
+        try {
+          await _loadEmployeeProfile(employee['id']?.toString() ?? employeeId);
+        } catch (e) {
+          debugPrint('[ENROLLMENT] Profile refresh error (non-fatal): $e');
+        }
+      }
+
+      try {
+        await _loadEmployeePhotoForId(employee['id']?.toString() ?? employeeId);
+      } catch (e) {
+        debugPrint('[ENROLLMENT] Photo load error (non-fatal): $e');
+        selfieImageBytes.value = null;
+      }
+
       showForm.value = true;
       isIdentifyingEmployee.value = false;
-      // Clear scan state to prepare for new fingerprint enrollment
       _clearScanState();
-      
-      // Initialize device if not already initialized
+
       if (!deviceInitialized.value) {
-        await _initDevice();
+        try {
+          await _initDevice();
+        } catch (e) {
+          debugPrint('[ENROLLMENT] Device init error (non-fatal): $e');
+        }
       }
-      
-      onSuccess?.call('Employee found: ${employee['name']}. Please scan new fingerprints.');
+
+      final details = _recordedDetailsLine();
+      final detailsSuffix =
+          details.isNotEmpty ? ' ($details)' : '';
+      onSuccess?.call(
+        'Employee found: ${employee['name']}$detailsSuffix. Please scan new fingerprints.',
+      );
       return true;
     } catch (e) {
-      onError?.call('Error loading employee: $e');
+      debugPrint('[ENROLLMENT] loadEmployeeDetails error: $e');
+      if (e is StateError && e.message.contains('No site selected')) {
+        onError?.call(
+          'No site selected. Please select a site on the home page first.',
+        );
+      } else {
+        onError?.call('Error loading employee: $e');
+      }
       return false;
     }
+  }
+
+  DateTime? _lastFingerprintNotRecognizedAt;
+
+  void _notifyFingerprintNotRecognized() {
+    final now = DateTime.now();
+    if (_lastFingerprintNotRecognizedAt != null) {
+      final diff = now.difference(_lastFingerprintNotRecognizedAt!).inMilliseconds;
+      if (diff < 3000) return;
+    }
+    _lastFingerprintNotRecognizedAt = now;
+    onFingerprintNotRecognized?.call();
+    onError?.call('Fingerprint not recognized. Please try again or enter employee ID.');
   }
 
   /// Identify employee by scanning their fingerprint
@@ -594,11 +909,14 @@ class EnrollmentController extends GetxController {
     _lastScanTime = now;
 
     try {
-      final site = siteId ?? 'default';
-      final employees = await LocalDb.getEmployeesBySite(site);
-      
+      final site = await _activeSiteId();
+      final employees = await LocalDb.getEmployeesBySite(
+        site,
+        includeFingerTemplates: false,
+      );
+
       if (employees.isEmpty) {
-        onError?.call('No employees found in database');
+        _notifyFingerprintNotRecognized();
         return;
       }
 
@@ -612,15 +930,17 @@ class EnrollmentController extends GetxController {
         }
       }
 
-      // Match fingerprint against all employee templates
+      // Match fingerprint against all employee templates (one BLOB per query)
       for (final entry in employeeGroups.entries) {
         final empId = entry.key;
         final empRecords = entry.value;
         final empName = empRecords.first['employee_name']?.toString() ?? 'Unknown';
 
-        // Check both left and right thumb templates
         for (final record in empRecords) {
-          final fingerTemplate = record['finger_template'] as Uint8List?;
+          final fid = record['fid'] as int?;
+          if (fid == null) continue;
+          final fingerTemplate =
+              await LocalDb.getFingerTemplateByFid(fid: fid, siteId: site);
           if (fingerTemplate == null || fingerTemplate.isEmpty) {
             continue;
           }
@@ -631,21 +951,44 @@ class EnrollmentController extends GetxController {
           );
 
           if (score != null && score > 0) {
-            // Found a match
-            idController.text = empId;
-            usernameController.text = empName;
-            await _loadEmployeePhotoForId(empId);
+            final lookup = await lookupExistingEmployee(empId);
+            if (lookup != null) {
+              _applyEmployeeFromLookup(lookup);
+            } else {
+              idController.text = empId;
+              usernameController.text = empName;
+            }
+
+            if (employeePosition.value.isEmpty || employeeSbu.value.isEmpty) {
+              try {
+                await _loadEmployeeProfile(empId);
+              } catch (e) {
+                debugPrint('[ENROLLMENT] Profile load after scan: $e');
+              }
+            }
+
+            try {
+              await _loadEmployeePhotoForId(empId);
+            } catch (e) {
+              selfieImageBytes.value = null;
+            }
+
             showForm.value = true;
             isIdentifyingEmployee.value = false;
-            // Clear scan state to prepare for new fingerprint enrollment
             _clearScanState();
-            onSuccess?.call('Employee identified: $empName. Please scan new fingerprints.');
+
+            final details = _recordedDetailsLine();
+            final detailsSuffix =
+                details.isNotEmpty ? ' ($details)' : '';
+            onSuccess?.call(
+              'Employee identified: $empName$detailsSuffix. Please scan new fingerprints.',
+            );
             return;
           }
         }
       }
 
-      onError?.call('Fingerprint not recognized. Please try again or enter employee ID.');
+      _notifyFingerprintNotRecognized();
     } catch (e) {
       debugPrint('Identification error: $e');
       onError?.call('Error identifying employee: $e');
@@ -659,7 +1002,8 @@ class EnrollmentController extends GetxController {
     idController.clear();
     usernameController.clear();
     selfieImageBytes.value = null;
-    
+    _clearEmployeeProfile();
+
     // Initialize device if not already initialized
     if (!deviceInitialized.value) {
       await _initDevice();

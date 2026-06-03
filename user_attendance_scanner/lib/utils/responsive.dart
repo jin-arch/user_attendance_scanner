@@ -8,6 +8,17 @@ class R {
 
   static bool isNarrow(BuildContext context) => sizeOf(context).width < 720;
 
+  static double _clamp(double value, double min, double max) {
+    var lo = min;
+    var hi = max;
+    if (lo > hi) {
+      final swap = lo;
+      lo = hi;
+      hi = swap;
+    }
+    return value.clamp(lo, hi);
+  }
+
   static double wp(
     BuildContext context,
     double fraction, {
@@ -15,7 +26,7 @@ class R {
     double max = 9999,
   }) {
     final value = sizeOf(context).width * fraction;
-    return value.clamp(min, max);
+    return _clamp(value, min, max);
   }
 
   static double hp(
@@ -25,7 +36,7 @@ class R {
     double max = 9999,
   }) {
     final value = sizeOf(context).height * fraction;
-    return value.clamp(min, max);
+    return _clamp(value, min, max);
   }
 
   static double font(
