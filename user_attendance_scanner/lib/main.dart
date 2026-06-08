@@ -1,20 +1,18 @@
-// Simplified main.dart without complex architecture
 import 'package:device_preview/device_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:user_attendance_scanner/routes/app_pages.dart';
-import 'package:user_attendance_scanner/routes/app_routes.dart';
-import 'package:user_attendance_scanner/routes/route_observer.dart';
-
-import 'bindings/app_binding.dart';
+import 'package:user_attendance_scanner/app/bindings/app_binding.dart';
+import 'package:user_attendance_scanner/app/data/services/app_session.dart';
+import 'package:user_attendance_scanner/app/routes/app_pages.dart';
+import 'package:user_attendance_scanner/app/routes/app_routes.dart';
+import 'package:user_attendance_scanner/app/routes/route_observer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Dependencies are registered via AppBinding on GetMaterialApp.
-  
+  await AppSession.loadFromStorage();
+
   if (!kIsWeb) {
     try {
       final target = defaultTargetPlatform;

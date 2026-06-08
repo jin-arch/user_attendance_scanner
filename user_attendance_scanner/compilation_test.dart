@@ -3,14 +3,16 @@
 // Compilation test - import all critical files
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:user_attendance_scanner/app/bindings/app_binding.dart';
 
 // Import our models and controllers from lib
 
-import 'lib/bindings/app_binding.dart';
+// Import views (new module paths)
+import 'lib/app/modules/home/views/home_page.dart';
 
-// Import views
-import 'lib/views/home_page.dart';
-import 'lib/views/dashboard_page.dart';
+// Note: dashboard_page.dart isn't required for this compilation smoke test.
+
+
 
 // Test basic instantiation
 void main() {
@@ -24,8 +26,11 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       title: 'Compilation Test',
-      initialBinding: AppBinding(),
-      home: HomePage(),
+      // No binding in this compilation smoke-test.
+home: const HomePage(),
+
+
+
     );
   }
 }

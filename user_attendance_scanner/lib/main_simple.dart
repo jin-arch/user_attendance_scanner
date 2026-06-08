@@ -1,20 +1,16 @@
-// Simplified main.dart without complex architecture
 import 'dart:io' show Platform;
 
 import 'package:device_preview/device_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-
-import 'bindings/app_binding.dart';
-import 'bindings/splash_binding.dart';
-import 'routes/app_routes.dart';
-import 'routes/route_observer.dart';
-
-import 'views/splash_page.dart';
-
-import 'views/home_page.dart';
-import 'views/dashboard_page.dart';
+import 'package:user_attendance_scanner/app/bindings/app_binding.dart';
+import 'package:user_attendance_scanner/app/modules/home/views/dashboard_page.dart';
+import 'package:user_attendance_scanner/app/modules/home/views/home_page.dart';
+import 'package:user_attendance_scanner/app/modules/splash/bindings/splash_binding.dart';
+import 'package:user_attendance_scanner/app/modules/splash/views/splash_page.dart';
+import 'package:user_attendance_scanner/app/routes/app_routes.dart';
+import 'package:user_attendance_scanner/app/routes/route_observer.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,23 +35,14 @@ class MyApp extends StatelessWidget {
       initialBinding: AppBinding(),
       initialRoute: AppRoutes.home,
       getPages: [
-        // Legacy UI (default)
-        GetPage(name: AppRoutes.legacyHome, page: () => const HomePage()),
-        GetPage(name: AppRoutes.legacyDashboard, page: () => const DashboardPage()),
-
-        // MVP UI (kept for migration)
+        GetPage(name: AppRoutes.home, page: () => HomePage()),
+        GetPage(name: AppRoutes.dashboard, page: () => DashboardPage()),
         GetPage(
           name: AppRoutes.splash,
           page: () => const SplashPage(),
           binding: SplashBinding(),
         ),
-        GetPage(name: AppRoutes.home, page: () => const HomePage()),
-        GetPage(name: AppRoutes.dashboard, page: () => const DashboardPage()),
       ],
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
     );
   }
 }
