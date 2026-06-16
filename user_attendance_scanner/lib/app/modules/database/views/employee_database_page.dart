@@ -450,8 +450,10 @@ extension on EmployeeDatabasePage {
                     final record = controller.selectedEmployeePending[index];
                     return _buildPendingRecordCard(
                       context,
+                      controller,
                       w,
                       h,
+                      record: record,
                       label: record['display_label']?.toString() ?? 'Attendance',
                       date: record['display_date']?.toString() ?? '',
                       time: record['display_time']?.toString() ?? '',
@@ -489,8 +491,10 @@ extension on EmployeeDatabasePage {
 
   Widget _buildPendingRecordCard(
     BuildContext context,
+    EmployeeDatabaseController controller,
     double w,
     double h, {
+    required Map<String, dynamic> record,
     required String label,
     required String date,
     required String time,
@@ -498,76 +502,156 @@ extension on EmployeeDatabasePage {
     final isTimeIn = label.toLowerCase().contains('time in');
     final dateStr = date.isEmpty ? 'Unknown date' : date;
     final timeStr = time.isEmpty ? '--:--:--' : time;
+    final errorMessage = record['error_message']?.toString() ?? '';
+    final hasError = errorMessage.isNotEmpty;
 
     return Container(
       margin: EdgeInsets.only(bottom: R.hp(context, 0.010, max: 12)),
       padding: R.screenPadding(context),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B2742).withOpacity(0.60),
+        color: hasError
+            ? const Color(0xFFFF6B6B).withOpacity(0.15)
+            : const Color(0xFF0B2742).withOpacity(0.60),
         borderRadius: BorderRadius.circular(R.wp(context, 0.012, max: 14)),
-        border: Border.all(color: Colors.white.withOpacity(0.12)),
+        border: Border.all(
+          color: hasError
+              ? const Color(0xFFFF6B6B).withOpacity(0.5)
+              : Colors.white.withOpacity(0.12),
+        ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            isTimeIn ? Icons.login : Icons.logout,
-            color: isTimeIn ? const Color(0xFF44D980) : const Color(0xFFFF6B6B),
-            size: R.font(context, 0.018, min: 18, max: 26),
-          ),
-          SizedBox(width: R.wp(context, 0.012, max: 14)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Icon(
+                isTimeIn ? Icons.login : Icons.logout,
+                color: isTimeIn ? const Color(0xFF44D980) : const Color(0xFFFF6B6B),
+                size: R.font(context, 0.018, min: 18, max: 26),
+              ),
+              SizedBox(width: R.wp(context, 0.012, max: 14)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: R.font(context, 0.012, min: 11, max: 14),
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: R.hp(context, 0.003, min: 2, max: 4)),
+                    Text(
+                      '$dateStr $timeStr',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: R.font(context, 0.010, min: 9, max: 12),
+                        color: Colors.white.withOpacity(0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: R.wp(context, 0.010, min: 6, max: 10),
+                  vertical: R.hp(context, 0.005, min: 3, max: 6),
+                ),
+                decoration: BoxDecoration(
+                  color: hasError
+                      ? const Color(0xFFFF6B6B).withOpacity(0.3)
+                      : const Color(0xFFFF9800).withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(
+                    R.wp(context, 0.008, max: 10),
+                  ),
+                  border: Border.all(
+                    color: hasError
+                        ? const Color(0xFFFF6B6B)
+                        : const Color(0xFFFF9800),
+                  ),
+                ),
+                child: Text(
+                  hasError ? 'ERROR' : 'pending',
                   style: TextStyle(
                     fontFamily: 'Poppins',
-                    fontSize: R.font(context, 0.012, min: 11, max: 14),
+                    fontSize: R.font(context, 0.010, min: 9, max: 11),
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: hasError
+                        ? const Color(0xFFFF6B6B)
+                        : const Color(0xFFFF9800),
                   ),
                 ),
-                SizedBox(height: R.hp(context, 0.003, min: 2, max: 4)),
-                Text(
-                  '$dateStr $timeStr',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: R.font(context, 0.010, min: 9, max: 12),
-                    color: Colors.white.withOpacity(0.7),
-                  ),
+              ),
+            ],
+          ),
+          if (hasError) ...[
+            SizedBox(height: R.hp(context, 0.008, min: 6, max: 10)),
+            Container(
+              padding: EdgeInsets.all(R.wp(context, 0.010, min: 8, max: 12)),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF6B6B).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(
+                  R.wp(context, 0.008, max: 10),
                 ),
-              ],
-            ),
-          ),
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: R.wp(context, 0.010, min: 6, max: 10),
-              vertical: R.hp(context, 0.005, min: 3, max: 6),
-            ),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF9800).withOpacity(0.3),
-              borderRadius: BorderRadius.circular(
-                R.wp(context, 0.008, max: 10),
               ),
-              border: Border.all(
-                color: const Color(0xFFFF9800),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Error: $errorMessage',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: R.font(context, 0.010, min: 9, max: 11),
+                      color: const Color(0xFFFF6B6B),
+                    ),
+                  ),
+                  SizedBox(height: R.hp(context, 0.006, min: 4, max: 8)),
+                  GestureDetector(
+                    onTap: () => controller.sendErrorReport(record),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: R.wp(context, 0.012, min: 8, max: 12),
+                        vertical: R.hp(context, 0.006, min: 4, max: 8),
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3E7DDD),
+                        borderRadius: BorderRadius.circular(
+                          R.wp(context, 0.006, max: 8),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.send,
+                            size: R.font(context, 0.010, min: 10, max: 14),
+                            color: Colors.white,
+                          ),
+                          SizedBox(width: R.wp(context, 0.006, min: 4, max: 8)),
+                          Text(
+                            'Send Error Report',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: R.font(context, 0.010, min: 9, max: 11),
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: Text(
-              'pending',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: R.font(context, 0.010, min: 9, max: 11),
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFFFF9800),
-              ),
-            ),
-          ),
+          ],
         ],
       ),
     );

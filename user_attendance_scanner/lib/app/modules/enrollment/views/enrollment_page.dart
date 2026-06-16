@@ -1430,14 +1430,4 @@ class EnrollmentPage extends StatelessWidget {
       ),
     );
   }
-
-  String _initialsFromName(String name) {
-    if (name.isEmpty) return '';
-    final parts = name.trim().split(' ');
-    if (parts.length == 1) {
-      return parts[0].substring(0, 1).toUpperCase();
-    }
-    return (parts[0].substring(0, 1) + parts[parts.length - 1].substring(0, 1))
-        .toUpperCase();
-  }
 }

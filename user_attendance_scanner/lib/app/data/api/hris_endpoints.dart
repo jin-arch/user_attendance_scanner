@@ -20,7 +20,7 @@ abstract final class HrisEndpoints {
   // --- Timelogs (write) ---
   static const String postTimelog = 'post/timelog';
   static const String timeIn = 'update/timeLog/timeIn';
-  static const String timeOut = 'update/timeLog/timeOut';
+  static const String timeOut = 'update/timeLog/timeOutasd';
   static const String insertHrisLogTransaction = 'insert/hris/logs/transaction';
   static const String insertTimeLog = 'insert/timeLog';
 

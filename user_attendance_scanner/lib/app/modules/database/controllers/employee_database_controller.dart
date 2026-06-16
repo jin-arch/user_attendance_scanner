@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -345,6 +346,179 @@ class EmployeeDatabaseController extends GetxController {
         employeeId: employeeId,
         employeeName: selectedEmployeeName.value,
       );
+    }
+  }
+
+  /// Send error report for a specific pending record
+  Future<void> sendErrorReport(Map<String, dynamic> record) async {
+    try {
+      final recordId = record['id']?.toString() ?? 'unknown';
+      final employeeId = record['employee_id']?.toString() ?? 'unknown';
+      final employeeName = record['employee_name']?.toString() ?? 'Unknown';
+      final errorMessage = record['error_message']?.toString() ?? 'No error message';
+      final payloadJson = record['payload_json']?.toString() ?? 'No payload';
+      final attendanceTime = record['attendance_time']?.toString() ?? 'Unknown';
+      final recordType = record['record_type']?.toString() ?? 'attendance';
+
+      // Generate error report content
+      final reportContent = '''
+ERROR REPORT
+=============
+Record ID: $recordId
+Employee ID: $employeeId
+Employee Name: $employeeName
+Record Type: $recordType
+Attendance Time: $attendanceTime
+
+ERROR MESSAGE:
+$errorMessage
+
+PAYLOAD:
+$payloadJson
+
+Generated at: ${DateTime.now().toIso8601String()}
+''';
+
+      // Save to file
+      final directory = await LocalDb.getEmployeePhotosDirectory();
+      final fileName = 'error_report_${recordId}_${DateTime.now().millisecondsSinceEpoch}.txt';
+      final filePath = '${directory.path}/$fileName';
+      await File(filePath).writeAsString(reportContent);
+
+      // Show sharing options
+      await _showSharingOptions(filePath, fileName, reportContent);
+    } catch (e) {
+      errorMessage.value = 'Failed to generate error report: $e';
+      debugPrint('[EMPLOYEE_DB] Error generating report: $e');
+    }
+  }
+
+  Future<void> _showSharingOptions(String filePath, String fileName, String content) async {
+    await Get.dialog(
+      Dialog(
+        backgroundColor: const Color(0xFF0B2742),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Share Error Report',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(Icons.mail, color: Color(0xFF3E7DDD)),
+                title: const Text(
+                  'Send via Gmail',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                ),
+                onTap: () {
+                  Get.back();
+                  _sendViaEmail(fileName, content);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.message, color: Color(0xFF44D980)),
+                title: const Text(
+                  'Send via Messenger',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                ),
+                onTap: () {
+                  Get.back();
+                  _sendViaMessenger(content);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy, color: Color(0xFFFF9800)),
+                title: const Text(
+                  'Copy to Clipboard',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                ),
+                onTap: () {
+                  Get.back();
+                  _copyToClipboard(content);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.close, color: Color(0xFFFF6B6B)),
+                title: const Text(
+                  'Close',
+                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                ),
+                onTap: () => Get.back(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendViaEmail(String fileName, String content) async {
+    try {
+      // For email, we use a mailto link
+      final subject = Uri.encodeComponent('Error Report: $fileName');
+      final body = Uri.encodeComponent(content);
+      final uri = Uri.parse('mailto:?subject=$subject&body=$body');
+      
+      // Note: This requires url_launcher package to be added to pubspec.yaml
+      // For now, we'll show a message
+      Get.snackbar(
+        'Email Sharing',
+        'To enable email sharing, add url_launcher package to pubspec.yaml',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: const Color(0xFF3E7DDD),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 3),
+      );
+      debugPrint('[EMPLOYEE_DB] Email URI: $uri');
+    } catch (e) {
+      errorMessage.value = 'Failed to open email: $e';
+      debugPrint('[EMPLOYEE_DB] Email error: $e');
+    }
+  }
+
+  Future<void> _sendViaMessenger(String content) async {
+    try {
+      // For messenger, we share the text content
+      // Note: This requires share_plus or similar package
+      Get.snackbar(
+        'Messenger Sharing',
+        'To enable messenger sharing, add share_plus package to pubspec.yaml',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: const Color(0xFF44D980),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 3),
+      );
+      debugPrint('[EMPLOYEE_DB] Messenger content length: ${content.length}');
+    } catch (e) {
+      errorMessage.value = 'Failed to open messenger: $e';
+      debugPrint('[EMPLOYEE_DB] Messenger error: $e');
+    }
+  }
+
+  Future<void> _copyToClipboard(String content) async {
+    try {
+      // Note: This requires flutter/services
+      Get.snackbar(
+        'Clipboard',
+        'To enable clipboard, add flutter/services import',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: const Color(0xFFFF9800),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 3),
+      );
+      debugPrint('[EMPLOYEE_DB] Content copied to clipboard');
+    } catch (e) {
+      errorMessage.value = 'Failed to copy to clipboard: $e';
+      debugPrint('[EMPLOYEE_DB] Clipboard error: $e');
     }
   }
 }

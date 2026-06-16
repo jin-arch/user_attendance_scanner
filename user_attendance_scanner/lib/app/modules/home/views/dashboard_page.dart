@@ -70,16 +70,6 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
   // happens on HomePage (scan) and EnrollmentPage (enroll/reset).
   bool get _enableScanning => true;
 
-  String _initialsFromName(String? name) {
-    final trimmed = name?.trim() ?? '';
-    if (trimmed.isEmpty || trimmed.toUpperCase() == 'UNKNOWN USER') return '';
-    final parts = trimmed.split(RegExp(r'\s+'));
-    if (parts.isEmpty) return '';
-    final first = parts.first.isNotEmpty ? parts.first[0] : '';
-    final last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
-    return (first + last).toUpperCase();
-  }
-
   Future<String?> _resolveSiteId() async {
     return _dashboardController.resolveSiteId(widget.siteId);
   }
@@ -825,28 +815,10 @@ class _DashboardPageState extends State<_DashboardPageContent> with RouteAware {
                           : null,
                     ),
                     child: profilePhoto == null
-                        ? Builder(
-                            builder: (_) {
-                              final initials =
-                                  _initialsFromName(widget.employeeName);
-                              if (initials.isNotEmpty) {
-                                return Text(
-                                  initials,
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: w * 0.030,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                    letterSpacing: 2,
-                                  ),
-                                );
-                              }
-                              return const Icon(
-                                Icons.person,
-                                color: Colors.white,
-                                size: 40,
-                              );
-                            },
+                        ? const Icon(
+                            Icons.person,
+                            color: Colors.white,
+                            size: 40,
                           )
                         : null,
                   ),

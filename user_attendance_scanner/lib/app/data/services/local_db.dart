@@ -162,6 +162,11 @@ class LocalDb {
     return dir;
   }
 
+  /// Public method to get the employee photos directory
+  static Future<Directory> getEmployeePhotosDirectory() async {
+    return _employeePhotosDirectory();
+  }
+
   static String _sanitizePhotoFileKey(String siteId, String employeeId) {
     return '${siteId.trim()}_${employeeId.trim()}'
         .replaceAll(RegExp(r'[^\w\-.]'), '_');
@@ -232,6 +237,11 @@ class LocalDb {
     if (!names.contains('payload_json')) {
       await db.execute(
         'ALTER TABLE attendance_queue ADD COLUMN payload_json TEXT',
+      );
+    }
+    if (!names.contains('error_message')) {
+      await db.execute(
+        'ALTER TABLE attendance_queue ADD COLUMN error_message TEXT',
       );
     }
   }
@@ -1503,7 +1513,17 @@ class LocalDb {
     final database = await db;
     await database.update(
       'attendance_queue',
-      {'synced': 1},
+      {'synced': 1, 'error_message': null},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> markAttendanceSyncError(int id, String errorMessage) async {
+    final database = await db;
+    await database.update(
+      'attendance_queue',
+      {'error_message': errorMessage},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -3314,7 +3334,7 @@ class LocalDb {
     return rows.isNotEmpty ? rows.first : _emptyJson();
   }
 
-  static Future<void> submitAttendanceSync({
+  static Future<bool> submitAttendanceSync({
     required String siteId,
     required String employeeId,
     required String timeLogId,
@@ -3329,6 +3349,8 @@ class LocalDb {
   }) async {
     final logTime = _militaryTimeFromDateTimeString(timeLog);
     final isTimeOut = code.toUpperCase().startsWith('OUT');
+    bool allSucceeded = true;
+    List<String> errors = [];
 
     try {
       await submitHrisLogTransaction(
@@ -3341,6 +3363,8 @@ class LocalDb {
       ).timeout(const Duration(seconds: 20));
     } catch (e) {
       print('[SYNC] submitHrisLogTransaction timeout/error: $e');
+      allSucceeded = false;
+      errors.add('submitHrisLogTransaction: $e');
     }
 
     try {
@@ -3358,6 +3382,8 @@ class LocalDb {
       ).timeout(const Duration(seconds: 20));
     } catch (e) {
       print('[SYNC] submitInsertTimeLog timeout/error: $e');
+      allSucceeded = false;
+      errors.add('submitInsertTimeLog: $e');
     }
 
     try {
@@ -3384,7 +3410,15 @@ class LocalDb {
       }
     } catch (e) {
       print('[SYNC] submitAttendance timeout/error: $e');
+      allSucceeded = false;
+      errors.add('submitAttendance: $e');
     }
+
+    if (!allSucceeded && errors.isNotEmpty) {
+      print('[SYNC] Attendance sync failed with errors: ${errors.join('; ')}');
+    }
+
+    return allSucceeded;
   }
 
   static String _militaryTimeFromDateTimeString(String value) {
@@ -3544,7 +3578,8 @@ class LocalDb {
         a.attendance_time,
         a.record_type,
         a.payload_json,
-        a.synced
+        a.synced,
+        a.error_message
       FROM attendance_queue a
       WHERE a.site_id = ?
         AND a.employee_id = ?

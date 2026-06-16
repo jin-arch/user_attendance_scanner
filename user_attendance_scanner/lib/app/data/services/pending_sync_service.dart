@@ -23,7 +23,7 @@ class PendingSyncService extends GetxService {
     pendingSyncLog(
       'uploadAttendance start employee=$employeeId site=$siteId code=${payload['code']}',
     );
-    await LocalDb.submitAttendanceSync(
+    final success = await LocalDb.submitAttendanceSync(
       siteId: siteId,
       employeeId: employeeId,
       timeLogId: payload['timeLogId']?.toString() ?? '',
@@ -36,8 +36,8 @@ class PendingSyncService extends GetxService {
       timeInAfternoon: payload['timeInAfternoon']?.toString(),
       timeOutAfternoon: payload['timeOutAfternoon']?.toString(),
     );
-    pendingSyncLog('uploadAttendance done employee=$employeeId');
-    return true;
+    pendingSyncLog('uploadAttendance done employee=$employeeId success=$success');
+    return success;
   }
 
   /// Online mode: push one queued scan without blocking the fingerprint UI.
@@ -71,20 +71,28 @@ class PendingSyncService extends GetxService {
     }
 
     try {
-      await uploadAttendancePayload(
+      final success = await uploadAttendancePayload(
         siteId: siteId,
         employeeId: employeeId,
         payload: payload,
       );
-      await LocalDb.markAttendanceSynced(queueId);
-      pendingSyncLog('background attendance synced queueId=$queueId');
-      if (siteId.isNotEmpty) {
-        await _reloadScannerIfRegistered(siteId);
+      if (success) {
+        await LocalDb.markAttendanceSynced(queueId);
+        pendingSyncLog('background attendance synced queueId=$queueId');
+        if (siteId.isNotEmpty) {
+          await _reloadScannerIfRegistered(siteId);
+        }
+      } else {
+        pendingSyncLog(
+          'background attendance upload failed queueId=$queueId (API returned failure)',
+        );
+        await LocalDb.markAttendanceSyncError(queueId, 'API upload failed');
       }
     } catch (e, st) {
       pendingSyncLog(
         'background attendance upload failed queueId=$queueId: $e',
       );
+      await LocalDb.markAttendanceSyncError(queueId, e.toString());
       debugPrintStack(stackTrace: st, label: 'PENDING_SYNC_BG');
     }
   }
@@ -291,18 +299,24 @@ class PendingSyncService extends GetxService {
 
     if (payload == null) {
       pendingSyncLog('No timelog payload for queue $queueId');
+      await LocalDb.markAttendanceSyncError(queueId, 'No timelog payload found');
       return false;
     }
 
-    await uploadAttendancePayload(
+    final success = await uploadAttendancePayload(
       siteId: siteId,
       employeeId: employeeId,
       payload: payload,
     );
 
-    await LocalDb.markAttendanceSynced(queueId);
-    pendingSyncLog('Attendance synced queueId=$queueId');
-    return true;
+    if (success) {
+      await LocalDb.markAttendanceSynced(queueId);
+      pendingSyncLog('Attendance synced queueId=$queueId');
+    } else {
+      await LocalDb.markAttendanceSyncError(queueId, 'API upload failed for attendance');
+    }
+
+    return success;
   }
 
   Future<bool> _syncFingerprint({
@@ -316,7 +330,10 @@ class PendingSyncService extends GetxService {
       employeeId: employeeId,
       siteId: siteId,
     );
-    if (!ok) return false;
+    if (!ok) {
+      await LocalDb.markAttendanceSyncError(queueId, 'Fingerprint upload failed');
+      return false;
+    }
 
     await LocalDb.markAttendanceSynced(queueId);
     await _reloadScannerIfRegistered(siteId);
