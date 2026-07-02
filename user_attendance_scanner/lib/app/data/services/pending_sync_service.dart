@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import 'package:user_attendance_scanner/app/core/utils/hris_log.dart';
+import 'package:user_attendance_scanner/app/data/api/hris_endpoints.dart';
 import 'package:user_attendance_scanner/app/data/services/hris_push_policy.dart';
 import 'package:user_attendance_scanner/app/data/services/local_db.dart';
 import 'package:user_attendance_scanner/app/data/services/scanner_registry_service.dart';
@@ -86,7 +87,53 @@ class PendingSyncService extends GetxService {
         pendingSyncLog(
           'background attendance upload failed queueId=$queueId (API returned failure)',
         );
-        await LocalDb.markAttendanceSyncError(queueId, 'API upload failed');
+        final timeLogDate = payload['timeLogDate']?.toString() ?? '';
+        final url1 = HrisEndpoints.uri(
+          HrisEndpoints.insertHrisLogTransaction,
+          queryParameters: {
+            'passedID': 'null',
+            'companyID': employeeId,
+            'datelog': timeLogDate,
+            'log_time': timeLogDate.split(' ').length > 1 ? timeLogDate.split(' ')[1] : '',
+            'log_type': payload['code']?.toString() ?? '',
+            'logID': payload['timeLogId']?.toString() ?? '',
+          },
+        ).toString();
+        final url2 = HrisEndpoints.uri(
+          HrisEndpoints.insertTimeLog,
+          queryParameters: {
+            'siteID': siteId,
+            'employeeID': employeeId,
+            'timelogID': payload['timeLogId']?.toString() ?? '',
+            'timelog': timeLogDate,
+            'remarks': payload['remarks']?.toString() ?? 'SUCCESS',
+            'schedule': payload['schedule']?.toString() ?? 'AUTO',
+            'timeinmorning': payload['timeInMorning']?.toString() ?? '',
+            'timeinafternoon': payload['timeInAfternoon']?.toString() ?? '',
+            'datecaptured': timeLogDate,
+            'code': payload['code']?.toString() ?? 'IN_AM',
+          },
+        ).toString();
+        final isTimeOut = (payload['code']?.toString() ?? '').toUpperCase().startsWith('OUT');
+        final endpoint = isTimeOut ? HrisEndpoints.timeOut : HrisEndpoints.timeIn;
+        final url3 = HrisEndpoints.uri(
+          endpoint,
+          queryParameters: {
+            'passedID': 'null',
+            'timelogID': payload['timeLogId']?.toString() ?? '',
+            'remarks': payload['remarks']?.toString() ?? 'SUCCESS',
+            'timelog': timeLogDate,
+            'timeInMorning': payload['timeInMorning']?.toString() ?? '',
+            'timeInAfternoon': payload['timeInAfternoon']?.toString() ?? '',
+            'timeOutMorning': payload['timeOutMorning']?.toString() ?? '',
+            'timeOutAfternoon': payload['timeOutAfternoon']?.toString() ?? '',
+            'code': payload['code']?.toString() ?? 'IN_AM',
+          },
+        ).toString();
+        await LocalDb.markAttendanceSyncError(
+          queueId,
+          'API failed: Multiple endpoints - $url1 | $url2 | $url3 (pending_sync_service.dart:74)',
+        );
       }
     } catch (e, st) {
       pendingSyncLog(
@@ -107,29 +154,40 @@ class PendingSyncService extends GetxService {
     String? left = leftFingerThumb;
     String? right = rightFingerThumb;
 
+    pendingSyncLog('uploadFingerprint: Starting for employee=$employeeId site=$siteId');
+
     if (left == null || right == null) {
+      pendingSyncLog('uploadFingerprint: Fetching templates from local DB for employee=$employeeId');
       final templates = await LocalDb.getEmployeeThumbTemplatesForApi(
         employeeId: employeeId,
         siteId: siteId,
       );
       if (templates == null) {
-        pendingSyncLog('No thumb templates for employee=$employeeId');
+        pendingSyncLog('uploadFingerprint: ERROR - No thumb templates found for employee=$employeeId');
         return false;
       }
       left = templates.$1;
       right = templates.$2;
+      pendingSyncLog('uploadFingerprint: Retrieved templates - leftLen=${left.length} rightLen=${right.length}');
     }
 
     pendingSyncLog(
-      'uploadFingerprint start employee=$employeeId leftLen=${left.length} rightLen=${right.length}',
+      'uploadFingerprint: Calling API updateEmployeeThumbDetails employee=$employeeId leftLen=${left.length} rightLen=${right.length}',
     );
-    await LocalDb.updateEmployeeThumbDetails(
-      employeeId: employeeId,
-      leftFingerThumb: left,
-      rightFingerThumb: right,
-    );
-    pendingSyncLog('uploadFingerprint done employee=$employeeId');
-    return true;
+    
+    try {
+      final result = await LocalDb.updateEmployeeThumbDetails(
+        employeeId: employeeId,
+        leftFingerThumb: left,
+        rightFingerThumb: right,
+      );
+      pendingSyncLog('uploadFingerprint: API response received employee=$employeeId result=$result');
+      pendingSyncLog('uploadFingerprint: SUCCESS employee=$employeeId');
+      return true;
+    } catch (e) {
+      pendingSyncLog('uploadFingerprint: ERROR employee=$employeeId error=$e');
+      rethrow;
+    }
   }
 
   Future<void> markFingerprintQueueSynced({
@@ -312,8 +370,56 @@ class PendingSyncService extends GetxService {
     if (success) {
       await LocalDb.markAttendanceSynced(queueId);
       pendingSyncLog('Attendance synced queueId=$queueId');
+      debugPrint('[PENDING_SYNC] Marked queueId=$queueId as synced');
     } else {
-      await LocalDb.markAttendanceSyncError(queueId, 'API upload failed for attendance');
+      final timeLogDate = payload['timeLogDate']?.toString() ?? '';
+      final url1 = HrisEndpoints.uri(
+        HrisEndpoints.insertHrisLogTransaction,
+        queryParameters: {
+          'passedID': 'null',
+          'companyID': employeeId,
+          'datelog': timeLogDate,
+          'log_time': timeLogDate.split(' ').length > 1 ? timeLogDate.split(' ')[1] : '',
+          'log_type': payload['code']?.toString() ?? '',
+          'logID': payload['timeLogId']?.toString() ?? '',
+        },
+      ).toString();
+      final url2 = HrisEndpoints.uri(
+        HrisEndpoints.insertTimeLog,
+        queryParameters: {
+          'siteID': siteId,
+          'employeeID': employeeId,
+          'timelogID': payload['timeLogId']?.toString() ?? '',
+          'timelog': timeLogDate,
+          'remarks': payload['remarks']?.toString() ?? 'SUCCESS',
+          'schedule': payload['schedule']?.toString() ?? 'AUTO',
+          'timeinmorning': payload['timeInMorning']?.toString() ?? '',
+          'timeinafternoon': payload['timeInAfternoon']?.toString() ?? '',
+          'datecaptured': timeLogDate,
+          'code': payload['code']?.toString() ?? 'IN_AM',
+        },
+      ).toString();
+      final isTimeOut = (payload['code']?.toString() ?? '').toUpperCase().startsWith('OUT');
+      final endpoint = isTimeOut ? HrisEndpoints.timeOut : HrisEndpoints.timeIn;
+      final url3 = HrisEndpoints.uri(
+        endpoint,
+        queryParameters: {
+          'passedID': 'null',
+          'timelogID': payload['timeLogId']?.toString() ?? '',
+          'remarks': payload['remarks']?.toString() ?? 'SUCCESS',
+          'timelog': timeLogDate,
+          'timeInMorning': payload['timeInMorning']?.toString() ?? '',
+          'timeInAfternoon': payload['timeInAfternoon']?.toString() ?? '',
+          'timeOutMorning': payload['timeOutMorning']?.toString() ?? '',
+          'timeOutAfternoon': payload['timeOutAfternoon']?.toString() ?? '',
+          'code': payload['code']?.toString() ?? 'IN_AM',
+        },
+      ).toString();
+      await LocalDb.markAttendanceSyncError(
+        queueId,
+        'API failed: Multiple endpoints - $url1 | $url2 | $url3 (pending_sync_service.dart:317)',
+      );
+      debugPrint('[PENDING_SYNC] Marked queueId=$queueId as error');
     }
 
     return success;
@@ -331,7 +437,14 @@ class PendingSyncService extends GetxService {
       siteId: siteId,
     );
     if (!ok) {
-      await LocalDb.markAttendanceSyncError(queueId, 'Fingerprint upload failed');
+      final completeUrl = HrisEndpoints.uri(
+        HrisEndpoints.updateEmployeeThumbDetails,
+        queryParameters: {'employeeID': employeeId},
+      ).toString();
+      await LocalDb.markAttendanceSyncError(
+        queueId,
+        'API failed: $completeUrl (pending_sync_service.dart:348)',
+      );
       return false;
     }
 

@@ -117,7 +117,13 @@ class MainActivity : FlutterActivity() {
         }
         
         override fun captureError(e: FingerprintException) {
-            Log.e(TAG, "Capture error: ${e.message}")
+            Log.e(TAG, "Capture error: ${e.message}, code: ${e.errorCode}")
+            // Add a longer delay to prevent rapid retry loops that may cause USB instability
+            try {
+                Thread.sleep(200)
+            } catch (ie: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
         
         override fun extractOK(fpTemplate: ByteArray) {
@@ -446,6 +452,9 @@ class MainActivity : FlutterActivity() {
         }
         
         try {
+            // Stop any existing capture first to prevent conflicts
+            try { fingerprintSensor?.stopCapture(deviceIndex) } catch (e: Exception) {}
+            Thread.sleep(200) // Increased delay to ensure clean state and reduce USB stress
             fingerprintSensor?.startCapture(deviceIndex)
             result.success(true)
         } catch (e: Exception) {

@@ -182,6 +182,16 @@ class _HomePageController extends GetxController with RouteAware {
         _controller.setConnected(false, status: 'Device detached');
         _employeeDb.clear();
         _employeeDbByFid.clear();
+        
+        // Aggressive auto-reconnect after detachment
+        if (_selectedSiteId != null) {
+          debugPrint('[DEVICE] Aggressive reconnect attempt after detachment');
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted && !_device.isConnected) {
+              _autoConnectIfSiteSelected();
+            }
+          });
+        }
         _isProcessingTemplate = false;
         _lastTemplateHandledAt = null;
         _portalAutoReturnTimer?.cancel();

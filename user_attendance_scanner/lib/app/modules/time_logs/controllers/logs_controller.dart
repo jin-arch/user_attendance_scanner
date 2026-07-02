@@ -774,12 +774,7 @@ class LogsController extends GetxController {
       };
       debugPrint('[LOGS_CONTROLLER] Headers: $headers');
 
-      final response = await http.get(url, headers: headers).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw Exception('Request timeout after 15 seconds');
-        },
-      );
+      final response = await http.get(url, headers: headers);
 
       debugPrint('[LOGS_CONTROLLER] Response Status: ${response.statusCode}');
       debugPrint('[LOGS_CONTROLLER] Response Body Length: ${response.body.length}');

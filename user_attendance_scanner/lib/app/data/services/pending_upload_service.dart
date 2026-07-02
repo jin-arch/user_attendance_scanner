@@ -123,7 +123,11 @@ class PendingUploadService extends GetxService {
   void _refreshPendingRecordsUi(String? siteId) {
     if (siteId == null || siteId.isEmpty) return;
     final tag = 'employee_db_$siteId';
-    if (!Get.isRegistered<EmployeeDatabaseController>(tag: tag)) return;
+    debugPrint('[PENDING_UPLOAD] Refreshing UI for site=$siteId tag=$tag');
+    if (!Get.isRegistered<EmployeeDatabaseController>(tag: tag)) {
+      debugPrint('[PENDING_UPLOAD] Controller not registered with tag=$tag');
+      return;
+    }
     final controller = Get.find<EmployeeDatabaseController>(tag: tag);
     unawaited(controller.loadEmployeesWithPendingRecords());
     final employeeId = controller.selectedEmployeeId.value;

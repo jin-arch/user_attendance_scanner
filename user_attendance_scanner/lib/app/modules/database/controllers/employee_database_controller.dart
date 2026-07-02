@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:user_attendance_scanner/app/data/services/connectivity_service.dart';
 import 'package:user_attendance_scanner/app/data/services/local_db.dart';
 import 'package:user_attendance_scanner/app/data/services/offline_mode_sync_service.dart';
@@ -154,7 +156,7 @@ class EmployeeDatabaseController extends GetxController {
       employeesWithPending.assignAll(employees);
 
       debugPrint(
-          '[EMPLOYEE_DB] Loaded ${employees.length} employees with pending records');
+          '[EMPLOYEE_DB] Loaded ${employees.length} employees with pending records for site=$_siteId');
     } catch (e) {
       errorMessage.value = 'Error loading employees: $e';
       debugPrint('[EMPLOYEE_DB] Error: $e');
@@ -255,7 +257,7 @@ class EmployeeDatabaseController extends GetxController {
         );
       }
     } catch (e) {
-      errorMessage.value = 'Upload failed: $e';
+      errorMessage.value = 'API upload failed: flushAllPending error - $e';
       debugPrint('[EMPLOYEE_DB] Upload error: $e');
     } finally {
       isUploading.value = false;
@@ -313,7 +315,7 @@ class EmployeeDatabaseController extends GetxController {
         );
       }
     } catch (e) {
-      errorMessage.value = 'Upload failed: $e';
+      errorMessage.value = 'API upload failed: flushAllPending error - $e';
       debugPrint('[EMPLOYEE_DB] Upload error: $e');
     } finally {
       isUploading.value = false;
@@ -421,7 +423,7 @@ Generated at: ${DateTime.now().toIso8601String()}
                 ),
                 onTap: () {
                   Get.back();
-                  _sendViaEmail(fileName, content);
+                  _sendViaEmail(filePath, fileName, content);
                 },
               ),
               ListTile(
@@ -432,18 +434,7 @@ Generated at: ${DateTime.now().toIso8601String()}
                 ),
                 onTap: () {
                   Get.back();
-                  _sendViaMessenger(content);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.copy, color: Color(0xFFFF9800)),
-                title: const Text(
-                  'Copy to Clipboard',
-                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
-                ),
-                onTap: () {
-                  Get.back();
-                  _copyToClipboard(content);
+                  _sendViaMessenger(filePath, content);
                 },
               ),
               ListTile(
@@ -461,64 +452,56 @@ Generated at: ${DateTime.now().toIso8601String()}
     );
   }
 
-  Future<void> _sendViaEmail(String fileName, String content) async {
+  Future<void> _sendViaEmail(String filePath, String fileName, String content) async {
     try {
-      // For email, we use a mailto link
       final subject = Uri.encodeComponent('Error Report: $fileName');
       final body = Uri.encodeComponent(content);
       final uri = Uri.parse('mailto:?subject=$subject&body=$body');
       
-      // Note: This requires url_launcher package to be added to pubspec.yaml
-      // For now, we'll show a message
-      Get.snackbar(
-        'Email Sharing',
-        'To enable email sharing, add url_launcher package to pubspec.yaml',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: const Color(0xFF3E7DDD),
-        colorText: Colors.white,
-        duration: const Duration(seconds: 3),
-      );
-      debugPrint('[EMPLOYEE_DB] Email URI: $uri');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+        Get.snackbar(
+          'Email',
+          'Email client opened successfully',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: const Color(0xFF3E7DDD),
+          colorText: Colors.white,
+          duration: const Duration(seconds: 2),
+        );
+      } else {
+        // Fallback: share the file using share_plus
+        await Share.shareXFiles(
+          [XFile(filePath)],
+          subject: 'Error Report: $fileName',
+          text: content,
+        );
+      }
+      debugPrint('[EMPLOYEE_DB] Email sent via: $uri');
     } catch (e) {
       errorMessage.value = 'Failed to open email: $e';
       debugPrint('[EMPLOYEE_DB] Email error: $e');
     }
   }
 
-  Future<void> _sendViaMessenger(String content) async {
+  Future<void> _sendViaMessenger(String filePath, String content) async {
     try {
-      // For messenger, we share the text content
-      // Note: This requires share_plus or similar package
+      // Share the file using share_plus, which allows sharing to Messenger and other apps
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: content,
+      );
       Get.snackbar(
-        'Messenger Sharing',
-        'To enable messenger sharing, add share_plus package to pubspec.yaml',
+        'Share',
+        'File shared successfully',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: const Color(0xFF44D980),
         colorText: Colors.white,
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 2),
       );
-      debugPrint('[EMPLOYEE_DB] Messenger content length: ${content.length}');
+      debugPrint('[EMPLOYEE_DB] File shared via: $filePath');
     } catch (e) {
-      errorMessage.value = 'Failed to open messenger: $e';
-      debugPrint('[EMPLOYEE_DB] Messenger error: $e');
-    }
-  }
-
-  Future<void> _copyToClipboard(String content) async {
-    try {
-      // Note: This requires flutter/services
-      Get.snackbar(
-        'Clipboard',
-        'To enable clipboard, add flutter/services import',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: const Color(0xFFFF9800),
-        colorText: Colors.white,
-        duration: const Duration(seconds: 3),
-      );
-      debugPrint('[EMPLOYEE_DB] Content copied to clipboard');
-    } catch (e) {
-      errorMessage.value = 'Failed to copy to clipboard: $e';
-      debugPrint('[EMPLOYEE_DB] Clipboard error: $e');
+      errorMessage.value = 'Failed to share file: $e';
+      debugPrint('[EMPLOYEE_DB] Share error: $e');
     }
   }
 }

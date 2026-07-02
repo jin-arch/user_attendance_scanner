@@ -26,7 +26,6 @@ class SiteRepositoryImpl implements SiteRepository {
     // Fallback to API if cache is empty
     debugPrint('[SITE_REPO] Cache empty, fetching from API');
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
 
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));

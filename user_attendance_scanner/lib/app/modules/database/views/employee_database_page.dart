@@ -71,7 +71,7 @@ class EmployeeDatabasePage extends StatelessWidget {
                           R.wp(context, 0.012, min: 8, max: 14),
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFF9800).withOpacity(0.2),
+                          color: const Color(0xFFFF9800).withOpacity(0.85),
                           borderRadius: BorderRadius.circular(
                             R.wp(context, 0.010, max: 12),
                           ),
@@ -290,9 +290,9 @@ extension on EmployeeDatabasePage {
         margin: EdgeInsets.only(bottom: R.hp(context, 0.012, max: 14)),
         padding: R.screenPadding(context),
         decoration: BoxDecoration(
-          color: const Color(0xFF0B2742).withOpacity(0.70),
+          color: const Color(0xFF0B2742).withOpacity(0.95),
           borderRadius: BorderRadius.circular(R.wp(context, 0.016, max: 16)),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+          border: Border.all(color: Colors.white.withOpacity(0.3)),
         ),
         child: Row(
           children: [
@@ -510,13 +510,13 @@ extension on EmployeeDatabasePage {
       padding: R.screenPadding(context),
       decoration: BoxDecoration(
         color: hasError
-            ? const Color(0xFFFF6B6B).withOpacity(0.15)
-            : const Color(0xFF0B2742).withOpacity(0.60),
+            ? const Color(0xFFFF6B6B).withOpacity(0.85)
+            : const Color(0xFF0B2742).withOpacity(0.95),
         borderRadius: BorderRadius.circular(R.wp(context, 0.012, max: 14)),
         border: Border.all(
           color: hasError
-              ? const Color(0xFFFF6B6B).withOpacity(0.5)
-              : Colors.white.withOpacity(0.12),
+              ? const Color(0xFFFF6B6B)
+              : Colors.white.withOpacity(0.3),
         ),
       ),
       child: Column(
@@ -566,8 +566,8 @@ extension on EmployeeDatabasePage {
                 ),
                 decoration: BoxDecoration(
                   color: hasError
-                      ? const Color(0xFFFF6B6B).withOpacity(0.3)
-                      : const Color(0xFFFF9800).withOpacity(0.3),
+                      ? const Color(0xFFFF6B6B)
+                      : const Color(0xFFFF9800),
                   borderRadius: BorderRadius.circular(
                     R.wp(context, 0.008, max: 10),
                   ),
@@ -596,7 +596,7 @@ extension on EmployeeDatabasePage {
             Container(
               padding: EdgeInsets.all(R.wp(context, 0.010, min: 8, max: 12)),
               decoration: BoxDecoration(
-                color: const Color(0xFFFF6B6B).withOpacity(0.1),
+                color: const Color(0xFFFF6B6B).withOpacity(0.3),
                 borderRadius: BorderRadius.circular(
                   R.wp(context, 0.008, max: 10),
                 ),

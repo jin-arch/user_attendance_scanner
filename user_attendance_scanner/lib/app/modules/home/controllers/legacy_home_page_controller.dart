@@ -89,7 +89,6 @@ class LegacyHomePageController extends GetxController {
 
   Future<List<Map<String, dynamic>>> fetchSiteRows() async {
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 20);
     try {
       final request = await client.getUrl(Uri.parse(_siteApiUrl));
       final basicToken = base64Encode(
@@ -119,7 +118,6 @@ class LegacyHomePageController extends GetxController {
   }) async {
     await LocalDb.pruneToSite(siteId);
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 30);
     try {
       final urlStr = _employeesApiUrl(siteId);
       final request = await client.getUrl(Uri.parse(urlStr));

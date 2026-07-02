@@ -19,8 +19,6 @@ class LocalDb {
   static const String _windowsDbDirectory = r'C:\SQLiteDB';
   static const int _maxTimelogRowsRead = 1200;
 
-  static Map<String, dynamic> _emptyJson() => <String, dynamic>{};
-
   static final _api = HrisApiProvider.instance;
 
   static Future<List<Map<String, dynamic>>> _getApiRows(
@@ -29,18 +27,12 @@ class LocalDb {
   }) =>
       _api.getRows(endpoint, queryParameters: queryParameters);
 
-  static Future<List<Map<String, dynamic>>> _postApiRows(
+  static Future<({bool success, List<Map<String, dynamic>> rows})> _postApiRows(
     String endpoint, {
     Map<String, String?> queryParameters = const {},
-  }) =>
-      _api.postRows(endpoint, queryParameters: queryParameters);
-
-  static Future<Map<String, dynamic>> _postJson(
-    String endpoint,
-    Map<String, dynamic> body, {
-    Map<String, String?> queryParameters = const {},
-  }) =>
-      _api.postJson(endpoint, body, queryParameters: queryParameters);
+  }) async {
+    return _api.postRows(endpoint, queryParameters: queryParameters);
+  }
 
   static Future<void> _ensureSchema(Database db) async {
     await db.execute('''
@@ -1511,12 +1503,13 @@ class LocalDb {
 
   static Future<void> markAttendanceSynced(int id) async {
     final database = await db;
-    await database.update(
+    final count = await database.update(
       'attendance_queue',
       {'synced': 1, 'error_message': null},
       where: 'id = ?',
       whereArgs: [id],
     );
+    debugPrint('[LOCAL_DB] markAttendanceSynced id=$id updated=$count rows');
   }
 
   static Future<void> markAttendanceSyncError(int id, String errorMessage) async {
@@ -2847,9 +2840,10 @@ class LocalDb {
           (key, value) => MapEntry(key, value?.toString()),
         );
 
+        bool success = false;
         switch (endpoint) {
           case HrisEndpoints.timeIn:
-            await submitAttendanceTimeIn(
+            success = await submitAttendanceTimeIn(
               passedID: params['passedID'],
               timeLogId: params['timelogID'] ?? '',
               remarks: params['remarks'] ?? 'SUCCESS',
@@ -2860,7 +2854,7 @@ class LocalDb {
             );
             break;
           case HrisEndpoints.timeOut:
-            await submitAttendanceTimeOut(
+            success = await submitAttendanceTimeOut(
               passedID: params['passedID'],
               timeLogId: params['timelogID'] ?? '',
               remarks: params['remarks'] ?? 'SUCCESS',
@@ -2871,7 +2865,7 @@ class LocalDb {
             );
             break;
           case HrisEndpoints.insertHrisLogTransaction:
-            await submitHrisLogTransaction(
+            success = await submitHrisLogTransaction(
               passedID: params['passedID'],
               companyID: params['companyID'] ?? '',
               datelog: params['datelog'] ?? '',
@@ -2881,7 +2875,7 @@ class LocalDb {
             );
             break;
           case HrisEndpoints.insertTimeLog:
-            await submitInsertTimeLog(
+            success = await submitInsertTimeLog(
               siteId: params['siteID'] ?? '',
               employeeId: params['employeeID'] ?? '',
               timeLogId: params['timelogID'] ?? '',
@@ -2898,7 +2892,9 @@ class LocalDb {
             debugPrint('[HRIS_QUEUE] Unknown endpoint: $endpoint');
         }
 
-        await markHrisRequestSynced(id);
+        if (success) {
+          await markHrisRequestSynced(id);
+        }
       } catch (e) {
         debugPrint('[HRIS_QUEUE] Failed to sync request $id: $e');
       }
@@ -3223,18 +3219,17 @@ class LocalDb {
     required String leftFingerThumb,
     required String rightFingerThumb,
   }) async {
-    return _postJson(
-      HrisEndpoints.updateEmployeeThumbDetails,
+    return _api.putJson(
+      '${HrisEndpoints.updateEmployeeThumbDetails}?employeeID=$employeeId',
       {
         'employeeID': employeeId,
         'leftFingerThumb': leftFingerThumb,
         'rightFingerThumb': rightFingerThumb,
       },
-      queryParameters: {'employeeID': employeeId},
     );
   }
 
-  static Future<Map<String, dynamic>> submitAttendanceTimeIn({
+  static Future<bool> submitAttendanceTimeIn({
     required String? passedID,
     required String timeLogId,
     required String remarks,
@@ -3243,7 +3238,7 @@ class LocalDb {
     required String? timeInAfternoon,
     required String code,
   }) async {
-    final rows = await _postApiRows(
+    final result = await _postApiRows(
       HrisEndpoints.timeIn,
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -3255,10 +3250,10 @@ class LocalDb {
         'code': code,
       },
     );
-    return rows.isNotEmpty ? rows.first : _emptyJson();
+    return result.success;
   }
 
-  static Future<Map<String, dynamic>> submitAttendanceTimeOut({
+  static Future<bool> submitAttendanceTimeOut({
     required String? passedID,
     required String timeLogId,
     required String remarks,
@@ -3267,7 +3262,7 @@ class LocalDb {
     required String? timeOutAfternoon,
     required String code,
   }) async {
-    final rows = await _postApiRows(
+    final result = await _postApiRows(
       HrisEndpoints.timeOut,
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -3279,10 +3274,10 @@ class LocalDb {
         'code': code,
       },
     );
-    return rows.isNotEmpty ? rows.first : _emptyJson();
+    return result.success;
   }
 
-  static Future<Map<String, dynamic>> submitHrisLogTransaction({
+  static Future<bool> submitHrisLogTransaction({
     required String? passedID,
     required String companyID,
     required String datelog,
@@ -3290,7 +3285,7 @@ class LocalDb {
     required String logType,
     required String logId,
   }) async {
-    final rows = await _postApiRows(
+    final result = await _postApiRows(
       HrisEndpoints.insertHrisLogTransaction,
       queryParameters: {
         'passedID': passedID ?? 'null',
@@ -3301,10 +3296,10 @@ class LocalDb {
         'logID': logId,
       },
     );
-    return rows.isNotEmpty ? rows.first : _emptyJson();
+    return result.success;
   }
 
-  static Future<Map<String, dynamic>> submitInsertTimeLog({
+  static Future<bool> submitInsertTimeLog({
     required String siteId,
     required String employeeId,
     required String timeLogId,
@@ -3316,7 +3311,7 @@ class LocalDb {
     required String dateCaptured,
     required String code,
   }) async {
-    final rows = await _postApiRows(
+    final result = await _postApiRows(
       HrisEndpoints.insertTimeLog,
       queryParameters: {
         'siteID': siteId,
@@ -3331,7 +3326,7 @@ class LocalDb {
         'code': code,
       },
     );
-    return rows.isNotEmpty ? rows.first : _emptyJson();
+    return result.success;
   }
 
   static Future<bool> submitAttendanceSync({
@@ -3353,7 +3348,7 @@ class LocalDb {
     List<String> errors = [];
 
     try {
-      await submitHrisLogTransaction(
+      final success = await submitHrisLogTransaction(
         passedID: null,
         companyID: employeeId,
         datelog: timeLog,
@@ -3361,14 +3356,40 @@ class LocalDb {
         logType: code,
         logId: timeLogId,
       ).timeout(const Duration(seconds: 20));
+      if (!success) {
+        allSucceeded = false;
+        final completeUrl = HrisEndpoints.uri(
+          HrisEndpoints.insertHrisLogTransaction,
+          queryParameters: {
+            'passedID': 'null',
+            'companyID': employeeId,
+            'datelog': timeLog,
+            'log_time': logTime,
+            'log_type': code,
+            'logID': timeLogId,
+          },
+        ).toString();
+        errors.add('API failed: $completeUrl (local_db.dart:3351)');
+      }
     } catch (e) {
       print('[SYNC] submitHrisLogTransaction timeout/error: $e');
       allSucceeded = false;
-      errors.add('submitHrisLogTransaction: $e');
+      final completeUrl = HrisEndpoints.uri(
+        HrisEndpoints.insertHrisLogTransaction,
+        queryParameters: {
+          'passedID': 'null',
+          'companyID': employeeId,
+          'datelog': timeLog,
+          'log_time': logTime,
+          'log_type': code,
+          'logID': timeLogId,
+        },
+      ).toString();
+      errors.add('API error: $completeUrl - $e (local_db.dart:3351)');
     }
 
     try {
-      await submitInsertTimeLog(
+      final success = await submitInsertTimeLog(
         siteId: siteId,
         employeeId: employeeId,
         timeLogId: timeLogId,
@@ -3380,38 +3401,116 @@ class LocalDb {
         dateCaptured: timeLog,
         code: code,
       ).timeout(const Duration(seconds: 20));
+      if (!success) {
+        allSucceeded = false;
+        final completeUrl = HrisEndpoints.uri(
+          HrisEndpoints.insertTimeLog,
+          queryParameters: {
+            'siteID': siteId,
+            'employeeID': employeeId,
+            'timelogID': timeLogId,
+            'timelog': timeLog,
+            'remarks': remarks,
+            'schedule': schedule,
+            'timeinmorning': timeInMorning ?? '',
+            'timeinafternoon': timeInAfternoon ?? '',
+            'datecaptured': timeLog,
+            'code': code,
+          },
+        ).toString();
+        errors.add('API failed: $completeUrl (local_db.dart:3391)');
+      }
     } catch (e) {
       print('[SYNC] submitInsertTimeLog timeout/error: $e');
       allSucceeded = false;
-      errors.add('submitInsertTimeLog: $e');
+      final completeUrl = HrisEndpoints.uri(
+        HrisEndpoints.insertTimeLog,
+        queryParameters: {
+          'siteID': siteId,
+          'employeeID': employeeId,
+          'timelogID': timeLogId,
+          'timelog': timeLog,
+          'remarks': remarks,
+          'schedule': schedule,
+          'timeinmorning': timeInMorning ?? '',
+          'timeinafternoon': timeInAfternoon ?? '',
+          'datecaptured': timeLog,
+          'code': code,
+        },
+      ).toString();
+      errors.add('API error: $completeUrl - $e (local_db.dart:3391)');
     }
 
     try {
-      if (isTimeOut) {
-        await submitAttendanceTimeOut(
-          passedID: null,
-          timeLogId: timeLogId,
-          remarks: remarks,
-          timeLog: timeLog,
-          timeOutMorning: timeOutMorning ?? '',
-          timeOutAfternoon: timeOutAfternoon,
-          code: code,
-        ).timeout(const Duration(seconds: 20));
-      } else {
-        await submitAttendanceTimeIn(
-          passedID: null,
-          timeLogId: timeLogId,
-          remarks: remarks,
-          timeLog: timeLog,
-          timeInMorning: timeInMorning ?? '',
-          timeInAfternoon: timeInAfternoon,
-          code: code,
-        ).timeout(const Duration(seconds: 20));
+      final success = isTimeOut
+          ? await submitAttendanceTimeOut(
+              passedID: null,
+              timeLogId: timeLogId,
+              remarks: remarks,
+              timeLog: timeLog,
+              timeOutMorning: timeOutMorning ?? '',
+              timeOutAfternoon: timeOutAfternoon,
+              code: code,
+            ).timeout(const Duration(seconds: 20))
+          : await submitAttendanceTimeIn(
+              passedID: null,
+              timeLogId: timeLogId,
+              remarks: remarks,
+              timeLog: timeLog,
+              timeInMorning: timeInMorning ?? '',
+              timeInAfternoon: timeInAfternoon,
+              code: code,
+            ).timeout(const Duration(seconds: 20));
+      if (!success) {
+        allSucceeded = false;
+        final endpoint = isTimeOut ? HrisEndpoints.timeOut : HrisEndpoints.timeIn;
+        final queryParams = isTimeOut
+            ? {
+                'passedID': 'null',
+                'timelogID': timeLogId,
+                'remarks': remarks,
+                'timelog': timeLog,
+                'timeOutMorning': timeOutMorning ?? '',
+                'timeOutAfternoon': timeOutAfternoon,
+                'code': code,
+              }
+            : {
+                'passedID': 'null',
+                'timelogID': timeLogId,
+                'remarks': remarks,
+                'timelog': timeLog,
+                'timeInMorning': timeInMorning ?? '',
+                'timeInAfternoon': timeInAfternoon,
+                'code': code,
+              };
+        final completeUrl = HrisEndpoints.uri(endpoint, queryParameters: queryParams).toString();
+        errors.add('API failed: $completeUrl (local_db.dart:3444)');
       }
     } catch (e) {
       print('[SYNC] submitAttendance timeout/error: $e');
       allSucceeded = false;
-      errors.add('submitAttendance: $e');
+      final endpoint = isTimeOut ? HrisEndpoints.timeOut : HrisEndpoints.timeIn;
+      final queryParams = isTimeOut
+          ? {
+              'passedID': 'null',
+              'timelogID': timeLogId,
+              'remarks': remarks,
+              'timelog': timeLog,
+              'timeOutMorning': timeOutMorning ?? '',
+              'timeOutAfternoon': timeOutAfternoon,
+              'code': code,
+            }
+          : {
+              'passedID': 'null',
+              'timelogID': timeLogId,
+              'remarks': remarks,
+              'timelog': timeLog,
+              'timeInMorning': timeInMorning ?? '',
+              'timeInAfternoon': timeInAfternoon,
+              'code': code,
+            };
+      final completeUrl = HrisEndpoints.uri(endpoint, queryParameters: queryParams).toString();
+      errors.add('API error: $completeUrl - $e (local_db.dart:3444)');
     }
 
     if (!allSucceeded && errors.isNotEmpty) {

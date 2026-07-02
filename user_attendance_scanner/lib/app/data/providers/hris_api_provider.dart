@@ -48,7 +48,6 @@ class HrisApiProvider {
     Map<String, String?> queryParameters = const {},
   }) async {
     final client = HttpClient();
-    client.connectionTimeout = ApiConfig.connectionTimeout;
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$endpoint').replace(
         queryParameters: queryParameters.map(
@@ -59,11 +58,10 @@ class HrisApiProvider {
       final request = await client.getUrl(uri);
       _applyAuthHeaders(request);
 
-      final response = await request.close().timeout(ApiConfig.requestTimeout);
+      final response = await request.close();
       final body = await response
           .transform(utf8.decoder)
-          .join()
-          .timeout(ApiConfig.requestTimeout);
+          .join();
 
       if (response.statusCode < 200 || response.statusCode > 299) {
         _log('ERROR GET HTTP ${response.statusCode} - $body');
@@ -89,12 +87,12 @@ class HrisApiProvider {
   }
 
   /// HRIS write endpoints (timeIn/timeOut, insert timeLog) require POST with query params.
-  Future<List<Map<String, dynamic>>> postRows(
+  /// Returns a record with success flag and parsed rows. Empty response with 2xx status is considered successful.
+  Future<({bool success, List<Map<String, dynamic>> rows})> postRows(
     String endpoint, {
     Map<String, String?> queryParameters = const {},
   }) async {
     final client = HttpClient();
-    client.connectionTimeout = ApiConfig.connectionTimeout;
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$endpoint').replace(
         queryParameters: queryParameters.map(
@@ -105,11 +103,10 @@ class HrisApiProvider {
       final request = await client.postUrl(uri);
       _applyAuthHeaders(request);
 
-      final response = await request.close().timeout(ApiConfig.requestTimeout);
+      final response = await request.close();
       final body = await response
           .transform(utf8.decoder)
-          .join()
-          .timeout(ApiConfig.requestTimeout);
+          .join();
 
       if (response.statusCode < 200 || response.statusCode > 299) {
         _log('POST ERROR HTTP ${response.statusCode} - $body');
@@ -117,15 +114,15 @@ class HrisApiProvider {
       }
 
       if (body.trim().isEmpty) {
-        _log('POST empty response body');
-        return const [];
+        _log('POST OK ${response.statusCode} (empty response body - treating as success)');
+        return (success: true, rows: <Map<String, dynamic>>[]);
       }
 
       _log('POST OK ${response.statusCode} (${body.length} bytes)');
       final decoded = jsonDecode(body);
       final rows = extractRows(decoded);
       _log('POST parsed ${rows.length} rows');
-      return rows;
+      return (success: true, rows: rows);
     } catch (e) {
       _log('POST failed: $e');
       rethrow;
@@ -140,7 +137,6 @@ class HrisApiProvider {
     Map<String, String?> queryParameters = const {},
   }) async {
     final client = HttpClient();
-    client.connectionTimeout = ApiConfig.connectionTimeout;
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$endpoint').replace(
         queryParameters: queryParameters.map(
@@ -161,17 +157,67 @@ class HrisApiProvider {
       );
       request.write(jsonEncode(body));
 
-      final response = await request.close().timeout(ApiConfig.requestTimeout);
+      final response = await request.close();
       final responseBody = await response
           .transform(utf8.decoder)
-          .join()
-          .timeout(ApiConfig.requestTimeout);
+          .join();
       if (response.statusCode < 200 || response.statusCode > 299) {
         _log('POST ERROR HTTP ${response.statusCode}: $responseBody');
         throw Exception('HTTP ${response.statusCode}: $responseBody');
       }
 
       _log('POST OK HTTP ${response.statusCode}');
+
+      if (responseBody.trim().isEmpty) {
+        return <String, dynamic>{};
+      }
+
+      final decoded = jsonDecode(responseBody);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      return {'data': decoded};
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<Map<String, dynamic>> putJson(
+    String endpoint,
+    Map<String, dynamic> body, {
+    Map<String, String?> queryParameters = const {},
+  }) async {
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}$endpoint').replace(
+        queryParameters: queryParameters.map(
+          (key, value) => MapEntry(key, value ?? ''),
+        ),
+      );
+      final leftLen = body['leftFingerThumb']?.toString().length ?? 0;
+      final rightLen = body['rightFingerThumb']?.toString().length ?? 0;
+      _log(
+        'PUT $uri employeeID=${body['employeeID']} '
+        'leftLen=$leftLen rightLen=$rightLen',
+      );
+      final request = await client.putUrl(uri);
+      _applyAuthHeaders(request);
+      request.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json',
+      );
+      request.write(jsonEncode(body));
+
+      final response = await request.close();
+      final responseBody = await response
+          .transform(utf8.decoder)
+          .join();
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        _log('PUT ERROR HTTP ${response.statusCode}: $responseBody');
+        throw Exception('HTTP ${response.statusCode}: $responseBody');
+      }
+
+      _log('PUT OK HTTP ${response.statusCode}');
 
       if (responseBody.trim().isEmpty) {
         return <String, dynamic>{};

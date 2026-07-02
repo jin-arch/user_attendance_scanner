@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:user_attendance_scanner/app/core/utils/hris_log.dart';
 import 'package:user_attendance_scanner/zkfp/zkteco_usb.dart';
 import 'package:user_attendance_scanner/app/data/services/local_db.dart';
 import 'package:user_attendance_scanner/app/data/services/pending_sync_service.dart';
+import 'package:user_attendance_scanner/app/widgets/face_tracking_camera.dart';
 import 'package:user_attendance_scanner/app/data/services/scanner_registry_service.dart';
 
 /// Returned after fingerprints are stored in the local DB (ready for HRIS upload).
@@ -397,11 +397,8 @@ class EnrollmentController extends GetxController {
   }
 
   Future<void> takeSelfie() async {
-    try {
-      final ImagePicker picker = ImagePicker();
-      final XFile? photo = await picker.pickImage(source: ImageSource.camera);
-      if (photo != null) {
-        final bytes = await photo.readAsBytes();
+    await Get.to(() => _FaceTrackingCameraScreen(
+      onCapture: (bytes) async {
         selfieImageBytes.value = bytes;
         
         // Auto-save photo to database immediately
@@ -420,11 +417,12 @@ class EnrollmentController extends GetxController {
             // Don't show error to user, photo is still displayed
           }
         }
-      }
-    } catch (e) {
-      debugPrint('Error taking selfie: $e');
-      onError?.call('Error taking photo: $e');
-    }
+        Get.back();
+      },
+      onCancel: () {
+        Get.back();
+      },
+    ));
   }
 
   void resetFingerprints() {
@@ -1094,5 +1092,23 @@ class EnrollmentController extends GetxController {
     // Clear scan state to prepare for new fingerprint enrollment
     _clearScanState();
     onSuccess?.call('Enter employee ID manually');
+  }
+}
+
+class _FaceTrackingCameraScreen extends StatelessWidget {
+  final Function(Uint8List) onCapture;
+  final VoidCallback onCancel;
+
+  const _FaceTrackingCameraScreen({
+    required this.onCapture,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FaceTrackingCamera(
+      onCapture: onCapture,
+      onCancel: onCancel,
+    );
   }
 }
